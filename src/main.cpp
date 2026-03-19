@@ -395,6 +395,9 @@ void loop() {
     LOG_DBG("SLP", "Auto-sleep triggered after %lu ms of inactivity", sleepTimeoutMs);
     enterDeepSleep();
     // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
+    // In the simulator, deep sleep is a no-op and returns — reset the timer so
+    // the main loop does not immediately re-trigger auto-sleep.
+    lastActivityTime = millis();
     return;
   }
 
@@ -405,6 +408,7 @@ void loop() {
     }
     enterDeepSleep();
     // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
+    lastActivityTime = millis();
     return;
   }
 
