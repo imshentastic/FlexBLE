@@ -6,7 +6,8 @@ My goal with this fork was to maintain the core Crosspoint firmware while integr
 
 ### Summary
 
-- New reader fonts: ChareInk, Lexend Deca, Bitter, and Atkinson Hyperlegible
+- New reader fonts: ChareInk, Lexend Deca, and Bitter
+- Unicode emoji and miscellaneous symbols support
 - Adjusted font sizes: Tiny (10pt), Small (12pt), Medium (14pt), Large (16pt)
 - In-book menu to quickly adjust font options without having to exit the book
 - Reading stats per book (total reading time, number of sessions, pages turned, average session time)
@@ -21,9 +22,12 @@ The default fonts have been replaced with Bitter, Lexend Deca, and Atkinson Hype
 - [ChareInk](https://www.mobileread.com/forums/showthread.php?t=184056) - A cult favorite among the e-reading community for over a decade based off of the typeface [Charis](https://software.sil.org/charis/). It is specially designed to make long texts pleasant and easy to read.
 - [Lexend Deca](https://fonts.google.com/specimen/Lexend+Deca) — A research-backed sans-serif typeface designed to improve reading fluency. Lexend was engineered based on the theory that reading issues are often a design problem (visual crowding) rather than a cognitive one.
 - [Bitter](https://fonts.google.com/specimen/Bitter) — A "contemporary" slab serif typeface for text, it is specially designed for comfortably reading on digital screens. The consistent stroke weight of Bitter helps it render particularly well on e-ink devices. The medium weight has been chosen specifically for improved rendering on the X4.
-- [Atkinson Hyperlegible Next](https://fonts.google.com/specimen/Atkinson+Hyperlegible+Next) — A sans-serif typeface designed specifically to increase legibility for readers with low vision, and to improve comprehension. Next is the latest iteration of Atkinson Hyperlegible that refines kerning and curves. The medium weight has been chosen specifically for improved rendering on the X4.
 
 The UI still uses [Ubuntu](https://fonts.google.com/specimen/Ubuntu) as the display font, however the old font used to display the smallest text on the UI, Noto Sans, has been replaced with [Inter](https://fonts.google.com/specimen/Inter), which has improved readability at smaller sizes.
+
+### Emojis and Misc Glyphs
+
+- Support for Unicode [Emoticons](https://unicode-explorer.com/b/1F600) and [Miscellaenous Symbols](https://unicode-explorer.com/b/2600) using [Noto Emoji](https://fonts.google.com/noto/specimen/Noto+Emoji) and [Noto Sans Symbols](https://fonts.google.com/noto/specimen/Noto+Sans+Symbols) font.
 
 ### Font Sizes
 
