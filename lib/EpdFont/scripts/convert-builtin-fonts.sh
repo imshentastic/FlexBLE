@@ -55,68 +55,24 @@ for size in ${READING_FONT_SIZES[@]}; do
   done
 done
 
-# for size in ${READER_FONT_SIZES[@]}; do
-#   for style in ${READER_FONT_STYLES[@]}; do
-#     font_name="charein_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
-#     font_path="../builtinFonts/source/ChareInk7/ChareInk7-${style}.ttf"
-#     output_path="../builtinFonts/${font_name}.h"
-#     python fontconvert.py $font_name $size $font_path --2bit --compress > $output_path
-#     echo "Generated $output_path"
-#   done
-# done
-
-# for size in ${READER_FONT_SIZES[@]}; do
-#   for style in ${READER_FONT_STYLES[@]}; do
-#     font_name="lexenddeca_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
-#     if [ "$style" = "BoldItalic" ]; then
-#       font_path="../builtinFonts/source/LexendDeca/LexendDeca-BoldItalic.ttf"
-#     else
-#       font_path="../builtinFonts/source/LexendDeca/LexendDeca-${style}.ttf"
-#     fi
-#     output_path="../builtinFonts/${font_name}.h"
-#     python fontconvert.py $font_name $size $font_path --2bit --compress > $output_path
-#     echo "Generated $output_path"
-#   done
-# done
-
-# for size in ${READER_FONT_SIZES[@]}; do
-#   for style in ${READER_FONT_STYLES[@]}; do
-#     font_name="bitter_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
-#     if [ "$style" = "BoldItalic" ]; then
-#       font_path="../builtinFonts/source/Bitter/Bitter-BoldItalic.ttf"
-#     else
-#       font_path="../builtinFonts/source/Bitter/Bitter-${style}.ttf"
-#     fi
-#     output_path="../builtinFonts/${font_name}.h"
-#     python fontconvert.py $font_name $size $font_path --2bit --compress > $output_path
-#     echo "Generated $output_path"
-#   done
-# done
-
-# for size in ${READER_FONT_SIZES[@]}; do
-#   for style in ${READER_FONT_STYLES[@]}; do
-#     font_name="atkinsonhl_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
-#     font_path="../builtinFonts/source/Atkinson_Hyperlegible/AtkinsonHyperlegible-${style}.ttf"
-#     output_path="../builtinFonts/${font_name}.h"
-#     python fontconvert.py $font_name $size $font_path --2bit --compress > $output_path
-#     echo "Generated $output_path"
-#   done
-# done
+# UI Font - DM Sans
 
 UI_FONT_SIZES=(10 12)
 UI_FONT_STYLES=("Regular" "Bold")
 
 for size in ${UI_FONT_SIZES[@]}; do
   for style in ${UI_FONT_STYLES[@]}; do
-    font_name="ubuntu_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
-    font_path="../builtinFonts/source/Ubuntu/Ubuntu-${style}.ttf"
+    font_name="dmsans_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
+    font_path="../builtinFonts/source/DMSans/DMSans-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
     python fontconvert.py $font_name $size $font_path > $output_path
     echo "Generated $output_path"
   done
 done
 
-python fontconvert.py b612_8_regular 8 ../builtinFonts/source/B612/B612-Regular.ttf > ../builtinFonts/b612_8_regular.h
+# Small UI Font - Inter
+
+python fontconvert.py inter_8_regular 8 ../builtinFonts/source/Inter/Inter-Regular.ttf > ../builtinFonts/inter_8_regular.h
 
 echo ""
 echo "Running compression verification..."

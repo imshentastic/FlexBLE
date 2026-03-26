@@ -34,11 +34,11 @@
 #include <builtinFonts/lexenddeca_16_bolditalic.h>
 #include <builtinFonts/lexenddeca_16_italic.h>
 #include <builtinFonts/lexenddeca_16_regular.h>
-#include <builtinFonts/b612_8_regular.h>
-#include <builtinFonts/ubuntu_10_bold.h>
-#include <builtinFonts/ubuntu_10_regular.h>
-#include <builtinFonts/ubuntu_12_bold.h>
-#include <builtinFonts/ubuntu_12_regular.h>
+#include <builtinFonts/inter_8_regular.h>
+#include <builtinFonts/dmsans_10_bold.h>
+#include <builtinFonts/dmsans_10_regular.h>
+#include <builtinFonts/dmsans_12_bold.h>
+#include <builtinFonts/dmsans_12_regular.h>
 #include <builtinFonts/bitter_10_bold.h>
 #include <builtinFonts/bitter_10_bolditalic.h>
 #include <builtinFonts/bitter_10_italic.h>

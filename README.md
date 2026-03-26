@@ -23,7 +23,7 @@ The default fonts have been replaced with Bitter, Lexend Deca, and Atkinson Hype
 - [Lexend Deca](https://fonts.google.com/specimen/Lexend+Deca) — A research-backed sans-serif typeface designed to improve reading fluency. Lexend was engineered based on the theory that reading issues are often a design problem (visual crowding) rather than a cognitive one.
 - [Bitter](https://fonts.google.com/specimen/Bitter) — A "contemporary" slab serif typeface for text, it is specially designed for comfortably reading on digital screens. The consistent stroke weight of Bitter helps it render particularly well on e-ink devices. The medium weight has been chosen specifically for improved rendering on the X4.
 
-The UI still uses [Ubuntu](https://fonts.google.com/specimen/Ubuntu) as the display font, however the old font used to display the smallest text on the UI, Noto Sans, has been replaced with [Inter](https://fonts.google.com/specimen/Inter), which has improved readability at smaller sizes.
+The UI now uses [DM Sans](https://fonts.google.com/specimen/DM+Sans) as the display font and the smallest text on the UI has been replaced with [Inter](https://fonts.google.com/specimen/Inter), both fonts have improved readability at smaller sizes.
 
 ### Emojis and Misc Glyphs
 
