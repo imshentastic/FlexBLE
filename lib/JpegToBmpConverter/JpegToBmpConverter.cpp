@@ -278,17 +278,19 @@ static int jpegDecBmpDrawCallback(JPEGDRAW* pDraw) {
 
       if (ctx->oneBit) {
         const uint8_t bit = ctx->atkinson1BitDitherer ? ctx->atkinson1BitDitherer->processPixel(gray, outX)
-                                                       : quantize1bit(gray, outX, outY);
+                                                      : quantize1bit(gray, outX, outY);
         ctx->rowBuffer[outX / 8] |= static_cast<uint8_t>(bit << (7 - (outX % 8)));
       } else {
         const uint8_t adj = adjustPixel(gray);
-        const uint8_t twoBit = ctx->atkinsonDitherer ? ctx->atkinsonDitherer->processPixel(adj, outX)
-                                                     : quantize(adj, outX, outY);
+        const uint8_t twoBit =
+            ctx->atkinsonDitherer ? ctx->atkinsonDitherer->processPixel(adj, outX) : quantize(adj, outX, outY);
         ctx->rowBuffer[(outX * 2) / 8] |= static_cast<uint8_t>(twoBit << (6 - ((outX * 2) % 8)));
       }
     }
-    if (ctx->oneBit && ctx->atkinson1BitDitherer) ctx->atkinson1BitDitherer->nextRow();
-    else if (ctx->atkinsonDitherer) ctx->atkinsonDitherer->nextRow();
+    if (ctx->oneBit && ctx->atkinson1BitDitherer)
+      ctx->atkinson1BitDitherer->nextRow();
+    else if (ctx->atkinsonDitherer)
+      ctx->atkinsonDitherer->nextRow();
 
     // For upscaling: repeat this row for any output rows between last flush and outY
     for (int oy = ctx->lastFlushedOutY + 1; oy <= outY; oy++) {
@@ -341,10 +343,9 @@ static bool jpegFileToBmpStreamViaJpegDec(const char* filePath, Print& bmpOut, i
     scaleOption = JPEG_SCALE_EIGHTH;
     scaleDenom = 8;
   } else {
-    const float ts = (targetWidth > 0 && targetHeight > 0)
-                         ? std::min(static_cast<float>(targetWidth) / srcWidth,
-                                    static_cast<float>(targetHeight) / srcHeight)
-                         : 1.0f;
+    const float ts = (targetWidth > 0 && targetHeight > 0) ? std::min(static_cast<float>(targetWidth) / srcWidth,
+                                                                      static_cast<float>(targetHeight) / srcHeight)
+                                                           : 1.0f;
     if (ts <= 0.125f) {
       scaleOption = JPEG_SCALE_EIGHTH;
       scaleDenom = 8;

@@ -649,9 +649,8 @@ bool Epub::generateThumbBmp(int height) const {
     // Generate 1-bit BMP for fast home screen rendering (no gray passes needed)
     int THUMB_TARGET_WIDTH = height * 0.6;
     int THUMB_TARGET_HEIGHT = height;
-    const bool success = JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(coverJpg, thumbBmp,
-                                                                             coverJpgTempPath.c_str(),
-                                                                             THUMB_TARGET_WIDTH, THUMB_TARGET_HEIGHT);
+    const bool success = JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(
+        coverJpg, thumbBmp, coverJpgTempPath.c_str(), THUMB_TARGET_WIDTH, THUMB_TARGET_HEIGHT);
     coverJpg.close();
     thumbBmp.close();
     Storage.remove(coverJpgTempPath.c_str());
