@@ -132,6 +132,8 @@ void HomeActivity::onEnter() {
   }
   hasReadingStats = currentBookStats.sessionCount > 0;
 
+  globalStats = GlobalReadingStats::load();
+
   // Trigger first update
   requestUpdate();
 }
@@ -152,7 +154,7 @@ bool HomeActivity::storeCoverBuffer() {
   // Free any existing buffer first
   freeCoverBuffer();
 
-  const size_t bufferSize = GfxRenderer::getBufferSize();
+  const size_t bufferSize = renderer.getBufferSize();
   coverBuffer = static_cast<uint8_t*>(malloc(bufferSize));
   if (!coverBuffer) {
     return false;
@@ -172,7 +174,7 @@ bool HomeActivity::restoreCoverBuffer() {
     return false;
   }
 
-  const size_t bufferSize = GfxRenderer::getBufferSize();
+  const size_t bufferSize = renderer.getBufferSize();
   memcpy(frameBuffer, coverBuffer, bufferSize);
   return true;
 }
@@ -297,6 +299,6 @@ void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
 
 void HomeActivity::onReadingStatsOpen() {
   startActivityForResult(
-      std::make_unique<BookStatsActivity>(renderer, mappedInput, recentBooks[0].title, currentBookStats),
+      std::make_unique<BookStatsActivity>(renderer, mappedInput, recentBooks[0].title, currentBookStats, globalStats),
       [this](const ActivityResult&) { requestUpdate(); });
 }
