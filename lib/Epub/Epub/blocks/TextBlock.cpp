@@ -36,7 +36,32 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
         underlineWidth = visibleWidth;
       }
 
-      renderer.drawLine(startX, underlineY, startX + underlineWidth, underlineY, true);
+      renderer.drawLine(startX, underlineY, startX + underlineWidth, underlineY, 3, true);
+    }
+
+    if ((currentStyle & EpdFontFamily::STRIKETHROUGH) != 0) {
+      const std::string& w = words[i];
+      const int fullWordWidth = renderer.getTextWidth(fontId, w.c_str(), currentStyle);
+      // Position at roughly mid-glyph height. Offset down from the half-ascender
+      // point to align with the visual centre of lowercase letters.
+      // Added a 6 pixel offset after testing on various fonts to improve the visual alignment of the strike-through
+      // line.
+      const int strikeY = y + renderer.getFontAscenderSize(fontId) / 2 + 6;
+
+      int startX = wordX;
+      int strikeWidth = fullWordWidth;
+
+      // Skip em-space prefix same as underline does
+      if (w.size() >= 3 && static_cast<uint8_t>(w[0]) == 0xE2 && static_cast<uint8_t>(w[1]) == 0x80 &&
+          static_cast<uint8_t>(w[2]) == 0x83) {
+        const char* visiblePtr = w.c_str() + 3;
+        const int prefixWidth = renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", currentStyle);
+        const int visibleWidth = renderer.getTextWidth(fontId, visiblePtr, currentStyle);
+        startX = wordX + prefixWidth;
+        strikeWidth = visibleWidth;
+      }
+
+      renderer.drawLine(startX, strikeY, startX + strikeWidth, strikeY, 3, true);
     }
   }
 }

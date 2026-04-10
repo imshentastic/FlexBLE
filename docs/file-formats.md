@@ -141,7 +141,9 @@ enum WordStyle : u8 {
     REGULAR = 0,
     BOLD = 1,
     ITALIC = 2,
-    BOLD_ITALIC = 3
+    BOLD_ITALIC = 3,
+    UNDERLINE = 4,
+    STRIKETHROUGH = 8
 };
 
 enum BlockStyle : u8 {

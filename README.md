@@ -8,6 +8,7 @@ My goal with this fork was to maintain the core Crosspoint firmware while integr
 
 - New reader fonts: ChareInk, Lexend Deca, and Bitter
 - Unicode emoji and miscellaneous symbols support
+- Added ~~strikethrough~~ support
 - Adjusted font sizes: Tiny (10pt), Small (12pt), Medium (14pt), Large (16pt)
 - Added ability to remap front buttons that only applies in the reader
 - In-book menu to quickly adjust font options without having to exit the book

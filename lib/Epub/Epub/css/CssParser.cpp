@@ -204,7 +204,10 @@ CssFontWeight CssParser::interpretFontWeight(const std::string& val) {
 CssTextDecoration CssParser::interpretDecoration(const std::string& val) {
   const std::string v = normalized(val);
 
-  // text-decoration can have multiple space-separated values
+  // text-decoration can have multiple space-separated values; check most specific first
+  if (v.find("line-through") != std::string::npos) {
+    return CssTextDecoration::LineThrough;
+  }
   if (v.find("underline") != std::string::npos) {
     return CssTextDecoration::Underline;
   }
