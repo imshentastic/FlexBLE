@@ -14,6 +14,7 @@ My goal with this fork was to maintain the core Crosspoint firmware while integr
 - In-book menu to quickly adjust font options without having to exit the book
 - Reading stats per book (total reading time, number of sessions, pages turned, average session time)
 - Device simulator during development
+- 3 build variants: tiny, xlarge, and no_emoji (see [Font Sizes](#font-sizes) for more details)
 
 ---
 
@@ -31,14 +32,46 @@ The UI now uses [DM Sans](https://fonts.google.com/specimen/DM+Sans) as the disp
 
 - Support for Unicode [Emoticons](https://unicode-explorer.com/b/1F600) and [Miscellaenous Symbols](https://unicode-explorer.com/b/2600) using [Noto Emoji](https://fonts.google.com/noto/specimen/Noto+Emoji) and [Noto Sans Symbols](https://fonts.google.com/noto/specimen/Noto+Sans+Symbols) font.
 
+---
+
 ### Font Sizes
 
-I've removed the "Large" (18pt) font size in favor of a "Tiny" (10pt) font size. The new font size definitions are as follows:
+There are 3 available build variants to choose from due to build size constraints: tiny, xlarge, and no_emoji
 
-- Tiny (10pt)
-- Small (12pt)
-- Medium (14pt)
-- Large (16pt)
+**tiny**
+
+> No Extra Large font size
+
+- Emoji & Misc. Symbols Support
+- 4 Font sizes:
+  - Tiny (10pt)
+  - Small (12pt)
+  - Medium (14pt)
+  - Large (16pt)
+
+**xlarge**
+
+> Tiny and Small font sizes had to be removed to reduce build size and still support emoji/symbols.
+
+- Emoji & Misc. Symbols Support
+- 3 Font sizes:
+  - Medium (14pt)
+  - Large (16pt)
+  - Extra Large (18pt)
+
+**no_emoji**
+
+> All font sizes available, but no emoji/symbols support.
+
+- **No** Emoji & Misc. Symbols Support
+- 5 Font sizes:
+  - Tiny (10pt)
+  - Small (12pt)
+  - Medium (14pt)
+  - Large (16pt)
+  - Extra Large (18pt)
+
+---
 
 ### Reader options in the in-book menu
 
@@ -60,6 +93,8 @@ Some simple per-book reading stats are tracked automatically and displayed in tw
 
 - Total reading time
 - Average session time
+
+---
 
 ### Development Device Simulator
 
