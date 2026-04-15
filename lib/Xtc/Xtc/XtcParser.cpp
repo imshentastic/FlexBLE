@@ -21,6 +21,7 @@ XtcParser::XtcParser()
       m_defaultHeight(DISPLAY_HEIGHT),
       m_bitDepth(1),
       m_hasChapters(false),
+      m_chaptersLoaded(false),
       m_lastError(XtcError::OK) {
   memset(&m_header, 0, sizeof(m_header));
 }
@@ -32,6 +33,8 @@ XtcError XtcParser::open(const char* filepath) {
   if (m_isOpen) {
     close();
   }
+
+  m_filepath = filepath;
 
   // Open file
   if (!Storage.openFileForRead("XTC", filepath, m_file)) {
@@ -64,6 +67,9 @@ XtcError XtcParser::open(const char* filepath) {
       m_file.close();
       return m_lastError;
     }
+    // Trim excess capacity from metadata strings
+    m_title.shrink_to_fit();
+    m_author.shrink_to_fit();
   }
 
   // Read first page info for default dimensions (no bulk page table allocation)
@@ -75,14 +81,15 @@ XtcError XtcParser::open(const char* filepath) {
     return m_lastError;
   }
 
-  // Read chapters if present
-  m_lastError = readChapters();
-  if (m_lastError != XtcError::OK) {
-    LOG_DBG("XTC", "Failed to read chapters: %s", errorToString(m_lastError));
-    // Explicit close() required: member variable persists beyond function scope
-    m_file.close();
-    return m_lastError;
-  }
+  // Defer chapter parsing until actually needed (lazy load).
+  // Chapter strings can use significant heap; keeping them out of memory
+  // during rendering leaves more room for the page bitmap buffer.
+  m_hasChapters = (m_header.hasChapters == 1);
+  m_chaptersLoaded = false;
+
+  // Close the source file to free its internal SdFat buffers.
+  // It will be reopened on-demand for page table lookups and bitmap reads.
+  m_file.close();
 
   m_isOpen = true;
   LOG_DBG("XTC", "Opened file: %s (%u pages, %dx%d)", filepath, m_header.pageCount, m_defaultWidth, m_defaultHeight);
@@ -90,15 +97,27 @@ XtcError XtcParser::open(const char* filepath) {
 }
 
 void XtcParser::close() {
-  if (m_isOpen) {
-    // Explicit close() required: member variable persists beyond function scope
-    m_file.close();
-    m_isOpen = false;
-  }
+  closeFile();
+  m_isOpen = false;
+  m_chaptersLoaded = false;
   m_chapters.clear();
   m_title.clear();
+  m_author.clear();
   m_hasChapters = false;
   memset(&m_header, 0, sizeof(m_header));
+}
+
+bool XtcParser::ensureFileOpen() {
+  if (m_file.isOpen()) {
+    return true;
+  }
+  return Storage.openFileForRead("XTC", m_filepath.c_str(), m_file);
+}
+
+void XtcParser::closeFile() {
+  if (m_file.isOpen()) {
+    m_file.close();
+  }
 }
 
 XtcError XtcParser::readHeader() {
@@ -195,20 +214,25 @@ XtcError XtcParser::readFirstPageInfo() {
   return XtcError::OK;
 }
 
-bool XtcParser::readPageTableEntry(uint32_t pageIndex, PageInfo& info) const {
+bool XtcParser::readPageTableEntry(uint32_t pageIndex, PageInfo& info) {
   if (pageIndex >= m_header.pageCount) {
+    return false;
+  }
+
+  if (!ensureFileOpen()) {
+    LOG_DBG("XTC", "Failed to reopen file for page table read");
     return false;
   }
 
   // Seek to the specific page table entry on the SD card
   const uint64_t entryOffset = m_header.pageTableOffset + static_cast<uint64_t>(pageIndex) * sizeof(PageTableEntry);
-  if (!const_cast<FsFile&>(m_file).seek(entryOffset)) {
+  if (!m_file.seek(entryOffset)) {
     LOG_DBG("XTC", "Failed to seek to page table entry %lu at %llu", pageIndex, entryOffset);
     return false;
   }
 
   PageTableEntry entry;
-  size_t bytesRead = const_cast<FsFile&>(m_file).read(reinterpret_cast<uint8_t*>(&entry), sizeof(PageTableEntry));
+  size_t bytesRead = m_file.read(reinterpret_cast<uint8_t*>(&entry), sizeof(PageTableEntry));
   if (bytesRead != sizeof(PageTableEntry)) {
     LOG_DBG("XTC", "Failed to read page table entry %lu", pageIndex);
     return false;
@@ -223,8 +247,11 @@ bool XtcParser::readPageTableEntry(uint32_t pageIndex, PageInfo& info) const {
 }
 
 XtcError XtcParser::readChapters() {
-  m_hasChapters = false;
   m_chapters.clear();
+
+  if (!ensureFileOpen()) {
+    return XtcError::READ_ERROR;
+  }
 
   uint8_t hasChaptersFlag = 0;
   if (!m_file.seek(0x0B)) {
@@ -279,6 +306,7 @@ XtcError XtcParser::readChapters() {
     return XtcError::READ_ERROR;
   }
 
+  m_chapters.reserve(chapterCount);
   std::vector<uint8_t> chapterBuf(chapterSize);
   for (size_t i = 0; i < chapterCount; i++) {
     if (m_file.read(chapterBuf.data(), chapterSize) != chapterSize) {
@@ -328,7 +356,23 @@ XtcError XtcParser::readChapters() {
   return XtcError::OK;
 }
 
-bool XtcParser::getPageInfo(uint32_t pageIndex, PageInfo& info) const { return readPageTableEntry(pageIndex, info); }
+const std::vector<ChapterInfo>& XtcParser::getChapters() {
+  // Lazy load chapters on first access
+  if (!m_chaptersLoaded && m_hasChapters) {
+    const XtcError err = readChapters();
+    if (err != XtcError::OK) {
+      LOG_ERR("XTC", "Failed to lazy-load chapters: %s", errorToString(err));
+      m_hasChapters = false;
+      m_chapters.clear();
+    }
+    m_chaptersLoaded = true;
+    // Close file after chapter read to free buffers for rendering
+    closeFile();
+  }
+  return m_chapters;
+}
+
+bool XtcParser::getPageInfo(uint32_t pageIndex, PageInfo& info) { return readPageTableEntry(pageIndex, info); }
 
 size_t XtcParser::loadPage(uint32_t pageIndex, uint8_t* buffer, size_t bufferSize) {
   if (!m_isOpen) {
@@ -344,6 +388,11 @@ size_t XtcParser::loadPage(uint32_t pageIndex, uint8_t* buffer, size_t bufferSiz
   PageInfo page;
   if (!readPageTableEntry(pageIndex, page)) {
     m_lastError = XtcError::READ_ERROR;
+    return 0;
+  }
+
+  if (!ensureFileOpen()) {
+    m_lastError = XtcError::FILE_NOT_FOUND;
     return 0;
   }
 
@@ -416,6 +465,10 @@ XtcError XtcParser::loadPageStreaming(uint32_t pageIndex,
   PageInfo page;
   if (!readPageTableEntry(pageIndex, page)) {
     return XtcError::READ_ERROR;
+  }
+
+  if (!ensureFileOpen()) {
+    return XtcError::FILE_NOT_FOUND;
   }
 
   // Seek to page data
