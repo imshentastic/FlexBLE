@@ -193,6 +193,15 @@ XtcError XtcParser::readFirstPageInfo() {
     return XtcError::CORRUPTED_HEADER;
   }
 
+  // Verify the file is large enough to contain the full page table
+  const uint64_t fileSize = m_file.size();
+  const uint64_t pageTableSize = static_cast<uint64_t>(m_header.pageCount) * sizeof(PageTableEntry);
+  if (m_header.pageTableOffset < sizeof(XtcHeader) || m_header.pageTableOffset > fileSize ||
+      pageTableSize > fileSize - m_header.pageTableOffset) {
+    LOG_DBG("XTC", "Page table exceeds file bounds");
+    return XtcError::CORRUPTED_HEADER;
+  }
+
   // Read only the first entry to get default page dimensions
   // All other entries are read on-demand via readPageTableEntry()
   // This avoids allocating pageCount * 16 bytes (e.g. 65KB for 4000+ pages)
@@ -282,13 +291,12 @@ XtcError XtcParser::readChapters() {
     return XtcError::OK;
   }
 
-  uint64_t maxOffset = 0;
-  if (m_header.pageTableOffset > chapterOffset) {
+  // Clamp maxOffset to fileSize so bogus header values can't inflate chapterCount
+  uint64_t maxOffset = fileSize;
+  if (m_header.pageTableOffset > chapterOffset && m_header.pageTableOffset <= fileSize) {
     maxOffset = m_header.pageTableOffset;
-  } else if (m_header.dataOffset > chapterOffset) {
+  } else if (m_header.dataOffset > chapterOffset && m_header.dataOffset <= fileSize) {
     maxOffset = m_header.dataOffset;
-  } else {
-    maxOffset = fileSize;
   }
 
   if (maxOffset <= chapterOffset) {
