@@ -74,21 +74,132 @@ uint16_t measureWordWidth(const GfxRenderer& renderer, const int fontId, const s
   return renderer.getTextAdvanceX(fontId, sanitized.c_str(), style);
 }
 
+// Checks if a UTF-8 codepoint should be counted as part of a word for Focus Reading
+bool isWordCharacter(uint32_t cp) {
+  // ASCII range (Catches 95%+ of characters immediately)
+  if (cp < 128) {
+    // Bitwise trick: (cp | 0x20) converts uppercase ASCII to lowercase.
+    // This checks for A-Z and a-z mathematically, avoiding memory lookups and <cctype>
+    return ((cp | 0x20) >= 'a' && (cp | 0x20) <= 'z') || cp == '\'' || cp == '-';
+  }
+
+  // General Punctuation Block (0x2000 - 0x206F)
+  if (cp >= 0x2000 && cp <= 0x206F) {
+    // Explicitly allow smart quotes, reject all other general punctuation (em-dashes, etc.)
+    return cp == 0x2018 || cp == 0x2019;
+  }
+
+  // Latin-1 Punctuation Block (0x00A1 - 0x00BF)
+  if (cp >= 0x00A1 && cp <= 0x00BF) {
+    // Allow ordinal indicators and micro sign, reject the rest (¡, ¿, «, », etc.)
+    return cp == 0x00AA || cp == 0x00B5 || cp == 0x00BA;
+  }
+
+  // Assume all other Unicode ranges (accented letters, Cyrillic, Greek, etc.) are valid
+  return true;
+}
+
 }  // namespace
 
 void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle, const bool underline,
                          const bool attachToPrevious) {
   if (word.empty()) return;
 
-  words.push_back(std::move(word));
-  EpdFontFamily::Style combinedStyle = fontStyle;
+  EpdFontFamily::Style baseStyle = fontStyle;
   if (underline) {
-    combinedStyle = static_cast<EpdFontFamily::Style>(combinedStyle | EpdFontFamily::UNDERLINE);
+    baseStyle = static_cast<EpdFontFamily::Style>(baseStyle | EpdFontFamily::UNDERLINE);
   }
-  wordStyles.push_back(combinedStyle);
-  wordContinues.push_back(attachToPrevious);
-}
 
+  if (!this->focusReadingEnabled) {
+    words.push_back(std::move(word));
+    wordStyles.push_back(baseStyle);
+    wordContinues.push_back(attachToPrevious);
+    return;
+  }
+
+  // --- FOCUS READING LOGIC BELOW ---
+
+  // Lambda helper to process and push individual sub-segments of the string
+  auto processSegment = [&](const std::string& segment, bool isWord, bool attach) {
+    if (!isWord) {
+      // Punctuation and Numbers stay regular
+      words.push_back(segment);
+      wordStyles.push_back(baseStyle);
+      wordContinues.push_back(attach);
+    } else {
+      // Word segments get the Focus Reading math applied
+      size_t charCount = 0;
+      const unsigned char* countPtr = reinterpret_cast<const unsigned char*>(segment.c_str());
+      const unsigned char* countEnd = countPtr + segment.length();
+
+      while (countPtr < countEnd) {
+        utf8NextCodepoint(&countPtr);
+        charCount++;
+      }
+
+      size_t targetBoldChars = (charCount * 2) / 5;
+      if (targetBoldChars < 1) targetBoldChars = 1;
+      if (targetBoldChars > 9) targetBoldChars = 9;
+
+      if (targetBoldChars >= charCount) {
+        words.push_back(segment);
+        wordStyles.push_back(static_cast<EpdFontFamily::Style>(baseStyle | EpdFontFamily::BOLD));
+        wordContinues.push_back(attach);
+      } else {
+        countPtr = reinterpret_cast<const unsigned char*>(segment.c_str());
+        for (size_t i = 0; i < targetBoldChars; ++i) {
+          utf8NextCodepoint(&countPtr);
+        }
+        size_t splitByteOffset = countPtr - reinterpret_cast<const unsigned char*>(segment.c_str());
+
+        words.push_back(segment.substr(0, splitByteOffset));
+        wordStyles.push_back(static_cast<EpdFontFamily::Style>(baseStyle | EpdFontFamily::BOLD));
+        wordContinues.push_back(attach);
+
+        words.push_back(segment.substr(splitByteOffset));
+        wordStyles.push_back(baseStyle);
+        wordContinues.push_back(true);
+      }
+    }
+  };
+
+  // Tokenize the string by alternating states (Word vs. Non-Word)
+  const unsigned char* ptr = reinterpret_cast<const unsigned char*>(word.c_str());
+  const unsigned char* end = ptr + word.length();
+
+  const unsigned char* segmentStart = ptr;
+  uint32_t firstCp = utf8NextCodepoint(&ptr);  // Consume the first char to determine initial state
+  bool inWordSegment = isWordCharacter(firstCp);
+
+  bool isFirstSegment = true;
+
+  while (ptr < end) {
+    const unsigned char* currentCpStart = ptr;
+    uint32_t cp = utf8NextCodepoint(&ptr);
+    bool isWordChar = isWordCharacter(cp);
+
+    // Whenever the character type flips, slice off the segment we just completed and process it
+    if (isWordChar != inWordSegment) {
+      size_t segmentLen = currentCpStart - segmentStart;
+      std::string segment =
+          word.substr(segmentStart - reinterpret_cast<const unsigned char*>(word.c_str()), segmentLen);
+
+      // Only the very first segment inherits the original attachToPrevious flag.
+      // Every subsequent segment MUST attach=true so it glues seamlessly to the prefix.
+      processSegment(segment, inWordSegment, isFirstSegment ? attachToPrevious : true);
+
+      // Setup for the next segment
+      segmentStart = currentCpStart;
+      inWordSegment = isWordChar;
+      isFirstSegment = false;
+    }
+  }
+
+  // Process the final remaining segment
+  size_t segmentLen = end - segmentStart;
+  std::string segment = word.substr(segmentStart - reinterpret_cast<const unsigned char*>(word.c_str()), segmentLen);
+  processSegment(segment, inWordSegment, isFirstSegment ? attachToPrevious : true);
+}
 // Consumes data to minimize memory usage
 void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fontId, const uint16_t viewportWidth,
                                        const std::function<void(std::shared_ptr<TextBlock>)>& processLine,
