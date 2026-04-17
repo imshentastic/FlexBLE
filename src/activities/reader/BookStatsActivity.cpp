@@ -44,7 +44,8 @@ void BookStatsActivity::render(RenderLock&&) {
   const int titleY = metrics.topPadding + metrics.batteryBarHeight + (availableH - lineHeight) / 2;
   const int batteryStartX = screenWidth - metrics.contentSidePadding - metrics.batteryWidth;
   const int maxTitleWidth = batteryStartX - titleX - metrics.contentSidePadding;
-  const std::string truncTitle = renderer.truncatedText(UI_12_FONT_ID, tr(STR_READING_STATS), maxTitleWidth, EpdFontFamily::BOLD);
+  const std::string truncTitle =
+      renderer.truncatedText(UI_12_FONT_ID, tr(STR_READING_STATS), maxTitleWidth, EpdFontFamily::BOLD);
   renderer.drawText(UI_12_FONT_ID, titleX, titleY, truncTitle.c_str(), true, EpdFontFamily::BOLD);
 
   int y = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
