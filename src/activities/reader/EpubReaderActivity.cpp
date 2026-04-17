@@ -10,6 +10,8 @@
 #include <Logging.h>
 #include <esp_system.h>
 
+#include <array>
+
 #include "BookStatsActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -30,7 +32,7 @@ namespace {
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
 constexpr unsigned long skipChapterMs = 700;
 // seconds per page, ordered slowest to fastest; index 0 is unused (off state)
-const std::vector<int> PAGE_TURN_INTERVALS_S = {0, 60, 45, 30, 20, 15, 10, 5};
+constexpr std::array<int, 8> PAGE_TURN_INTERVALS_S = {0, 60, 45, 30, 20, 15, 10, 5};
 
 int clampPercent(int percent) {
   if (percent < 0) {
@@ -869,7 +871,7 @@ void EpubReaderActivity::renderStatusBar() const {
   int textYOffset = 0;
 
   if (automaticPageTurnActive) {
-    title = tr(STR_AUTO_TURN_ENABLED) + std::to_string(pageTurnDuration / 1000) + "s";
+    title = tr(STR_AUTO_TURN_ENABLED) + std::to_string(pageTurnDuration / 1000);
 
     // calculates textYOffset when rendering title in status bar
     const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
