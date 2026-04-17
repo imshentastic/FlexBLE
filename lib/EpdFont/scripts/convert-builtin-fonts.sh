@@ -14,6 +14,7 @@ SYMBOLS2_FONT="../builtinFonts/source/NotoSymbols2/NotoSansSymbols2-Regular.ttf"
 EMOJI_INTERVALS=(
   --additional-intervals 0x2600,0x26FF
   --additional-intervals 0x1F600,0x1F64F
+  --additional-intervals 0x0370,0x03FF
 )
 
 READING_FONT_SIZES=(10 12 14 16 18)
