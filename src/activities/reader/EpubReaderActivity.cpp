@@ -33,6 +33,7 @@ namespace {
 constexpr unsigned long skipChapterMs = 700;
 // seconds per page, ordered slowest to fastest; index 0 is unused (off state)
 constexpr std::array<int, 8> PAGE_TURN_INTERVALS_S = {0, 60, 45, 30, 20, 15, 10, 5};
+constexpr int MAX_PAGE_LOAD_RETRIES = 3;
 
 int clampPercent(int percent) {
   if (percent < 0) {
@@ -48,6 +49,7 @@ int clampPercent(int percent) {
 
 void EpubReaderActivity::onEnter() {
   Activity::onEnter();
+  pageLoadRetryCount = 0;
 
   if (!epub) {
     return;
@@ -270,6 +272,7 @@ void EpubReaderActivity::loop() {
 // Translate an absolute percent into a spine index plus a normalized position
 // within that spine so we can jump after the section is loaded.
 void EpubReaderActivity::jumpToPercent(int percent) {
+  pageLoadRetryCount = 0;
   if (!epub) {
     return;
   }
@@ -515,6 +518,7 @@ void EpubReaderActivity::toggleAutoPageTurn(const uint8_t selectedPageTurnOption
 }
 
 void EpubReaderActivity::pageTurn(bool isForwardTurn) {
+  pageLoadRetryCount = 0;
   if (isForwardTurn) {
     if (section->currentPage < section->pageCount - 1) {
       section->currentPage++;
@@ -684,14 +688,25 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   {
     auto p = section->loadPageFromSectionFile();
     if (!p) {
-      LOG_ERR("ERS", "Failed to load page from SD - clearing section cache");
-      section->clearCache();
-      section.reset();
-      requestUpdate();  // Try again after clearing cache
-                        // TODO: prevent infinite loop if the page keeps failing to load for some reason
-      automaticPageTurnActive = false;
-      return;
+      pageLoadRetryCount++;
+      if (pageLoadRetryCount < MAX_PAGE_LOAD_RETRIES) {
+        LOG_ERR("ERS", "Failed to load page from SD (retry %d) - clearing section cache", pageLoadRetryCount);
+        section->clearCache();
+        section.reset();
+        requestUpdate();
+        return;
+      } else {
+        LOG_ERR("ERS", "Failed to load page from SD after %d retries", pageLoadRetryCount);
+        renderer.clearScreen();
+        renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_PAGE_LOAD_ERROR), true, EpdFontFamily::BOLD);
+        renderStatusBar();
+        renderer.displayBuffer();
+        automaticPageTurnActive = false;
+        return;
+      }
     }
+
+    pageLoadRetryCount = 0;
 
     // Collect footnotes from the loaded page
     currentPageFootnotes = std::move(p->footnotes);
@@ -897,6 +912,7 @@ void EpubReaderActivity::renderStatusBar() const {
 }
 
 void EpubReaderActivity::navigateToHref(const std::string& hrefStr, const bool savePosition) {
+  pageLoadRetryCount = 0;
   if (!epub) return;
 
   // Push current position onto saved stack
@@ -941,6 +957,7 @@ void EpubReaderActivity::navigateToHref(const std::string& hrefStr, const bool s
 }
 
 void EpubReaderActivity::restoreSavedPosition() {
+  pageLoadRetryCount = 0;
   if (footnoteDepth <= 0) return;
   footnoteDepth--;
   const auto& pos = savedPositions[footnoteDepth];
