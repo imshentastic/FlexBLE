@@ -83,8 +83,8 @@ bool isWordCharacter(uint32_t cp) {
     return ((cp | 0x20) >= 'a' && (cp | 0x20) <= 'z') || cp == '\'' || cp == '-';
   }
 
-  // General Punctuation Block (0x2000 - 0x206F)
-  if (cp >= 0x2000 && cp <= 0x206F) {
+  // General Punctuation Block, Currency, Math, Arrows, & Symbols (0x2000 - 0x2BFF)
+  if (cp >= 0x2000 && cp <= 0x2BFF) {
     // Explicitly allow smart quotes, reject all other general punctuation (em-dashes, etc.)
     return cp == 0x2018 || cp == 0x2019;
   }
