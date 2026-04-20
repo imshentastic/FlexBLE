@@ -105,6 +105,11 @@ bool BookmarkStore::hasBookmarkForPage(uint16_t spineIndex, float pageProgress, 
 
 void BookmarkStore::saveToFile() {
   if (!dirty || storeFilePath.empty()) return;
+  if (bookmarks.empty()) {
+    if (Storage.exists(storeFilePath.c_str())) Storage.remove(storeFilePath.c_str());
+    dirty = false;
+    return;
+  }
   if (writeToFile()) dirty = false;
 }
 
