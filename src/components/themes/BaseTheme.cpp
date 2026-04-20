@@ -784,7 +784,9 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
 
   if (isPageBookmarked) {
     const int bmX = metrics.statusBarHorizontalMargin + orientedMarginLeft + 1;
-    const int bmY = textY + (metrics.batteryHeight - bmIconH) / 2;
+    // +5 compensates for the battery nub drawn above the rect origin by drawBatteryLeft,
+    // which shifts the battery body's visual center below the mathematical rect center.
+    const int bmY = textY + (metrics.batteryHeight - bmIconH) / 2 + 5;
     renderer.fillRect(bmX, bmY, bmIconW, bmIconH, true);
     const int xNotch[3] = {bmX, bmX + bmIconW, bmX + bmIconW / 2};
     const int yNotch[3] = {bmY + bmIconH, bmY + bmIconH, bmY + bmIconH - bmNotchDepth};
