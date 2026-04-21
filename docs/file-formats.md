@@ -104,7 +104,7 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 8
+### Version 21
 
 ImHex Pattern:
 
@@ -114,7 +114,7 @@ import std.string;
 import std.core;
 
 // === Configuration ===
-#define EXPECTED_VERSION 8
+#define EXPECTED_VERSION 21
 #define MAX_STRING_LENGTH 65535
 
 // === String Structure ===
