@@ -3,7 +3,7 @@
  * name: lexenddeca_10_italic
  * size: 10
  * mode: 2-bit  compressed: true
- * Command used: fontconvert.py lexenddeca_10_italic 10 ../builtinFonts/source/LexendDeca/LexendDeca-Italic.ttf --2bit --compress
+ * Command used: fontconvert.py lexenddeca_10_italic 10 ../builtinFonts/source/LexendDeca/LexendDeca-Italic.ttf --2bit --compress --pnum
  */
 #pragma once
 #include "EpdFontData.h"

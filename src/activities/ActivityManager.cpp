@@ -16,9 +16,10 @@
 
 void ActivityManager::begin() {
   xTaskCreate(&renderTaskTrampoline, "ActivityManagerRender",
-              8192,              // Stack size
-              this,              // Parameters
-              1,                 // Priority
+              16384,  // Stack size — increased from 8192; createSectionFile() puts ChapterHtmlSlimParser (~700 bytes)
+                      // on stack during silentIndexNextChapterIfNeeded
+              this,   // Parameters
+              1,      // Priority
               &renderTaskHandle  // Task handle
   );
   assert(renderTaskHandle != nullptr && "Failed to create render task");
@@ -294,10 +295,10 @@ void RenderLock::unlock() {
 }
 
 /**
+ * Checks if renderingMutex is held by any task, including the calling task.
  *
- * Checks if renderingMutex is busy.
+ * @return true if renderingMutex has an owner (any task), false otherwise.
  *
- * @return true if renderingMutex is busy, otherwise false.
- *
+ * @note Must not be called from ISR context — xSemaphoreGetMutexHolder is not ISR-safe.
  */
-bool RenderLock::peek() { return xQueuePeek(activityManager.renderingMutex, NULL, 0) != pdTRUE; };
+bool RenderLock::peek() { return xSemaphoreGetMutexHolder(activityManager.renderingMutex) != nullptr; }

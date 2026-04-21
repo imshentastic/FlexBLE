@@ -3,7 +3,7 @@
  * name: lexenddeca_12_regular
  * size: 12
  * mode: 2-bit  compressed: true
- * Command used: fontconvert.py lexenddeca_12_regular 12 ../builtinFonts/source/LexendDeca/LexendDeca-Regular.ttf --2bit --compress
+ * Command used: fontconvert.py lexenddeca_12_regular 12 ../builtinFonts/source/LexendDeca/LexendDeca-Regular.ttf --2bit --compress --pnum
  */
 #pragma once
 #include "EpdFontData.h"

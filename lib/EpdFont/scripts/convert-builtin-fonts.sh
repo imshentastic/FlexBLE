@@ -37,7 +37,7 @@ for size in ${READING_FONT_SIZES[@]}; do
     font_name="lexenddeca_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
     font_path="../builtinFonts/source/LexendDeca/LexendDeca-${style}.ttf"
     output_path="../builtinFonts/noemoji/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path --2bit --compress > $output_path
+    python fontconvert.py $font_name $size $font_path --2bit --compress --pnum > $output_path
     echo "Generated $output_path"
   done
 done
@@ -49,7 +49,7 @@ for size in ${READING_FONT_SIZES[@]}; do
     font_name="bitter_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
     font_path="../builtinFonts/source/Bitter/Bitter-${style}.ttf"
     output_path="../builtinFonts/noemoji/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path --2bit --compress > $output_path
+    python fontconvert.py $font_name $size $font_path --2bit --compress --pnum > $output_path
     echo "Generated $output_path"
   done
 done
@@ -61,7 +61,7 @@ for size in ${READING_FONT_SIZES[@]}; do
     font_name="charein_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
     font_path="../builtinFonts/source/ChareInk7/ChareInk7-${style}.ttf"
     output_path="../builtinFonts/noemoji/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path --2bit --compress > $output_path
+    python fontconvert.py $font_name $size $font_path --2bit --compress --pnum > $output_path
     echo "Generated $output_path"
   done
 done
@@ -82,7 +82,7 @@ for size in ${READING_FONT_SIZES[@]}; do
     font_name="lexenddeca_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
     font_path="../builtinFonts/source/LexendDeca/LexendDeca-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path $EMOJI_FONT $SYMBOLS_FONT $SYMBOLS2_FONT "${EMOJI_INTERVALS[@]}" --2bit --compress > $output_path
+    python fontconvert.py $font_name $size $font_path $EMOJI_FONT $SYMBOLS_FONT $SYMBOLS2_FONT "${EMOJI_INTERVALS[@]}" --2bit --compress --pnum > $output_path
     echo "Generated $output_path"
   done
 done
@@ -94,7 +94,7 @@ for size in ${READING_FONT_SIZES[@]}; do
     font_name="bitter_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
     font_path="../builtinFonts/source/Bitter/Bitter-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path $EMOJI_FONT $SYMBOLS_FONT $SYMBOLS2_FONT "${EMOJI_INTERVALS[@]}" --2bit --compress > $output_path
+    python fontconvert.py $font_name $size $font_path $EMOJI_FONT $SYMBOLS_FONT $SYMBOLS2_FONT "${EMOJI_INTERVALS[@]}" --2bit --compress --pnum > $output_path
     echo "Generated $output_path"
   done
 done
@@ -106,7 +106,7 @@ for size in ${READING_FONT_SIZES[@]}; do
     font_name="charein_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
     font_path="../builtinFonts/source/ChareInk7/ChareInk7-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path $EMOJI_FONT $SYMBOLS_FONT $SYMBOLS2_FONT "${EMOJI_INTERVALS[@]}" --2bit --compress > $output_path
+    python fontconvert.py $font_name $size $font_path $EMOJI_FONT $SYMBOLS_FONT $SYMBOLS2_FONT "${EMOJI_INTERVALS[@]}" --2bit --compress --pnum > $output_path
     echo "Generated $output_path"
   done
 done

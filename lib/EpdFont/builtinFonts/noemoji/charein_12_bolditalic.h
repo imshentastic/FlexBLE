@@ -3,7 +3,7 @@
  * name: charein_12_bolditalic
  * size: 12
  * mode: 2-bit  compressed: true
- * Command used: fontconvert.py charein_12_bolditalic 12 ../builtinFonts/source/ChareInk7/ChareInk7-BoldItalic.ttf --2bit --compress
+ * Command used: fontconvert.py charein_12_bolditalic 12 ../builtinFonts/source/ChareInk7/ChareInk7-BoldItalic.ttf --2bit --compress --pnum
  */
 #pragma once
 #include "EpdFontData.h"

@@ -146,7 +146,21 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
       // Merge with existing block style to accumulate CSS styling from parent block elements.
       // This handles cases like <div style="margin-bottom:2em"><h1>text</h1></div> where the
       // div's margin should be preserved, even though it has no direct text content.
-      currentTextBlock->setBlockStyle(currentTextBlock->getBlockStyle().getCombinedBlockStyle(blockStyle));
+
+      BlockStyle incoming = blockStyle;
+      const bool currentIsEmptyBr = currentTextBlock->getBlockStyle().fromBrElement;
+      const bool incomingIsBr = incoming.fromBrElement;
+      if (currentIsEmptyBr) {
+        // The empty block was created by a <br> section separator. Inject a full line of
+        // blank space before the following paragraph so the scene/section break is visible.
+        // This only fires when the <br> block stayed empty (i.e. no inline text was added).
+        const int16_t lineHeight = static_cast<int16_t>(renderer.getLineHeight(fontId) * lineCompression + 0.5f);
+        incoming.marginTop = static_cast<int16_t>(incoming.marginTop + lineHeight);
+      }
+
+      auto combinedStyle = currentTextBlock->getBlockStyle().getCombinedBlockStyle(incoming);
+      combinedStyle.fromBrElement = incoming.fromBrElement;
+      currentTextBlock->setBlockStyle(combinedStyle);
 
       if (!pendingAnchorId.empty()) {
         anchorData.push_back({std::move(pendingAnchorId), static_cast<uint16_t>(completedPageCount)});
@@ -424,17 +438,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   }
                   if (displayHeight < 1) displayHeight = 1;
                   LOG_DBG("EHP", "Display size from CSS width: %dx%d", displayWidth, displayHeight);
-                } else if (self->currentTextBlock != nullptr && dims.width > 0 && dims.height > 0) {
-                  // Inline image with no CSS dimensions (e.g. emoji PNG inside a paragraph).
-                  // Size to the font ascender height to match surrounding text.
-                  displayHeight = static_cast<int>(emSize + 0.5f);
-                  if (displayHeight < 1) displayHeight = 1;
-                  displayWidth =
-                      static_cast<int>(displayHeight * (static_cast<float>(dims.width) / dims.height) + 0.5f);
-                  if (displayWidth < 1) displayWidth = 1;
-                  LOG_DBG("EHP", "Display size (inline, no CSS): %dx%d", displayWidth, displayHeight);
                 } else {
-                  // Block image with no CSS dimensions: scale to fit viewport while maintaining aspect ratio
+                  // BScale to fit viewport while preserving aspect ratio
                   int maxWidth = self->viewportWidth;
                   int maxHeight = self->viewportHeight;
                   float scaleX = (dims.width > maxWidth) ? (float)maxWidth / dims.width : 1.0f;
@@ -459,7 +464,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 // Create page for image - only break if image won't fit remaining space
                 if (self->currentPage && !self->currentPage->elements.empty() &&
                     (self->currentPageNextY + displayHeight > self->viewportHeight)) {
-                  self->completePageFn(std::move(self->currentPage));
+                  self->completePageFn(std::move(self->currentPage), self->xpathParagraphIndex);
                   self->completedPageCount++;
                   self->currentPage.reset(new Page());
                   if (!self->currentPage) {
@@ -606,10 +611,19 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         // flush word preceding <br/> to currentTextBlock before calling startNewTextBlock
         self->flushPartWordBuffer();
       }
-      self->startNewTextBlock(self->currentTextBlock->getBlockStyle());
+      // Tag the new block so startNewTextBlock can inject a full line-height gap if
+      // the block remains empty (i.e. <br> is a section separator between paragraphs).
+      // If the block gets text added before the next block opens it becomes non-empty,
+      // goes through makePages() normally, and the flag has no effect (inline <br> case).
+      BlockStyle brStyle = self->currentTextBlock->getBlockStyle();
+      brStyle.fromBrElement = true;
+      self->startNewTextBlock(brStyle);
     } else {
       self->currentCssStyle = cssStyle;
       self->startNewTextBlock(userAlignmentBlockStyle);
+      if (strcmp(name, "p") == 0) {
+        self->xpathParagraphIndex++;
+      }
       self->updateEffectiveInlineStyle();
 
       if (strcmp(name, "li") == 0) {
@@ -709,7 +723,6 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->inlineStyleStack.push_back(entry);
     self->updateEffectiveInlineStyle();
   } else if (strcmp(name, "span") == 0 || !isHeaderOrBlock(name)) {
-    // Handle span and other inline elements for CSS styling
     if (cssStyle.hasFontWeight() || cssStyle.hasFontStyle() || cssStyle.hasTextDecoration()) {
       // Flush buffer before style change so preceding text gets current style
       if (self->partWordBufferIndex > 0) {
@@ -1133,7 +1146,7 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
       anchorData.push_back({std::move(pendingAnchorId), static_cast<uint16_t>(completedPageCount)});
       pendingAnchorId.clear();
     }
-    completePageFn(std::move(currentPage));
+    completePageFn(std::move(currentPage), xpathParagraphIndex);
     completedPageCount++;
     currentPage.reset();
     currentTextBlock.reset();
@@ -1151,7 +1164,7 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line) {
   }
 
   if (currentPageNextY + lineHeight > viewportHeight) {
-    completePageFn(std::move(currentPage));
+    completePageFn(std::move(currentPage), xpathParagraphIndex);
     completedPageCount++;
     currentPage.reset(new Page());
     currentPageNextY = 0;

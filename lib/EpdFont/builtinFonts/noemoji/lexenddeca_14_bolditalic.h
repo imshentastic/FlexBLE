@@ -3,7 +3,7 @@
  * name: lexenddeca_14_bolditalic
  * size: 14
  * mode: 2-bit  compressed: true
- * Command used: fontconvert.py lexenddeca_14_bolditalic 14 ../builtinFonts/source/LexendDeca/LexendDeca-BoldItalic.ttf --2bit --compress
+ * Command used: fontconvert.py lexenddeca_14_bolditalic 14 ../builtinFonts/source/LexendDeca/LexendDeca-BoldItalic.ttf --2bit --compress --pnum
  */
 #pragma once
 #include "EpdFontData.h"

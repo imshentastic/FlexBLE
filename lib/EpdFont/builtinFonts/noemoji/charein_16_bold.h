@@ -3,7 +3,7 @@
  * name: charein_16_bold
  * size: 16
  * mode: 2-bit  compressed: true
- * Command used: fontconvert.py charein_16_bold 16 ../builtinFonts/source/ChareInk7/ChareInk7-Bold.ttf --2bit --compress
+ * Command used: fontconvert.py charein_16_bold 16 ../builtinFonts/source/ChareInk7/ChareInk7-Bold.ttf --2bit --compress --pnum
  */
 #pragma once
 #include "EpdFontData.h"
