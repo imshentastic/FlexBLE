@@ -159,9 +159,10 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
         charCount++;
       }
 
-      size_t targetBoldChars = (charCount * 2) / 5;
-      if (targetBoldChars < 1) targetBoldChars = 1;
-      if (targetBoldChars > 9) targetBoldChars = 9;
+      // Target 43% for 1-bold at 4 chars and 3-bold at 7 chars with floor truncation
+      constexpr size_t FOCUS_READING_PERCENT = 43;
+      size_t targetBoldChars = (charCount * FOCUS_READING_PERCENT) / 100;
+      targetBoldChars = std::clamp<size_t>(targetBoldChars, 1, 9);
 
       if (targetBoldChars >= charCount) {
         words.emplace_back(segment);
