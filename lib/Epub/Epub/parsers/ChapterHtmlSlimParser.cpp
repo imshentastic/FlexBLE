@@ -148,7 +148,9 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
       // div's margin should be preserved, even though it has no direct text content.
 
       BlockStyle incoming = blockStyle;
-      if (currentTextBlock->getBlockStyle().fromBrElement) {
+      const bool currentIsEmptyBr = currentTextBlock->getBlockStyle().fromBrElement;
+      const bool incomingIsBr = incoming.fromBrElement;
+      if (currentIsEmptyBr) {
         // The empty block was created by a <br> section separator. Inject a full line of
         // blank space before the following paragraph so the scene/section break is visible.
         // This only fires when the <br> block stayed empty (i.e. no inline text was added).
@@ -156,7 +158,9 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
         incoming.marginTop = static_cast<int16_t>(incoming.marginTop + lineHeight);
       }
 
-      currentTextBlock->setBlockStyle(currentTextBlock->getBlockStyle().getCombinedBlockStyle(incoming));
+      auto combinedStyle = currentTextBlock->getBlockStyle().getCombinedBlockStyle(incoming);
+      combinedStyle.fromBrElement = incoming.fromBrElement;
+      currentTextBlock->setBlockStyle(combinedStyle);
 
       if (!pendingAnchorId.empty()) {
         anchorData.push_back({std::move(pendingAnchorId), static_cast<uint16_t>(completedPageCount)});
