@@ -3,7 +3,7 @@
  * name: lexenddeca_16_bold
  * size: 16
  * mode: 2-bit  compressed: true
- * Command used: fontconvert.py lexenddeca_16_bold 16 ../builtinFonts/source/LexendDeca/LexendDeca-Bold.ttf --2bit --compress
+ * Command used: fontconvert.py lexenddeca_16_bold 16 ../builtinFonts/source/LexendDeca/LexendDeca-Bold.ttf --2bit --compress --pnum
  */
 #pragma once
 #include "EpdFontData.h"

@@ -1,9 +1,11 @@
 """
-PlatformIO pre-build script: inject git branch into CROSSPOINT_VERSION for
-the default (dev) environment.
+PlatformIO pre-build script: inject git info into version defines.
 
-Results in a version string like:  1.1.0-dev+feat-koysnc-xpath
-Release environments are unaffected; they set CROSSPOINT_VERSION in the ini.
+  default:       1.1.0-dev+<branch>
+  gh_release_rc: 1.1.0-rc+<5-char-hash>   (hash from $CROSSPOINT_RC_HASH in
+                                             CI, or from git locally)
+
+All other environments set CROSSPOINT_VERSION directly in platformio.ini.
 """
 
 import configparser
@@ -14,6 +16,17 @@ import sys
 
 def warn(msg):
     print(f'WARNING [git_branch.py]: {msg}', file=sys.stderr)
+
+
+def get_git_short_hash(project_dir, length=5):
+    try:
+        return subprocess.check_output(
+            ['git', 'rev-parse', '--short', 'HEAD'],
+            text=True, stderr=subprocess.PIPE, cwd=project_dir
+        ).strip()[:length]
+    except Exception as e:
+        warn(f'Could not read git hash: {e}; hash will be "00000"')
+        return '00000'
 
 
 def get_git_branch(project_dir):
@@ -41,32 +54,54 @@ def get_git_branch(project_dir):
         return 'unknown'
 
 
-def get_base_version(project_dir):
+def _read_ini(project_dir):
     ini_path = os.path.join(project_dir, 'platformio.ini')
-    if not os.path.isfile(ini_path):
-        warn(f'platformio.ini not found at {ini_path}; base version will be "0.0.0"')
-        return '0.0.0'
     config = configparser.ConfigParser()
-    config.read(ini_path)
+    if os.path.isfile(ini_path):
+        config.read(ini_path)
+    else:
+        warn(f'platformio.ini not found at {ini_path}')
+    return config
+
+
+def get_base_version(project_dir):
+    config = _read_ini(project_dir)
     if not config.has_option('crosspoint', 'version'):
         warn('No [crosspoint] version in platformio.ini; base version will be "0.0.0"')
         return '0.0.0'
     return config.get('crosspoint', 'version')
 
 
+def get_crossink_version(project_dir):
+    config = _read_ini(project_dir)
+    if not config.has_option('crosspoint', 'crossink_version'):
+        warn('No [crosspoint] crossink_version in platformio.ini; falling back to version')
+        return get_base_version(project_dir)
+    return config.get('crosspoint', 'crossink_version')
+
+
 def inject_version(env):
-    # Only applies to the dev (default) environment; release envs set the
-    # version via build_flags in platformio.ini and are unaffected.
-    if env['PIOENV'] != 'default':
-        return
-
     project_dir = env['PROJECT_DIR']
-    base_version = get_base_version(project_dir)
-    branch = get_git_branch(project_dir)
-    version_string = f'{base_version}-dev+{branch}'
+    pioenv = env['PIOENV']
 
-    env.Append(CPPDEFINES=[('CROSSPOINT_VERSION', f'\\"{version_string}\\"')])
-    print(f'CrossPoint build version: {version_string}')
+    if pioenv == 'default':
+        base_version = get_base_version(project_dir)
+        branch = get_git_branch(project_dir)
+        version_string = f'{base_version}-dev+{branch}'
+        env.Append(CPPDEFINES=[('CROSSPOINT_VERSION', f'\\"{version_string}\\"')])
+        print(f'CrossPoint build version: {version_string}')
+
+    elif pioenv == 'gh_release_rc':
+        # CI passes CROSSPOINT_RC_HASH as an env var; locally we derive it from git.
+        short_hash = os.environ.get('CROSSPOINT_RC_HASH') or get_git_short_hash(project_dir)
+        cp_version = get_base_version(project_dir)
+        ci_version = get_crossink_version(project_dir)
+        rc_suffix = f'-rc+{short_hash}'
+        env.Append(CPPDEFINES=[
+            ('CROSSPOINT_VERSION', f'\\"{cp_version}{rc_suffix}\\"'),
+            ('CROSSINK_VERSION', f'\\"{ci_version}{rc_suffix}\\"'),
+        ])
+        print(f'CrossPoint RC build version: {cp_version}{rc_suffix}')
 
 
 # PlatformIO/SCons entry point — Import and env are SCons builtins injected at runtime.

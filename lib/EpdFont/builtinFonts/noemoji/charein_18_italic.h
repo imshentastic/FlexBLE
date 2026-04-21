@@ -3,7 +3,7 @@
  * name: charein_18_italic
  * size: 18
  * mode: 2-bit  compressed: true
- * Command used: fontconvert.py charein_18_italic 18 ../builtinFonts/source/ChareInk7/ChareInk7-Italic.ttf --2bit --compress
+ * Command used: fontconvert.py charein_18_italic 18 ../builtinFonts/source/ChareInk7/ChareInk7-Italic.ttf --2bit --compress --pnum
  */
 #pragma once
 #include "EpdFontData.h"
