@@ -891,6 +891,13 @@ void BaseTheme::drawKeyboardKey(const GfxRenderer& renderer, Rect rect, const ch
   } else if (keyType == KeyboardKeyType::Shift || keyType == KeyboardKeyType::Mode || keyType == KeyboardKeyType::Del ||
              keyType == KeyboardKeyType::Space || keyType == KeyboardKeyType::Ok ||
              keyType == KeyboardKeyType::Disabled) {
+    if (keyType == KeyboardKeyType::Disabled) {
+      if (cr > 0) {
+        renderer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, cr, Color::LightGray);
+      } else {
+        renderer.fillRectDither(rect.x, rect.y, rect.width, rect.height, Color::LightGray);
+      }
+    }
     if (cr > 0) {
       renderer.drawRoundedRect(rect.x, rect.y, rect.width, rect.height, 1, cr, true);
     } else {
