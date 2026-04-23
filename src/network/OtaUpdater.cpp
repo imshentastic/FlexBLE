@@ -8,6 +8,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(volatile bool*) { return N
 #include <ArduinoJson.h>
 #include <Logging.h>
 
+#include "AppVersion.h"
 #include "OtaUpdater.h"
 #include "esp_http_client.h"
 #include "esp_https_ota.h"
