@@ -11,6 +11,7 @@
 #include <esp_system.h>
 
 #include <array>
+#include <functional>
 #include <limits>
 
 #include "BookStatsActivity.h"
@@ -242,7 +243,19 @@ void EpubReaderActivity::onExit() {
 
   BOOKMARKS.unload();
   section.reset();
-  epub.reset();
+
+  if (pendingReadFolderMove) {
+    auto* params = new ReadFolderMoveParams{epub->getPath(), epub->getCachePath(), epub->getTitle()};
+    epub.reset();
+    TaskHandle_t moveTaskHandle = nullptr;
+    xTaskCreate(&readFolderMoveTask, "ReadFolderMove", 4096, params, 1, &moveTaskHandle);
+    if (!moveTaskHandle) {
+      LOG_ERR("ERS", "Failed to create readFolderMoveTask");
+      delete params;
+    }
+  } else {
+    epub.reset();
+  }
 }
 
 void EpubReaderActivity::loop() {
@@ -692,6 +705,11 @@ void EpubReaderActivity::setBookCompleted(bool isCompleted) {
   stats.isCompleted = isCompleted;
   if (isCompleted) {
     completionPromptShown = true;
+    if (SETTINGS.moveFinishedToReadFolder && epub->getPath().rfind("/Read/", 0) != 0) {
+      pendingReadFolderMove = true;
+    }
+  } else {
+    pendingReadFolderMove = false;
   }
   if (isCompleted) {
     globalStats.completedBooks++;
@@ -1244,4 +1262,63 @@ void EpubReaderActivity::restoreSavedPosition() {
     section.reset();
   }
   requestUpdate();
+}
+
+void EpubReaderActivity::readFolderMoveTask(void* arg) {
+  auto* params = static_cast<ReadFolderMoveParams*>(arg);
+
+  // Extract filename from source path
+  const size_t lastSlash = params->epubPath.rfind('/');
+  const std::string filename =
+      (lastSlash != std::string::npos) ? params->epubPath.substr(lastSlash + 1) : params->epubPath;
+
+  // Build destination path, avoiding collisions
+  Storage.mkdir("/Read");
+  std::string dstEpubPath = "/Read/" + filename;
+  if (Storage.exists(dstEpubPath.c_str())) {
+    // Strip .epub extension, append suffix, re-add extension
+    const size_t dotPos = filename.rfind('.');
+    const std::string base = (dotPos != std::string::npos) ? filename.substr(0, dotPos) : filename;
+    const std::string ext = (dotPos != std::string::npos) ? filename.substr(dotPos) : "";
+    int suffix = 2;
+    do {
+      dstEpubPath = "/Read/" + base + " (" + std::to_string(suffix) + ")" + ext;
+      suffix++;
+    } while (Storage.exists(dstEpubPath.c_str()) && suffix < 100);
+  }
+
+  LOG_INF("ERS", "Moving epub: %s -> %s", params->epubPath.c_str(), dstEpubPath.c_str());
+
+  if (!Storage.rename(params->epubPath.c_str(), dstEpubPath.c_str())) {
+    LOG_ERR("ERS", "Failed to move book to 'Read' folder");
+    snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_MOVE_TO_READ_FAILED_TITLE));
+    snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_MOVE_TO_READ_FAILED_BODY),
+             params->title.c_str());
+    APP_STATE.hasPendingAlert = true;
+    delete params;
+    vTaskDelete(nullptr);
+    return;
+  }
+
+  // Rename cache directory to match new epub path hash
+  const std::string oldCachePath = params->cachePath;
+  const std::string newCachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(dstEpubPath));
+  if (!oldCachePath.empty() && Storage.exists(oldCachePath.c_str())) {
+    if (!Storage.rename(oldCachePath.c_str(), newCachePath.c_str())) {
+      LOG_ERR("ERS", "Failed to rename cache dir %s -> %s (non-fatal)", oldCachePath.c_str(), newCachePath.c_str());
+    }
+  }
+
+  // Update recent books store with new paths
+  RECENT_BOOKS.updatePath(params->epubPath, dstEpubPath, oldCachePath, newCachePath);
+
+  // Update the open epub path if it matched
+  if (APP_STATE.openEpubPath == params->epubPath) {
+    APP_STATE.openEpubPath = dstEpubPath;
+    APP_STATE.saveToFile();
+  }
+
+  LOG_INF("ERS", "Move to /Read/ complete");
+  delete params;
+  vTaskDelete(nullptr);
 }
