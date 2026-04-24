@@ -11,6 +11,7 @@
 #include <memory>
 #include <utility>
 
+#include "AppVersion.h"
 #include "util/UrlUtils.h"
 
 namespace {

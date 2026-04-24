@@ -231,7 +231,8 @@ void EpubReaderActivity::loop() {
       currentPage = section ? section->currentPage + 1 : 0;
       totalPages = section ? section->pageCount : 0;
       bmSpine = static_cast<uint16_t>(currentSpineIndex);
-      bmProgress = (section && section->pageCount > 0) ? static_cast<float>(section->currentPage) / section->pageCount : 0.0f;
+      bmProgress =
+          (section && section->pageCount > 0) ? static_cast<float>(section->currentPage) / section->pageCount : 0.0f;
       bookmarkPageCount = (section && section->pageCount > 0) ? section->pageCount : 1;
       isBookCompleted = stats.isCompleted;
       bookProgress = getCurrentBookProgressPercent();
@@ -241,8 +242,7 @@ void EpubReaderActivity::loop() {
     startActivityForResult(std::make_unique<EpubReaderMenuActivity>(
                                renderer, mappedInput, epub->getTitle(), currentPage, totalPages, bookProgressPercent,
                                SETTINGS.orientation, !currentPageFootnotes.empty(), !BOOKMARKS.getBookmarks().empty(),
-                               BOOKMARKS.hasBookmarkForPage(bmSpine, bmProgress, bookmarkPageCount),
-                               isBookCompleted),
+                               BOOKMARKS.hasBookmarkForPage(bmSpine, bmProgress, bookmarkPageCount), isBookCompleted),
                            [this](const ActivityResult& result) {
                              // Always apply orientation change even if the menu was cancelled
                              const auto& menu = std::get<MenuResult>(result.data);
