@@ -26,8 +26,11 @@ My goal with this fork was to maintain the core Crosspoint firmware while integr
 - Made <u>underlines</u> thicker for better visibility
 - Added ability to add bookmarks
 - Added ability to remap front buttons that only applies in the reader
-- In-book menu to quickly adjust font options without having to exit the book
-- Reading stats: total reading time, number of sessions, pages turned, average session time, pages turned per minute
+- Added ability to mark a book as finished from the in-book menu. A pop-up will also display once 99% of the book is reached. This status allows tracking of total books read.
+- Added ability to move finished books to "Read" folder
+  - To turn this on, go to Settings > System > Move finished books to Read folder. Once a book is marked as finished, the book will be moved to the folder when the book is closed.
+- In-book menu to quickly adjust reader options without having to exit the book
+- Reading stats: total books read, total reading time, number of sessions, pages turned, average session time, pages turned per minute
 - Changed label for "Auto Turn (Pages Per Minute)" to "Auto Page Turn Interval (seconds)"
   - Added additional page turn intervals (how many seconds pass between page turns). Options are now (in seconds): 60, 45, 30, 20, 15, 10, 5, OFF.
 - Device simulator during development
@@ -103,12 +106,19 @@ Some simple per-book reading stats are tracked automatically and displayed in tw
 - Number of sessions
 - Pages turned
 - Average session time
-- All time reading stats
+- All time reading stats including total number of books read
 
 **Home screen book card (Lyra theme only):**
 
 - Total reading time
 - Average session time
+
+### Finished books / Read folder
+
+- You can manually mark a book as finished from the in-book menu
+- At 99% book progress a pop-up will also display asking if you want to mark the book as finished
+- If you have the "Move finished books to Read folder" setting turned on, then once you have marked a book as finished, the book will automatically be moved to a folder named "Read" on your SD card
+- Marking books as finished also enables the total "Books Read" reading stat
 
 ---
 
