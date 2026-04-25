@@ -14,7 +14,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.14'
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -33,15 +33,15 @@ jobs:
       - name: Build CrossPoint Release Candidate
         env:
           CROSSPOINT_RC_HASH: ${{ env.SHORT_SHA }}
-        run: pio run -e gh_release_rc
+        run: pio run -e test
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: CrossPoint-RC-${{ env.BRANCH_SUFFIX }}
           path: |
-            .pio/build/gh_release_rc/bootloader.bin
-            .pio/build/gh_release_rc/firmware.bin
-            .pio/build/gh_release_rc/firmware.elf
-            .pio/build/gh_release_rc/firmware.map
-            .pio/build/gh_release_rc/partitions.bin
+            .pio/build/test/bootloader.bin
+            .pio/build/test/firmware.bin
+            .pio/build/test/firmware.elf
+            .pio/build/test/firmware.map
+            .pio/build/test/partitions.bin

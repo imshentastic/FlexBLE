@@ -1,5 +1,9 @@
 # CrossPoint Reader — Consolidated Project Context
 
+## 2026-04-25
+
+- Added a reader-layout toggle for forced paragraph indents. The parser-side fallback in `lib/Epub/Epub/parsers/ChapterHtmlSlimParser.cpp` is now gated by `SETTINGS.forceParagraphIndents`, and `section.bin` cache versioning must include that flag so toggling it invalidates stale layout caches.
+
 Any simulator patches should be made to the `crosspoint-simulator` project itself. If it is not co-located with this project, inform the user of all changes that should be made to the simulator project and request that they open a pull request for them.
 
 ## Known Simulator Limitations

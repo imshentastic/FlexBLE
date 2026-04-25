@@ -18,6 +18,7 @@ class ParsedText {
   std::vector<bool> wordContinues;  // true = word attaches to previous (no space before it)
   BlockStyle blockStyle;
   bool extraParagraphSpacing;
+  bool forceParagraphIndents;
   bool hyphenationEnabled;
   bool focusReadingEnabled;
 
@@ -35,10 +36,12 @@ class ParsedText {
   std::vector<uint16_t> calculateWordWidths(const GfxRenderer& renderer, int fontId);
 
  public:
-  explicit ParsedText(const bool extraParagraphSpacing, const bool hyphenationEnabled = false,
-                      const bool focusReadingEnabled = false, const BlockStyle& blockStyle = BlockStyle())
+  explicit ParsedText(const bool extraParagraphSpacing, const bool forceParagraphIndents = false,
+                      const bool hyphenationEnabled = false, const bool focusReadingEnabled = false,
+                      const BlockStyle& blockStyle = BlockStyle())
       : blockStyle(blockStyle),
         extraParagraphSpacing(extraParagraphSpacing),
+        forceParagraphIndents(forceParagraphIndents),
         hyphenationEnabled(hyphenationEnabled),
         focusReadingEnabled(focusReadingEnabled) {}
   ~ParsedText() = default;
