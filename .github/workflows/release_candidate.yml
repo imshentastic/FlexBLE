@@ -3,6 +3,9 @@ name: Compile Release Candidate
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-release-candidate:
     if: startsWith(github.ref_name, 'release/')
@@ -20,28 +23,33 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
-          enable-cache: false
+          enable-cache: true
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-platformio-${{ hashFiles('platformio.ini', 'platformio.local.example.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-platformio-
 
       - name: Install PlatformIO Core
         run: uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
 
-      - name: Extract env
+      - name: Set version from branch
         run: |
-          echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
-          echo "BRANCH_SUFFIX=${GITHUB_REF_NAME#release/}" >> $GITHUB_ENV
+          VERSION="${GITHUB_REF_NAME#release/}-RC"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          sed -i "s/crossink_version = .*/crossink_version = $VERSION/" platformio.ini
 
-      - name: Build CrossPoint Release Candidate
-        env:
-          CROSSPOINT_RC_HASH: ${{ env.SHORT_SHA }}
-        run: pio run -e test
+      - name: Build CrossPoint
+        run: pio run -e tiny -e xlarge -e no_emoji
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: CrossPoint-RC-${{ env.BRANCH_SUFFIX }}
+          name: CrossPoint-RC-${{ env.VERSION }}
           path: |
-            .pio/build/test/bootloader.bin
-            .pio/build/test/firmware.bin
-            .pio/build/test/firmware.elf
-            .pio/build/test/firmware.map
-            .pio/build/test/partitions.bin
+            .pio/build/tiny/firmware-tiny.bin
+            .pio/build/xlarge/firmware-xlarge.bin
+            .pio/build/no_emoji/firmware-no_emoji.bin
