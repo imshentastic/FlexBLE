@@ -3,6 +3,7 @@
 ## 2026-04-25
 
 - Added a reader-layout toggle for forced paragraph indents. The parser-side fallback in `lib/Epub/Epub/parsers/ChapterHtmlSlimParser.cpp` is now gated by `SETTINGS.forceParagraphIndents`, and `section.bin` cache versioning must include that flag so toggling it invalidates stale layout caches.
+- Added `test/epubs/test_force_paragraph_indents.epub` plus source files under `test/epubs-src/test_force_paragraph_indents/`. The fixture is meant for quick manual verification with `Extra Paragraph Spacing` on: chapter 2 should gain first-line indents only when `Force Paragraph Indents` is on, while chapter 3 guards centered/right-aligned and hanging-indent paragraphs from regressions.
 
 Any simulator patches should be made to the `crosspoint-simulator` project itself. If it is not co-located with this project, inform the user of all changes that should be made to the simulator project and request that they open a pull request for them.
 
