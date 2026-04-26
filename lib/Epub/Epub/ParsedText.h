@@ -20,7 +20,7 @@ class ParsedText {
   bool extraParagraphSpacing;
   bool forceParagraphIndents;
   bool hyphenationEnabled;
-  bool focusReadingEnabled;
+  bool bionicReadingEnabled;
   bool guideReadingEnabled;
 
   void applyParagraphIndent();
@@ -38,13 +38,13 @@ class ParsedText {
 
  public:
   explicit ParsedText(const bool extraParagraphSpacing, const bool forceParagraphIndents = false,
-                      const bool hyphenationEnabled = false, const bool focusReadingEnabled = false,
+                      const bool hyphenationEnabled = false, const bool bionicReadingEnabled = false,
                       const BlockStyle& blockStyle = BlockStyle(), const bool guideReadingEnabled = false)
       : blockStyle(blockStyle),
         extraParagraphSpacing(extraParagraphSpacing),
         forceParagraphIndents(forceParagraphIndents),
         hyphenationEnabled(hyphenationEnabled),
-        focusReadingEnabled(focusReadingEnabled),
+        bionicReadingEnabled(bionicReadingEnabled),
         guideReadingEnabled(guideReadingEnabled) {}
   ~ParsedText() = default;
 

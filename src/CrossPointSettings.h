@@ -204,7 +204,7 @@ class CrossPointSettings {
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)
   uint8_t embeddedStyle = 1;
   // Focus Reading - emphasizes the first part of words with bold
-  uint8_t focusReadingEnabled = 0;
+  uint8_t bionicReadingEnabled = 0;
   // Guide Dots - places a middle dot between words to guide the eye
   uint8_t guideReadingEnabled = 0;
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
