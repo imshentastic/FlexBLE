@@ -3,6 +3,8 @@
 #include <GfxRenderer.h>
 #include <Logging.h>
 
+#include <algorithm>
+
 #include "AppVersion.h"
 #include "ButtonRemapActivity.h"
 #include "ClearCacheActivity.h"
@@ -32,11 +34,10 @@ void SettingsActivity::onEnter() {
 
   const auto& allSettings = getSettingsList();
   auto addControlSetting = [&](StrId nameId) {
-    for (const auto& s : allSettings) {
-      if (s.nameId == nameId) {
-        controlsSettings.push_back(s);
-        break;
-      }
+    const auto it = std::find_if(allSettings.begin(), allSettings.end(),
+                                 [nameId](const auto& setting) { return setting.nameId == nameId; });
+    if (it != allSettings.end()) {
+      controlsSettings.push_back(*it);
     }
   };
 
