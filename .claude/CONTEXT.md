@@ -5,6 +5,13 @@
 - Added a reader-layout toggle for forced paragraph indents. The parser-side fallback in `lib/Epub/Epub/parsers/ChapterHtmlSlimParser.cpp` is now gated by `SETTINGS.forceParagraphIndents`, and `section.bin` cache versioning must include that flag so toggling it invalidates stale layout caches.
 - Added `test/epubs/test_force_paragraph_indents.epub` plus source files under `test/epubs-src/test_force_paragraph_indents/`. The fixture is meant for quick manual verification with `Extra Paragraph Spacing` on: chapter 2 should gain first-line indents only when `Force Paragraph Indents` is on, while chapter 3 guards centered/right-aligned and hanging-indent paragraphs from regressions.
 
+## 2026-04-27
+
+- Added `test/epubs/test_emoji_ranges.epub` plus source files under `test/epubs-src/test_emoji_ranges/`. It mirrors the extra Unicode slices from `lib/EpdFont/scripts/convert-builtin-fonts.sh` so font-regeneration checks can be done in one book with labeled `U+XXXX` samples for music symbols, hands, heart, emoticons, and Greek/Coptic coverage.
+- Narrowed the exported fallback glyph set to exact requested music/Greek/Cyrillic/letterlike code points, removed `NotoSansSymbols2` from the reading-font merge stack, and used matching `ChareInk7` styles as the fallback source for lambda/Cyrillic/`ℓ`.
+- Added `--font-include-intervals` support to `lib/EpdFont/scripts/fontconvert.py` so fallback faces can be limited to specific code point slices; the current script now scopes `ChareInk7`, `NotoEmoji`, and `NotoSansSymbols` to only the requested extra glyph ranges instead of letting them fill unrelated gaps from the default intervals.
+- Expanded the kept music-symbol slice back to `U+2669-U+266F` so the test set includes `♩♪♫♬♭♮♯` while keeping the targeted fallback restrictions in place.
+
 Any simulator patches should be made to the `crosspoint-simulator` project itself. If it is not co-located with this project, inform the user of all changes that should be made to the simulator project and request that they open a pull request for them.
 
 ## Known Simulator Limitations
