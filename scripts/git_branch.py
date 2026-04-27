@@ -32,27 +32,49 @@ def get_git_short_hash(project_dir, length=5):
 
 def get_git_branch(project_dir):
     try:
-        branch = subprocess.check_output(
-            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+        value = subprocess.check_output(
+            ['git', *args],
             text=True, stderr=subprocess.PIPE, cwd=project_dir
         ).strip()
-        # Detached HEAD — show the short SHA instead
-        if branch == 'HEAD':
-            branch = subprocess.check_output(
-                ['git', 'rev-parse', '--short', 'HEAD'],
-                text=True, stderr=subprocess.PIPE, cwd=project_dir
-            ).strip()
         # Strip characters that would break a C string literal
-        return ''.join(c for c in branch if c not in '"\\')
+        return ''.join(c for c in value if c not in '"\\')
     except FileNotFoundError:
-        warn('git not found on PATH; branch suffix will be "unknown"')
+        warn(f'git not found on PATH; {label} suffix will be "unknown"')
         return 'unknown'
     except subprocess.CalledProcessError as e:
-        warn(f'git command failed (exit {e.returncode}): {e.stderr.strip()}; branch suffix will be "unknown"')
+        warn(
+            f'git command failed (exit {e.returncode}): '
+            f'{e.stderr.strip()}; {label} suffix will be "unknown"'
+        )
         return 'unknown'
-    except Exception as e:
-        warn(f'Unexpected error reading git branch: {e}; branch suffix will be "unknown"')
+    except OSError as e:
+        warn(
+            f'OS error reading git {label}: {e}; '
+            f'{label} suffix will be "unknown"'
+        )
         return 'unknown'
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        warn(
+            f'Unexpected error reading git {label}: {e}; '
+            f'{label} suffix will be "unknown"'
+        )
+        return 'unknown'
+
+
+def get_git_branch(project_dir):
+    branch = run_git_value(
+        project_dir, ['rev-parse', '--abbrev-ref', 'HEAD'], 'branch'
+    )
+    # Detached HEAD has no branch name.
+    if branch == 'HEAD':
+        return 'detached'
+    return branch
+
+
+def get_git_short_sha(project_dir):
+    return run_git_value(
+        project_dir, ['rev-parse', '--short', 'HEAD'], 'short SHA'
+    )
 
 
 def _read_ini(project_dir):
