@@ -58,7 +58,7 @@ class Xtc {
   std::string getTitle() const;
   std::string getAuthor() const;
   bool hasChapters() const;
-  const std::vector<xtc::ChapterInfo>& getChapters();
+  const std::vector<xtc::ChapterInfo>& getChapters() const;
 
   // Cover image support (for sleep screen)
   std::string getCoverBmpPath() const;
