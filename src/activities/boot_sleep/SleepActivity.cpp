@@ -525,10 +525,10 @@ void SleepActivity::renderOverlaySleepScreen() const {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
 
-  // Step 1: Ensure the frame buffer contains the reader page.
-  // When coming from a reader activity the frame buffer already holds the page.
-  // When coming from a non-reader activity we re-render it from the saved progress.
-  if (!APP_STATE.lastSleepFromReader && !APP_STATE.openEpubPath.empty()) {
+  // Step 1: Ensure the frame buffer contains only the reader page.
+  // The sleep popup was just drawn into the same buffer, so overlay mode must rebuild
+  // the saved page before compositing the transparent sleep artwork.
+  if (!APP_STATE.openEpubPath.empty()) {
     const auto& path = APP_STATE.openEpubPath;
     bool rendered = false;
 
@@ -544,6 +544,8 @@ void SleepActivity::renderOverlaySleepScreen() const {
       LOG_DBG("SLP", "Page re-render failed, using white background");
       renderer.clearScreen();
     }
+  } else {
+    renderer.clearScreen();
   }
 
   // Remove the live battery strip from the preserved/reconstructed reader page so the
