@@ -207,6 +207,8 @@ std::string recentTitleForPath(const std::string& path) {
   return {};
 }
 
+enum class OverlayDrawResult : uint8_t { NotFound, Drawn, Failed };
+
 }  // namespace
 
 void SleepActivity::onEnter() {
@@ -555,13 +557,23 @@ void SleepActivity::renderOverlaySleepScreen() const {
   // Step 2: Load the overlay image using the same selection logic as renderCustomSleepScreen.
   // BMP: white pixels are skipped (transparent via drawBitmap), black pixels composited on top.
   // PNG: pixels with alpha < 128 are skipped; opaque pixels are drawn with their grayscale value.
-  auto tryDrawOverlay = [&](const std::string& filename) -> bool {
+  auto tryDrawOverlay = [&](const std::string& filename) -> OverlayDrawResult {
     FsFile file;
-    if (!Storage.openFileForRead("SLP", filename, file)) return false;
+    if (!Storage.openFileForRead("SLP", filename, file)) {
+      if (Storage.exists(filename.c_str())) {
+        LOG_ERR("SLP", "BMP overlay exists but could not be opened: %s", filename.c_str());
+        return OverlayDrawResult::Failed;
+      }
+      LOG_DBG("SLP", "BMP overlay not found: %s", filename.c_str());
+      return OverlayDrawResult::NotFound;
+    }
     Bitmap bitmap(file, true);
-    if (bitmap.parseHeaders() != BmpReaderError::Ok) {
+    const BmpReaderError parseResult = bitmap.parseHeaders();
+    if (parseResult != BmpReaderError::Ok) {
+      LOG_ERR("SLP", "BMP overlay header parse failed for %s: %s", filename.c_str(),
+              Bitmap::errorToString(parseResult));
       file.close();
-      return false;
+      return OverlayDrawResult::Failed;
     }
 
     int x, y;
@@ -582,25 +594,35 @@ void SleepActivity::renderOverlaySleepScreen() const {
     }
 
     // Draw without clearScreen so the reader page remains in the frame buffer beneath
+    LOG_INF("SLP", "Drawing BMP overlay: %s", filename.c_str());
     renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
     file.close();
-    return true;
+    return OverlayDrawResult::Drawn;
   };
 
-  auto tryDrawPngOverlay = [&](const std::string& filename) -> bool {
+  auto tryDrawPngOverlay = [&](const std::string& filename) -> OverlayDrawResult {
+    if (!Storage.exists(filename.c_str())) {
+      LOG_DBG("SLP", "PNG overlay not found: %s", filename.c_str());
+      return OverlayDrawResult::NotFound;
+    }
+
     constexpr size_t MIN_FREE_HEAP = 60 * 1024;  // PNG decoder ~42 KB + overhead
     if (ESP.getFreeHeap() < MIN_FREE_HEAP) {
-      LOG_ERR("SLP", "Not enough heap for PNG overlay decoder");
-      return false;
+      LOG_ERR("SLP", "Not enough heap for PNG overlay decoder: %u free, need %u for %s", ESP.getFreeHeap(),
+              static_cast<unsigned>(MIN_FREE_HEAP), filename.c_str());
+      return OverlayDrawResult::Failed;
     }
     PNG* png = new (std::nothrow) PNG();
-    if (!png) return false;
+    if (!png) {
+      LOG_ERR("SLP", "Failed to allocate PNG overlay decoder for %s", filename.c_str());
+      return OverlayDrawResult::Failed;
+    }
 
     int rc = png->open(filename.c_str(), pngSleepOpen, pngSleepClose, pngSleepRead, pngSleepSeek, pngOverlayDraw);
     if (rc != PNG_SUCCESS) {
-      LOG_DBG("SLP", "PNG open failed: %s (%d)", filename.c_str(), rc);
       delete png;
-      return false;
+      LOG_ERR("SLP", "PNG overlay open failed for %s: %d", filename.c_str(), rc);
+      return OverlayDrawResult::Failed;
     }
 
     const int srcW = png->getWidth(), srcH = png->getHeight();
@@ -627,15 +649,21 @@ void SleepActivity::renderOverlaySleepScreen() const {
     ctx.transparentColor = -2;  // will be resolved on first draw callback (after tRNS is parsed)
     ctx.pngObj = png;
 
+    LOG_INF("SLP", "Drawing PNG overlay: %s", filename.c_str());
     rc = png->decode(&ctx, 0);
     png->close();
     delete png;
-    return rc == PNG_SUCCESS;
+    if (rc != PNG_SUCCESS) {
+      LOG_ERR("SLP", "PNG overlay decode failed for %s: %d", filename.c_str(), rc);
+      return OverlayDrawResult::Failed;
+    }
+    return OverlayDrawResult::Drawn;
   };
 
   // Try /.sleep/ (preferred) or /sleep/ directory (random selection, same as renderCustomSleepScreen).
   // Accepts both .bmp and .png files; .bmp headers are validated during the scan.
   bool overlayDrawn = false;
+  bool overlayCandidateFailed = false;
   const char* sleepDir = nullptr;
   auto dir = Storage.open("/.sleep");
   if (dir && dir.isDirectory()) {
@@ -669,7 +697,10 @@ void SleepActivity::renderOverlaySleepScreen() const {
       }
       if (isBmp) {
         Bitmap bmp(file);
-        if (bmp.parseHeaders() != BmpReaderError::Ok) {
+        const BmpReaderError parseResult = bmp.parseHeaders();
+        if (parseResult != BmpReaderError::Ok) {
+          LOG_ERR("SLP", "Skipping invalid BMP overlay %s/%s: %s", sleepDir, filename.c_str(),
+                  Bitmap::errorToString(parseResult));
           file.close();
           continue;
         }
@@ -689,23 +720,36 @@ void SleepActivity::renderOverlaySleepScreen() const {
       APP_STATE.pushRecentSleep(randomFileIndex);
       APP_STATE.saveToFile();
       const std::string selected = std::string(sleepDir) + "/" + files[randomFileIndex];
+      LOG_INF("SLP", "Selected overlay image: %s", selected.c_str());
+      OverlayDrawResult result;
       if (FsHelpers::checkFileExtension(selected, ".png")) {
-        overlayDrawn = tryDrawPngOverlay(selected);
+        result = tryDrawPngOverlay(selected);
       } else {
-        overlayDrawn = tryDrawOverlay(selected);
+        result = tryDrawOverlay(selected);
       }
+      overlayDrawn = result == OverlayDrawResult::Drawn;
+      overlayCandidateFailed = overlayCandidateFailed || result == OverlayDrawResult::Failed;
     }
   }
   if (dir) dir.close();
 
   if (!overlayDrawn) {
-    overlayDrawn = tryDrawOverlay("/sleep.bmp");
+    const OverlayDrawResult result = tryDrawOverlay("/sleep.bmp");
+    overlayDrawn = result == OverlayDrawResult::Drawn;
+    overlayCandidateFailed = overlayCandidateFailed || result == OverlayDrawResult::Failed;
   }
   if (!overlayDrawn) {
-    overlayDrawn = tryDrawPngOverlay("/sleep.png");
+    const OverlayDrawResult result = tryDrawPngOverlay("/sleep.png");
+    overlayDrawn = result == OverlayDrawResult::Drawn;
+    overlayCandidateFailed = overlayCandidateFailed || result == OverlayDrawResult::Failed;
   }
 
   if (!overlayDrawn) {
+    if (overlayCandidateFailed) {
+      LOG_ERR("SLP", "Overlay image was found but could not be drawn; falling back to default sleep screen");
+      renderer.setOrientation(savedOrientation);
+      return renderDefaultSleepScreen();
+    }
     LOG_DBG("SLP", "No overlay image found, displaying page without overlay");
   }
 
