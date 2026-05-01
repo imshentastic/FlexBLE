@@ -157,6 +157,10 @@ EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont);
 unsigned long t1 = 0;
 unsigned long t2 = 0;
 
+// Set when the screenshot combo (Power + Volume Down) fires, so the subsequent
+// power button release does not also trigger a short-press action (e.g. sleep).
+static bool screenshotComboHandled = false;
+
 // Verify power button press duration on wake-up from deep sleep
 // Pre-condition: isWakeupByPowerButton() == true
 void verifyPowerButtonDuration() {
@@ -219,6 +223,11 @@ CrossPointSettings::SHORT_PWRBTN getPowerButtonAction() {
   if (mappedInputManager.wasReleased(MappedInputManager::Button::Power)) {
     if (longPowerButtonHandled) {
       longPowerButtonHandled = false;
+      return CrossPointSettings::SHORT_PWRBTN::IGNORE;
+    }
+
+    if (screenshotComboHandled) {
+      screenshotComboHandled = false;
       return CrossPointSettings::SHORT_PWRBTN::IGNORE;
     }
 
@@ -456,6 +465,7 @@ void loop() {
   if (gpio.isPressed(HalGPIO::BTN_POWER) && gpio.isPressed(HalGPIO::BTN_DOWN)) {
     if (screenshotButtonsReleased) {
       screenshotButtonsReleased = false;
+      screenshotComboHandled = true;
       {
         RenderLock lock;
         ScreenshotUtil::takeScreenshot(renderer);
