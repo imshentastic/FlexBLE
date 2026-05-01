@@ -61,6 +61,9 @@ inline const std::vector<SettingInfo>& getSettingsList() {
 #ifndef OMIT_TEENSY_FONT
                             StrId::STR_TEENSY,
 #endif
+#ifndef OMIT_HUGE_FONT
+                            StrId::STR_HUGE,
+#endif
                         },
                         "fontSize", StrId::STR_CAT_READER),
       SettingInfo::Enum(StrId::STR_LINE_SPACING, &CrossPointSettings::lineSpacing,

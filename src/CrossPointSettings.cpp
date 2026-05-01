@@ -321,6 +321,9 @@ uint8_t CrossPointSettings::getActiveReaderFontSizeCount() {
 #ifdef OMIT_XLARGE_FONT
          - 1
 #endif
+#ifdef OMIT_HUGE_FONT
+         - 1
+#endif
       ;
 }
 
@@ -347,6 +350,10 @@ uint8_t CrossPointSettings::getStoredReaderFontSize(const FONT_SIZE size) {
   if (size == TEENSY) return stored;
   stored++;
 #endif
+#ifndef OMIT_HUGE_FONT
+  if (size == HUGE_SIZE) return stored;
+  stored++;
+#endif
   return invalidSize;
 }
 
@@ -370,12 +377,16 @@ CrossPointSettings::FONT_SIZE CrossPointSettings::getEffectiveReaderFontSize() c
 #endif
 #ifndef OMIT_TEENSY_FONT
   if (stored == 0) return TEENSY;
+  stored--;
+#endif
+#ifndef OMIT_HUGE_FONT
+  if (stored == 0) return HUGE_SIZE;
 #endif
   return MEDIUM;
 }
 
 bool CrossPointSettings::changeReaderFontSize(const bool larger) {
-  constexpr FONT_SIZE orderedSizes[] = {TEENSY, TINY, SMALL, MEDIUM, LARGE, EXTRA_LARGE};
+  constexpr FONT_SIZE orderedSizes[] = {TEENSY, TINY, SMALL, MEDIUM, LARGE, EXTRA_LARGE, HUGE_SIZE};
   constexpr uint8_t invalidSize = 0xFF;
   const FONT_SIZE currentSize = getEffectiveReaderFontSize();
   int currentIndex = 0;
@@ -433,6 +444,10 @@ int CrossPointSettings::getReaderFontId() const {
         case EXTRA_LARGE:
           return LEXENDDECA_18_FONT_ID;
 #endif
+#ifndef OMIT_HUGE_FONT
+        case HUGE_SIZE:
+          return LEXENDDECA_20_FONT_ID;
+#endif
       }
     case CHAREINK:
       switch (effectiveSize) {
@@ -457,6 +472,10 @@ int CrossPointSettings::getReaderFontId() const {
         case EXTRA_LARGE:
           return CHAREINK_18_FONT_ID;
 #endif
+#ifndef OMIT_HUGE_FONT
+        case HUGE_SIZE:
+          return CHAREINK_20_FONT_ID;
+#endif
       }
     case BITTER:
       switch (effectiveSize) {
@@ -480,6 +499,10 @@ int CrossPointSettings::getReaderFontId() const {
 #ifndef OMIT_XLARGE_FONT
         case EXTRA_LARGE:
           return BITTER_18_FONT_ID;
+#endif
+#ifndef OMIT_HUGE_FONT
+        case HUGE_SIZE:
+          return BITTER_20_FONT_ID;
 #endif
       }
   }

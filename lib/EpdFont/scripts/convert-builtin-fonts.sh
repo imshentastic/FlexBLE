@@ -85,7 +85,7 @@ CHAREINK_SYMBOL_FALLBACK_INTERVALS=(
   --font-include-intervals 2:0x2669,0x266F
 )
 
-READING_FONT_SIZES=(8 10 12 14 16 18)
+READING_FONT_SIZES=(8 10 12 14 16 18 20)
 READING_FONT_STYLES=("Regular" "Bold" "Italic" "BoldItalic")
 READING_FONT_RENDER_ARGS=(--2bit --compress --pnum --darken-aa)
 

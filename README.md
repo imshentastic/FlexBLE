@@ -21,7 +21,7 @@ My goal with this fork was to maintain the core Crosspoint firmware while integr
 
 - New reader fonts: ChareInk, Lexend Deca, and Bitter
 - Unicode emoji and miscellaneous symbols support
-- Adjusted font sizes: Teensy (8pt), Tiny (10pt), Small (12pt), Medium (14pt), Large (16pt), Extra Large (18pt). See [Font Sizes](#font-sizes) for more details.
+- Adjusted font sizes: Teensy (8pt), Tiny (10pt), Small (12pt), Medium (14pt), Large (16pt), Extra Large (18pt), Huge (20pt). See [Font Sizes](#font-sizes) for more details.
 - Added ~~strikethrough~~ support
 - Made <u>underlines</u> thicker for better visibility
 - Added ability to add bookmarks
@@ -53,7 +53,7 @@ The UI now uses [Inter](https://fonts.google.com/specimen/Inter) as the display 
 
 ### Emojis and Misc Glyphs
 
-- Support for Unicode [Emoticons](https://unicode-explorer.com/b/1F600) and [Miscellaneous Symbols](https://unicode-explorer.com/b/2600) using [Noto Emoji](https://fonts.google.com/noto/specimen/Noto+Emoji) and [Noto Sans Symbols](https://fonts.google.com/noto/specimen/Noto+Sans+Symbols) font.
+- Support for a limited set of Unicode [Emoticons](https://unicode-explorer.com/b/1F600) and [Miscellaneous Symbols](https://unicode-explorer.com/b/2600) using [Noto Emoji](https://fonts.google.com/noto/specimen/Noto+Emoji) and [Noto Sans Symbols](https://fonts.google.com/noto/specimen/Noto+Sans+Symbols) font.
 
 ---
 
@@ -63,7 +63,7 @@ There are 3 available build variants to choose from due to build size constraint
 
 **tiny**
 
-> No Extra Large font size. My preferred build.
+> No Extra Large or Huge font size. My preferred build.
 
 - Emoji & Misc. Symbols Support
 - 5 Font sizes:
@@ -78,14 +78,15 @@ There are 3 available build variants to choose from due to build size constraint
 > Teensy, Tiny, and Small font sizes had to be removed to reduce build size and still support emoji/symbols.
 
 - Emoji & Misc. Symbols Support
-- 3 Font sizes:
+- 4 Font sizes:
   - Medium (14pt)
   - Large (16pt)
   - Extra Large (18pt)
+  - Huge (20pt)
 
 **no_emoji**
 
-> All font sizes available, but no emoji/symbols support.
+> All standard font sizes through Extra Large are available, but no emoji/symbols support.
 
 - **No** Emoji & Misc. Symbols Support
 - 6 Font sizes:
