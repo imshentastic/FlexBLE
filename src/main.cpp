@@ -223,6 +223,7 @@ CrossPointSettings::SHORT_PWRBTN getPowerButtonAction() {
   if (mappedInputManager.wasReleased(MappedInputManager::Button::Power)) {
     if (longPowerButtonHandled) {
       longPowerButtonHandled = false;
+      screenshotComboHandled = false;
       return CrossPointSettings::SHORT_PWRBTN::IGNORE;
     }
 
