@@ -5,7 +5,9 @@
 #include <Logging.h>
 #include <Serialization.h>
 
+#include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <string>
 
 #include "I18nKeys.h"
@@ -385,11 +387,9 @@ int CrossPointSettings::getRefreshFrequency() const {
 }
 
 uint8_t CrossPointSettings::getActiveReaderFontSizeCount() {
-  uint8_t count = 0;
-  for (const FONT_SIZE size : READER_FONT_SIZE_STORAGE_ORDER) {
-    if (isReaderFontSizeAvailable(size)) count++;
-  }
-  return count;
+  return static_cast<uint8_t>(std::count_if(std::begin(READER_FONT_SIZE_STORAGE_ORDER),
+                                            std::end(READER_FONT_SIZE_STORAGE_ORDER),
+                                            [](const FONT_SIZE size) { return isReaderFontSizeAvailable(size); }));
 }
 
 uint8_t CrossPointSettings::getStoredReaderFontSize(const FONT_SIZE size) {
