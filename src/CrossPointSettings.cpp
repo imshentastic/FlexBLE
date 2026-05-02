@@ -29,6 +29,54 @@ constexpr char SETTINGS_FILE_JSON[] = "/.crosspoint/settings.json";
 constexpr char SETTINGS_FILE_BAK[] = "/.crosspoint/settings.bin.bak";
 constexpr char LANG_FILE_BIN[] = "/.crosspoint/language.bin";
 constexpr char LANG_FILE_BAK[] = "/.crosspoint/language.bin.bak";
+constexpr uint8_t INVALID_READER_FONT_SIZE = 0xFF;
+constexpr CrossPointSettings::FONT_SIZE READER_FONT_SIZE_STORAGE_ORDER[] = {
+    CrossPointSettings::TINY,     CrossPointSettings::SMALL,       CrossPointSettings::MEDIUM,
+    CrossPointSettings::LARGE,    CrossPointSettings::EXTRA_LARGE, CrossPointSettings::TEENSY,
+    CrossPointSettings::HUGE_SIZE};
+constexpr CrossPointSettings::FONT_SIZE READER_FONT_SIZE_CYCLE_ORDER[] = {
+    CrossPointSettings::TEENSY,   CrossPointSettings::TINY,  CrossPointSettings::SMALL,
+    CrossPointSettings::MEDIUM,   CrossPointSettings::LARGE, CrossPointSettings::EXTRA_LARGE,
+    CrossPointSettings::HUGE_SIZE};
+
+bool isReaderFontSizeAvailable(const CrossPointSettings::FONT_SIZE size) {
+  switch (size) {
+    case CrossPointSettings::TEENSY:
+#ifdef OMIT_TEENSY_FONT
+      return false;
+#else
+      return true;
+#endif
+    case CrossPointSettings::TINY:
+#ifdef OMIT_TINY_FONT
+      return false;
+#else
+      return true;
+#endif
+    case CrossPointSettings::SMALL:
+#ifdef OMIT_SMALL_FONT
+      return false;
+#else
+      return true;
+#endif
+    case CrossPointSettings::EXTRA_LARGE:
+#ifdef OMIT_XLARGE_FONT
+      return false;
+#else
+      return true;
+#endif
+    case CrossPointSettings::HUGE_SIZE:
+#ifdef OMIT_HUGE_FONT
+      return false;
+#else
+      return true;
+#endif
+    case CrossPointSettings::MEDIUM:
+    case CrossPointSettings::LARGE:
+    default:
+      return true;
+  }
+}
 
 // Convert legacy front button layout into explicit logical->hardware mapping.
 void applyLegacyFrontButtonLayout(CrossPointSettings& settings) {
@@ -337,110 +385,52 @@ int CrossPointSettings::getRefreshFrequency() const {
 }
 
 uint8_t CrossPointSettings::getActiveReaderFontSizeCount() {
-  return FONT_SIZE_COUNT
-#ifdef OMIT_TEENSY_FONT
-         - 1
-#endif
-#ifdef OMIT_TINY_FONT
-         - 1
-#endif
-#ifdef OMIT_SMALL_FONT
-         - 1
-#endif
-#ifdef OMIT_XLARGE_FONT
-         - 1
-#endif
-#ifdef OMIT_HUGE_FONT
-         - 1
-#endif
-      ;
+  uint8_t count = 0;
+  for (const FONT_SIZE size : READER_FONT_SIZE_STORAGE_ORDER) {
+    if (isReaderFontSizeAvailable(size)) count++;
+  }
+  return count;
 }
 
 uint8_t CrossPointSettings::getStoredReaderFontSize(const FONT_SIZE size) {
-  constexpr uint8_t invalidSize = 0xFF;
   uint8_t stored = 0;
-#ifndef OMIT_TINY_FONT
-  if (size == TINY) return stored;
-  stored++;
-#endif
-#ifndef OMIT_SMALL_FONT
-  if (size == SMALL) return stored;
-  stored++;
-#endif
-  if (size == MEDIUM) return stored;
-  stored++;
-  if (size == LARGE) return stored;
-  stored++;
-#ifndef OMIT_XLARGE_FONT
-  if (size == EXTRA_LARGE) return stored;
-  stored++;
-#endif
-#ifndef OMIT_TEENSY_FONT
-  if (size == TEENSY) return stored;
-  stored++;
-#endif
-#ifndef OMIT_HUGE_FONT
-  if (size == HUGE_SIZE) return stored;
-  stored++;
-#endif
-  return invalidSize;
+  for (const FONT_SIZE activeSize : READER_FONT_SIZE_STORAGE_ORDER) {
+    if (!isReaderFontSizeAvailable(activeSize)) continue;
+    if (size == activeSize) return stored;
+    stored++;
+  }
+  return INVALID_READER_FONT_SIZE;
 }
 
 CrossPointSettings::FONT_SIZE CrossPointSettings::getEffectiveReaderFontSize() const {
-  uint8_t stored = fontSize;
-#ifndef OMIT_TINY_FONT
-  if (stored == 0) return TINY;
-  stored--;
-#endif
-#ifndef OMIT_SMALL_FONT
-  if (stored == 0) return SMALL;
-  stored--;
-#endif
-  if (stored == 0) return MEDIUM;
-  stored--;
-  if (stored == 0) return LARGE;
-  stored--;
-#ifndef OMIT_XLARGE_FONT
-  if (stored == 0) return EXTRA_LARGE;
-  stored--;
-#endif
-#ifndef OMIT_TEENSY_FONT
-  if (stored == 0) return TEENSY;
-  stored--;
-#endif
-#ifndef OMIT_HUGE_FONT
-  if (stored == 0) return HUGE_SIZE;
-#endif
+  uint8_t stored = 0;
+  for (const FONT_SIZE size : READER_FONT_SIZE_STORAGE_ORDER) {
+    if (!isReaderFontSizeAvailable(size)) continue;
+    if (fontSize == stored) return size;
+    stored++;
+  }
   return MEDIUM;
 }
 
 bool CrossPointSettings::changeReaderFontSize(const bool larger) {
-  constexpr FONT_SIZE orderedSizes[] = {TEENSY, TINY, SMALL, MEDIUM, LARGE, EXTRA_LARGE, HUGE_SIZE};
-  constexpr uint8_t invalidSize = 0xFF;
   const FONT_SIZE currentSize = getEffectiveReaderFontSize();
   int currentIndex = 0;
-  for (size_t i = 0; i < sizeof(orderedSizes) / sizeof(orderedSizes[0]); i++) {
-    if (orderedSizes[i] == currentSize) {
+  constexpr size_t sizeCount = sizeof(READER_FONT_SIZE_CYCLE_ORDER) / sizeof(READER_FONT_SIZE_CYCLE_ORDER[0]);
+  for (size_t i = 0; i < sizeCount; i++) {
+    if (READER_FONT_SIZE_CYCLE_ORDER[i] == currentSize) {
       currentIndex = static_cast<int>(i);
       break;
     }
   }
 
-  if (larger) {
-    for (size_t i = currentIndex + 1; i < sizeof(orderedSizes) / sizeof(orderedSizes[0]); i++) {
-      const uint8_t stored = getStoredReaderFontSize(orderedSizes[i]);
-      if (stored != invalidSize) {
-        fontSize = stored;
-        return true;
-      }
-    }
-  } else {
-    for (int i = currentIndex - 1; i >= 0; i--) {
-      const uint8_t stored = getStoredReaderFontSize(orderedSizes[i]);
-      if (stored != invalidSize) {
-        fontSize = stored;
-        return true;
-      }
+  for (size_t step = 1; step < sizeCount; step++) {
+    const int direction = larger ? 1 : -1;
+    const size_t nextIndex =
+        (currentIndex + direction * static_cast<int>(step) + static_cast<int>(sizeCount)) % sizeCount;
+    const uint8_t stored = getStoredReaderFontSize(READER_FONT_SIZE_CYCLE_ORDER[nextIndex]);
+    if (stored != INVALID_READER_FONT_SIZE) {
+      fontSize = stored;
+      return true;
     }
   }
   return false;
