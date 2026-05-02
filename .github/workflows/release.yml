@@ -64,6 +64,8 @@ jobs:
             --version "${{ env.RELEASE_VERSION }}" \
             --repo "${{ github.repository }}" \
             --firmware ".pio/build/tiny/firmware-tiny-v${{ env.RELEASE_VERSION }}.bin" \
+            --firmware ".pio/build/xlarge/firmware-xlarge-v${{ env.RELEASE_VERSION }}.bin" \
+            --firmware ".pio/build/no_emoji/firmware-no_emoji-v${{ env.RELEASE_VERSION }}.bin" \
             --output ".pio/build/catalog"
 
       - name: Publish catalog to GitHub Pages source
