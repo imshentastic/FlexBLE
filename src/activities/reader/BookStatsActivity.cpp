@@ -440,8 +440,8 @@ void BookStatsActivity::render(RenderLock&&) {
                   });
 
   // ─── Button hints ────────────────────────────────────────────────────────
-  const char* prevLbl = nav.size() > 1 ? tr(STR_DIR_UP) : "";
-  const char* nextLbl = nav.size() > 1 ? tr(STR_DIR_DOWN) : "";
+  const char* prevLbl = nav.size() > 1 ? tr(STR_DIR_PREV) : "";
+  const char* nextLbl = nav.size() > 1 ? tr(STR_DIR_NEXT) : "";
   const auto labels = mappedInput.mapLabels(backToHome ? tr(STR_HOME) : tr(STR_BACK), tr(STR_OPEN), prevLbl, nextLbl);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
