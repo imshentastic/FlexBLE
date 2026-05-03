@@ -346,14 +346,16 @@ void HomeActivity::loop() {
   const bool inCarousel = static_cast<int>(selectorIndex) < recentCount;
 
   // Up/Down rocker → menu navigation only. From the carousel, the first press
-  // jumps into the menu (Down → first item, Up → last item). Inside the menu
-  // it wraps within the menu range; it never falls back into the carousel.
+  // jumps into the menu (Down → first item, Up → last item). Falling off the
+  // menu boundaries (Up from first item, Down from last item) drops back to
+  // the first book — the carousel is "home base", so vertical motion past
+  // the menu always returns there.
   if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
     if (inCarousel) {
       lastBookIndex = selectorIndex;
       selectorIndex = recentCount;
     } else if (selectorIndex >= menuCount - 1) {
-      selectorIndex = recentCount;
+      selectorIndex = 0;
     } else {
       ++selectorIndex;
     }
@@ -364,7 +366,7 @@ void HomeActivity::loop() {
       lastBookIndex = selectorIndex;
       selectorIndex = menuCount - 1;
     } else if (selectorIndex <= recentCount) {
-      selectorIndex = menuCount - 1;
+      selectorIndex = 0;
     } else {
       --selectorIndex;
     }
