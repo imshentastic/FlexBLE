@@ -342,37 +342,54 @@ void HomeActivity::freeCoverBuffer() {
 
 void HomeActivity::loop() {
   const int menuCount = getMenuItemCount();
+  const int recentCount = static_cast<int>(recentBooks.size());
+  const bool inCarousel = static_cast<int>(selectorIndex) < recentCount;
 
-  // Quick press: step by 1.
-  buttonNavigator.onNextRelease([this, menuCount] {
-    selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this, menuCount] {
-    selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
-    requestUpdate();
-  });
-
-  // Long-press DOWN: if the selection is on a carousel book, jump straight
-  // to the first menu item instead of paginating through every book. Once
-  // in the menu, continued holding falls back to step-by-1 stepping. The
-  // 500 ms continuous interval baked into ButtonNavigator naturally gives
-  // the user a brief pause to register the jump before stepping resumes.
-  buttonNavigator.onNextContinuous([this, menuCount] {
-    const int recentCount = static_cast<int>(recentBooks.size());
-    if (static_cast<int>(selectorIndex) < recentCount) {
+  // Up/Down rocker → menu navigation only. From the carousel, the first press
+  // jumps into the menu (Down → first item, Up → last item). Inside the menu
+  // it wraps within the menu range; it never falls back into the carousel.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+    if (inCarousel) {
+      lastBookIndex = selectorIndex;
+      selectorIndex = recentCount;
+    } else if (selectorIndex >= menuCount - 1) {
       selectorIndex = recentCount;
     } else {
-      selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
+      ++selectorIndex;
     }
     requestUpdate();
-  });
-
-  buttonNavigator.onPreviousContinuous([this, menuCount] {
-    selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
+    if (inCarousel) {
+      lastBookIndex = selectorIndex;
+      selectorIndex = menuCount - 1;
+    } else if (selectorIndex <= recentCount) {
+      selectorIndex = menuCount - 1;
+    } else {
+      --selectorIndex;
+    }
     requestUpdate();
-  });
+  }
+
+  // Left/Right side buttons → carousel navigation only. From the menu, the
+  // first press drops back to the last book the user was on. Inside the
+  // carousel it wraps end-to-end.
+  if (recentCount > 0 && mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+    if (!inCarousel) {
+      selectorIndex = lastBookIndex < recentCount ? lastBookIndex : 0;
+    } else {
+      selectorIndex = (selectorIndex + 1) % recentCount;
+    }
+    requestUpdate();
+  }
+  if (recentCount > 0 && mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    if (!inCarousel) {
+      selectorIndex = lastBookIndex < recentCount ? lastBookIndex : 0;
+    } else {
+      selectorIndex = (selectorIndex == 0) ? recentCount - 1 : selectorIndex - 1;
+    }
+    requestUpdate();
+  }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     // Calculate dynamic indices based on which options are available

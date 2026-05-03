@@ -6,14 +6,15 @@
 #include "../reader/BookReadingStats.h"
 #include "../reader/GlobalReadingStats.h"
 #include "./FileBrowserActivity.h"
-#include "util/ButtonNavigator.h"
 
 struct RecentBook;
 struct Rect;
 
 class HomeActivity final : public Activity {
-  ButtonNavigator buttonNavigator;
   int selectorIndex = 0;
+  // Remembered carousel position so Left/Right re-entry from the menu lands
+  // on the same book the user was last on, not back at index 0.
+  int lastBookIndex = 0;
   bool recentsLoading = false;
   bool recentsLoaded = false;
   bool firstRenderDone = false;
