@@ -713,7 +713,8 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       BookReadingStats displayStats = stats;
       displayStats.totalReadingSeconds += static_cast<uint32_t>((millis() - sessionStartMs) / 1000UL);
       startActivityForResult(
-          std::make_unique<BookStatsActivity>(renderer, mappedInput, epub->getTitle(), displayStats, globalStats),
+          std::make_unique<BookStatsActivity>(renderer, mappedInput, epub->getPath(), epub->getTitle(),
+                                              epub->getThumbBmpPath(), displayStats, globalStats),
           [this](const ActivityResult&) { requestUpdate(); });
       break;
     }

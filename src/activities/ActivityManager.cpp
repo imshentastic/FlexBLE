@@ -12,6 +12,7 @@
 #include "home/FileBrowserActivity.h"
 #include "home/HomeActivity.h"
 #include "home/RecentBooksActivity.h"
+#include "home/RecentBooksGridActivity.h"
 #include "network/CrossPointWebServerActivity.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
@@ -185,7 +186,7 @@ void ActivityManager::goToFileBrowser(std::string path) {
 }
 
 void ActivityManager::goToRecentBooks() {
-  replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
+  replaceActivity(std::make_unique<RecentBooksGridActivity>(renderer, mappedInput));
 }
 
 void ActivityManager::goToBrowser() {

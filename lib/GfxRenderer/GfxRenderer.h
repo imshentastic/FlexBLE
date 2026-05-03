@@ -115,6 +115,11 @@ class GfxRenderer {
   void drawBitmap(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight, float cropX = 0,
                   float cropY = 0) const;
   void drawBitmap1Bit(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight) const;
+  // Trapezoidal blit used by Flow/iPod-style carousel. Fits the bitmap into a
+  // bounding box of width `w` and height `max(hL, hR)` whose top-left is (x,y);
+  // each output column has its own height linearly interpolated from hL on the
+  // left edge to hR on the right edge, vertically centered in the bbox.
+  void drawPerspectiveBitmap(const Bitmap& bitmap, int x, int y, int w, int hL, int hR) const;
   void fillPolygon(const int* xPoints, const int* yPoints, int numPoints, bool state = true) const;
 
   // Text

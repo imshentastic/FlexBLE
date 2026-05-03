@@ -1,3 +1,21 @@
+# CrossInk Carousel
+
+> **CrossInk Carousel is a personal fork of CrossInk** that adds book-cover-centric UI inspired by the Lua fork [CrossPoint Flow](https://github.com/ideo2004-afk/crosspoint-reader-lua). The goal is to make book covers a first-class citizen of the navigation experience: on the home screen, in the recent books browser, and on the reading stats screen. 
+
+**ONLY TESTED ON XTEINK X4, NOT YET COMPATIBLE WITH X3 MODEL.**
+
+## What's different from CrossInk
+
+### New UI features
+
+**Flow theme.** A new selectable UI theme called "Flow", inheriting from Lyra and overriding only the home-screen book selector with an iPod-style perspective carousel. The currently selected book renders centered at full size, flanked by partial side covers drawn with a 3D fan perspective transform. Up to seven recent books cycle through the carousel. Visual concept ported from CrossPoint Flow.
+
+**Recent Books grid.** Replaced the plain list of book titles with a 3x3 grid of cover thumbnails, paginated when more than nine books exist. Page indicator dots sit at the bottom. Thumbnails are generated on demand the first time a page is viewed. A title strip above the grid shows the currently selected book's title in bold Inter. Empty grid cells on a partial page get a thin border so the 3x3 always reads as a complete grid. Visual style adapted from CrossPoint Flow.
+
+**Reading Stats redesign.** Reworked the Reading Stats screen into a multi-book browseable layout. The current book's cover renders prominently at the top with a 3px black border that adapts to the bitmap's actual rendered dimensions. Below the cover sits the book title in bold Inter, then a borderless 3-column grid of per-book stats (sessions, reading time, pages turned, average session, pages per minute), followed by a quietly-labeled "All Time" section with the same stat grid plus completed-books count. No bordered boxes, no dividing lines: typography only. Left and right buttons (and the up/down rocker) cycle through every recent book that has stats, with peek covers at the screen edges showing the previous and next books, each marked by a centered chevron indicator. Confirm opens the currently displayed book in the reader.
+
+---
+
 > **This is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)** with a focus on improved fonts and minimal reading stats.
 
 ## What's different in this fork

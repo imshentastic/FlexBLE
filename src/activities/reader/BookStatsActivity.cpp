@@ -1,26 +1,135 @@
 #include "BookStatsActivity.h"
 
+#include <Bitmap.h>
+#include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <functional>
+#include <string>
+
 #include "MappedInputManager.h"
+#include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
-BookStatsActivity::BookStatsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,
-                                     const BookReadingStats& stats, const GlobalReadingStats& globalStats)
-    : Activity("BookStats", renderer, mappedInput), bookTitle(title), stats(stats), globalStats(globalStats) {}
+namespace {
+
+// Mirror of the cache-path convention used elsewhere in the firmware
+// (HomeActivity, Epub.h:42, Xtc.h:52, Txt.cpp:94). Stats files live at
+// <cachePath>/stats.bin.
+std::string statsCachePathFor(const std::string& bookPath) {
+  const std::size_t h = std::hash<std::string>{}(bookPath);
+  if (FsHelpers::hasEpubExtension(bookPath)) return "/.crosspoint/epub_" + std::to_string(h);
+  if (FsHelpers::hasXtcExtension(bookPath)) return "/.crosspoint/xtc_" + std::to_string(h);
+  return "/.crosspoint/txt_" + std::to_string(h);
+}
+
+}  // namespace
+
+BookStatsActivity::BookStatsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                     const std::string& bookPath, const std::string& title,
+                                     const std::string& coverBmpPath, const BookReadingStats& stats,
+                                     const GlobalReadingStats& globalStats)
+    : Activity("BookStats", renderer, mappedInput),
+      initialBookPath(bookPath),
+      initialBookTitle(title),
+      initialCoverBmpPath(coverBmpPath),
+      initialStats(stats),
+      globalStats(globalStats) {}
+
+void BookStatsActivity::buildNavList() {
+  nav.clear();
+  const auto& books = RECENT_BOOKS.getBooks();
+  for (const auto& b : books) {
+    const auto bookStats = BookReadingStats::load(statsCachePathFor(b.path));
+    if (bookStats.sessionCount > 0) {
+      nav.push_back({b.path, b.title, b.author, b.coverBmpPath});
+    }
+  }
+  bool found = false;
+  for (size_t i = 0; i < nav.size(); ++i) {
+    if (!initialBookPath.empty() && nav[i].path == initialBookPath) {
+      found = true;
+      currentIndex = static_cast<int>(i);
+      break;
+    }
+  }
+  if (!found) {
+    // Author isn't passed via the constructor; if the initial book isn't in
+    // RECENT_BOOKS we just leave it blank rather than widening scope.
+    nav.insert(nav.begin(), {initialBookPath, initialBookTitle, std::string{}, initialCoverBmpPath});
+    currentIndex = 0;
+  }
+}
+
+void BookStatsActivity::loadCurrent(int index) {
+  if (nav.empty()) return;
+  const int n = static_cast<int>(nav.size());
+  while (index < 0) index += n;
+  while (index >= n) index -= n;
+  currentIndex = index;
+
+  const auto& e = nav[currentIndex];
+  currentBookPath = e.path;
+  currentTitle = e.title;
+  currentAuthor = e.author;
+  currentCoverBmpPath = e.coverBmpPath;
+
+  if (useInitialStats && !initialBookPath.empty() && e.path == initialBookPath) {
+    currentStats = initialStats;
+  } else {
+    currentStats = BookReadingStats::load(statsCachePathFor(e.path));
+    useInitialStats = false;
+  }
+}
 
 void BookStatsActivity::onEnter() {
   Activity::onEnter();
+  buildNavList();
+  loadCurrent(currentIndex);
   requestUpdate();
 }
 
 void BookStatsActivity::loop() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
-      mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     finish();
+    return;
+  }
+  // Confirm opens the book currently in view. onSelectBook → goToReader →
+  // replaceActivity clears the whole stack (including the parent that
+  // opened us via startActivityForResult). The reader exits to a fresh
+  // HomeActivity, and because opening a book bumps it to RECENT_BOOKS[0],
+  // the next time the user opens Reading Stats from Home it'll show the
+  // just-opened book first — same "current book" behavior the carousel
+  // already gives.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (!currentBookPath.empty() && Storage.exists(currentBookPath.c_str())) {
+      LOG_DBG("BSA", "Opening book from stats: %s", currentBookPath.c_str());
+      onSelectBook(currentBookPath);
+      return;
+    }
+  }
+  // Right + Down → next book; Left + Up → previous book. Side buttons
+  // mirror the bottom rocker so either pair cycles books.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right) ||
+      mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+    if (nav.size() > 1) {
+      loadCurrent(currentIndex + 1);
+      requestUpdate();
+    }
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Left) ||
+      mappedInput.wasReleased(MappedInputManager::Button::Up)) {
+    if (nav.size() > 1) {
+      loadCurrent(currentIndex - 1);
+      requestUpdate();
+    }
   }
 }
 
@@ -29,154 +138,310 @@ void BookStatsActivity::render(RenderLock&&) {
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int screenWidth = renderer.getScreenWidth();
-  const int cardX = metrics.contentSidePadding;
-  const int cardW = screenWidth - metrics.contentSidePadding * 2;
-  const int thirdW = cardW / 3;
-  const int halfW = cardW / 2;
 
-  // Pass "" so drawHeader renders the battery + background + bottom line without a title,
-  // then draw the chart icon + title text manually to produce the "<icon> Reading Stats" layout.
+  // ─── Page-level layout constants ─────────────────────────────────────────
+  // Print-style: typography only. No boxes, outlines, dividers.
+  constexpr int margin = 16;
+  const int contentX = margin;
+  const int contentRight = screenWidth - margin;
+  const int contentW = screenWidth - 2 * margin;
+
+  // ─── Header ("Reading Stats" + battery, drawn as today) ─────────────────
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, screenWidth, metrics.headerHeight}, "");
+  {
+    const int availableH = metrics.headerHeight - metrics.batteryBarHeight;
+    const int titleX = metrics.contentSidePadding;
+    const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+    const int titleY = metrics.topPadding + metrics.batteryBarHeight + (availableH - lineHeight) / 2;
+    const int batteryStartX = screenWidth - metrics.contentSidePadding - metrics.batteryWidth;
+    const int maxTitleWidth = batteryStartX - titleX - metrics.contentSidePadding;
+    const std::string truncTitle =
+        renderer.truncatedText(UI_12_FONT_ID, tr(STR_READING_STATS), maxTitleWidth, EpdFontFamily::BOLD);
+    renderer.drawText(UI_12_FONT_ID, titleX, titleY, truncTitle.c_str(), true, EpdFontFamily::BOLD);
+  }
 
-  const int availableH = metrics.headerHeight - metrics.batteryBarHeight;
-  const int titleX = metrics.contentSidePadding;
-  const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
-  const int titleY = metrics.topPadding + metrics.batteryBarHeight + (availableH - lineHeight) / 2;
-  const int batteryStartX = screenWidth - metrics.contentSidePadding - metrics.batteryWidth;
-  const int maxTitleWidth = batteryStartX - titleX - metrics.contentSidePadding;
-  const std::string truncTitle =
-      renderer.truncatedText(UI_12_FONT_ID, tr(STR_READING_STATS), maxTitleWidth, EpdFontFamily::BOLD);
-  renderer.drawText(UI_12_FONT_ID, titleX, titleY, truncTitle.c_str(), true, EpdFontFamily::BOLD);
+  // Cursor that walks down the page; each section advances it.
+  int y = metrics.topPadding + metrics.headerHeight + 18;  // 18px below the screen title
 
-  int y = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  // ─── Section 1: Cover (no border, no rounded corners, raw bitmap) ────────
+  // Aspect-fit within (448 × 280) and center horizontally. If no cached
+  // cover thumb is available we draw nothing and let the rest of the page
+  // shift up (no placeholder).
+  // Bitmap fits inside (444 × 236); a 3px black border is drawn just
+  // outside it (matches the selected-book border thickness in the Recent
+  // Books grid), so the visual footprint (bitmap + border) is (450 × 242).
+  constexpr int kCoverMaxW = 444;
+  constexpr int kCoverMaxH = 236;
+  constexpr int kCoverBorder = 3;
+  constexpr int kCoverGapBottom = 14;
 
-  const int valueLineH = renderer.getLineHeight(UI_12_FONT_ID);
-  const int labelLineH = renderer.getLineHeight(SMALL_FONT_ID);
-  const int titleLineH = renderer.getLineHeight(UI_10_FONT_ID);
+  if (!currentCoverBmpPath.empty()) {
+    const std::string thumbPath = UITheme::getCoverThumbPath(currentCoverBmpPath, metrics.homeCoverHeight);
+    if (Storage.exists(thumbPath.c_str())) {
+      FsFile file;
+      if (Storage.openFileForRead("STATS", thumbPath, file)) {
+        Bitmap bmp(file);
+        if (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0) {
+          const int srcW = bmp.getWidth();
+          const int srcH = bmp.getHeight();
+          const float fitScale = std::min(static_cast<float>(kCoverMaxW) / static_cast<float>(srcW),
+                                          static_cast<float>(kCoverMaxH) / static_cast<float>(srcH));
+          // Box dimensions to pass to drawBitmap (its scale = min of these
+          // ratios). drawBitmap renders into floor((srcDim - 1) * scale) + 1
+          // pixels per dimension — which can be 1 px shorter than the box on
+          // either axis depending on rounding of srcW/srcH. We compute the
+          // actual rendered dimensions and tight-wrap the border to those,
+          // so books with slightly different aspect ratios get a snug border.
+          const int awBox = std::min(kCoverMaxW, static_cast<int>(std::round(srcW * fitScale)));
+          const int ahBox = std::min(kCoverMaxH, static_cast<int>(std::round(srcH * fitScale)));
+          const float actualScale =
+              std::min(static_cast<float>(awBox) / static_cast<float>(srcW),
+                       static_cast<float>(ahBox) / static_cast<float>(srcH));
+          const int aw = static_cast<int>(std::floor((srcW - 1) * actualScale)) + 1;
+          const int ah = static_cast<int>(std::floor((srcH - 1) * actualScale)) + 1;
+          // Bitmap shifted down by kCoverBorder so the border-top aligns
+          // with the section's starting y. Border drawn as four fillRect
+          // strips that hug the bitmap's actual rendered footprint.
+          const int bx = (screenWidth - aw) / 2;
+          const int by = y + kCoverBorder;
+          renderer.drawBitmap(bmp, bx, by, awBox, ahBox);
+          renderer.fillRect(bx - kCoverBorder, by - kCoverBorder, aw + 2 * kCoverBorder, kCoverBorder, true);  // top
+          renderer.fillRect(bx - kCoverBorder, by + ah, aw + 2 * kCoverBorder, kCoverBorder, true);            // bottom
+          renderer.fillRect(bx - kCoverBorder, by, kCoverBorder, ah, true);                                    // left
+          renderer.fillRect(bx + aw, by, kCoverBorder, ah, true);                                              // right
 
-  constexpr int cardTitleH = 40;
-  constexpr int cellH = 90;
-  constexpr int labelPad = 6;
+          // ─── Prev / next book peeks (cyclic; only when nav has ≥ 2 books) ──
+          // Peeks are flush against the screen's left and right edges. Peek
+          // bitmap is scaled to 85% of the current cover's height (so its
+          // aspect-correct width is 85% too), vertically centered against
+          // the current cover. Each peek gets a 2 px black border just
+          // outside its bitmap — the inside-facing edge plus top/bottom are
+          // visible; the outside edge falls off-screen and harmlessly clips.
+          // A bold white chevron with a 1 px black halo is layered on top.
+          if (nav.size() >= 2) {
+            constexpr int peekW = 64;
+            constexpr int peekBorder = 1;  // thinner border on edge peeks (main cover keeps 2 px)
+            const int ph = (ah * 85) / 100;
+            const int peekY = by + (ah - ph) / 2;
 
-  // Draws a stat cell: large bold value + small label, horizontally centered in (x, cellY, w, cellH).
-  auto drawStatCell = [&](int x, int w, int cellY, const char* value, const char* label) {
-    const int totalTextH = valueLineH + labelPad + labelLineH;
-    const int textY = cellY + (cellH - totalTextH) / 2;
+            auto drawChevron = [&](int cx, int cy, bool pointLeft) {
+              constexpr int chHalfW = 7;
+              constexpr int chHalfH = 12;
+              const int x1 = pointLeft ? cx + chHalfW : cx - chHalfW;
+              const int x2 = pointLeft ? cx - chHalfW : cx + chHalfW;
+              // Black outline (5 px) — outer halo.
+              renderer.drawLine(x1, cy - chHalfH, x2, cy, 5, true);
+              renderer.drawLine(x2, cy, x1, cy + chHalfH, 5, true);
+              // White core (3 px) on top — leaves 1 px black on each side.
+              renderer.drawLine(x1, cy - chHalfH, x2, cy, 3, false);
+              renderer.drawLine(x2, cy, x1, cy + chHalfH, 3, false);
+            };
 
-    const int vw = renderer.getTextWidth(UI_12_FONT_ID, value, EpdFontFamily::BOLD);
-    renderer.drawText(UI_12_FONT_ID, x + (w - vw) / 2, textY, value, true, EpdFontFamily::BOLD);
+            auto drawPeek = [&](bool isLeft, const std::string& adjCoverPath) {
+              const int peekX = isLeft ? 0 : (screenWidth - peekW);
 
-    const int lw = renderer.getTextWidth(SMALL_FONT_ID, label);
-    renderer.drawText(SMALL_FONT_ID, x + (w - lw) / 2, textY + valueLineH + labelPad, label, true);
+              bool drawnFromBitmap = false;
+              if (!adjCoverPath.empty()) {
+                const std::string adjThumb = UITheme::getCoverThumbPath(adjCoverPath, metrics.homeCoverHeight);
+                if (Storage.exists(adjThumb.c_str())) {
+                  FsFile adjFile;
+                  if (Storage.openFileForRead("STATS", adjThumb, adjFile)) {
+                    Bitmap adjBmp(adjFile);
+                    if (adjBmp.parseHeaders() == BmpReaderError::Ok && adjBmp.getWidth() > 0 &&
+                        adjBmp.getHeight() > 0) {
+                      const int aSrcW = adjBmp.getWidth();
+                      const int aSrcH = adjBmp.getHeight();
+                      const int aScaledW = (ph * aSrcW) / aSrcH;
+                      // Position so the inside-facing edge of the adjacent
+                      // cover lands on the inside-facing edge of the peek.
+                      // Bleed past the screen edge is clipped by drawBitmap.
+                      const int adjX = isLeft ? (peekX + peekW - aScaledW) : peekX;
+                      renderer.drawBitmap(adjBmp, adjX, peekY, aScaledW, ph);
+                      drawnFromBitmap = true;
+
+                      // 1 px black border around the peek. Outside-facing
+                      // edge clips off-screen; we emit it anyway for
+                      // symmetry with the main cover.
+                      renderer.fillRect(peekX - peekBorder, peekY - peekBorder, peekW + 2 * peekBorder, peekBorder,
+                                        true);                                                       // top
+                      renderer.fillRect(peekX - peekBorder, peekY + ph, peekW + 2 * peekBorder, peekBorder,
+                                        true);                                                       // bottom
+                      renderer.fillRect(peekX - peekBorder, peekY, peekBorder, ph, true);            // left
+                      renderer.fillRect(peekX + peekW, peekY, peekBorder, ph, true);                 // right
+                    }
+                    adjFile.close();
+                  }
+                }
+              }
+              if (!drawnFromBitmap) {
+                renderer.fillRect(peekX, peekY, peekW, ph, true);  // solid dark fallback
+              }
+
+              drawChevron(peekX + peekW / 2, peekY + ph / 2, isLeft);
+            };
+
+            const int n = static_cast<int>(nav.size());
+            const int prevIdx = (currentIndex - 1 + n) % n;
+            const int nextIdx = (currentIndex + 1) % n;
+            drawPeek(true, nav[prevIdx].coverBmpPath);
+            drawPeek(false, nav[nextIdx].coverBmpPath);
+          }
+
+          y += ah + 2 * kCoverBorder + kCoverGapBottom;
+        }
+        file.close();
+      }
+    }
+  }
+
+  // ─── Typography ──────────────────────────────────────────────────────────
+  //   book title       = UI_12 BOLD       (largest body text — primary landmark)
+  //   author           = SMALL regular    (visually secondary under the title)
+  //   "All Books"      = UI_12 BOLD       (clear section heading)
+  //   stat value       = UI_10 BOLD       (centered in cell — slightly smaller than v3 to fit the page)
+  //   stat label       = SMALL regular    (centered, sits below value)
+  const int ui12Lh = renderer.getLineHeight(UI_12_FONT_ID);
+  const int valueLh = renderer.getLineHeight(UI_10_FONT_ID);
+  const int smallLh = renderer.getLineHeight(SMALL_FONT_ID);
+
+  // ─── Section 2: book title (centered) ────────────────────────────────────
+  {
+    const std::string truncTitle =
+        renderer.truncatedText(UI_12_FONT_ID, currentTitle.c_str(), contentW, EpdFontFamily::BOLD);
+    const int tw = renderer.getTextWidth(UI_12_FONT_ID, truncTitle.c_str(), EpdFontFamily::BOLD);
+    renderer.drawText(UI_12_FONT_ID, (screenWidth - tw) / 2, y, truncTitle.c_str(), true, EpdFontFamily::BOLD);
+    y += ui12Lh;
+  }
+  y += 10;  // gap before per-book stats grid (matched with all-books heading→grid)
+
+  // ─── Stat grid helper ────────────────────────────────────────────────────
+  // 3 equal-width columns spanning contentW (~149 px each on a 480 px screen).
+  // Each cell stacks: bold value, 6 px gap, small regular label, both
+  // horizontally centered. 10 px padding above and below the value/label
+  // pair keeps the grid tight.
+  // If the last row contains fewer than gridColumns stats, that row's cells
+  // widen to evenly divide contentW so the partial row reads centered (the
+  // 5-stat per-book grid → row 2 has 2 cells × 224 px instead of 2 cells ×
+  // 149 px stuck to the left).
+  constexpr int gridColumns = 3;
+  const int gridFullColW = contentW / gridColumns;
+  constexpr int gridValueLabelGap = 6;
+  constexpr int gridRowPadTop = 10;
+  constexpr int gridRowPadBottom = 10;
+  const int gridRowH = gridRowPadTop + valueLh + gridValueLabelGap + smallLh + gridRowPadBottom;
+
+  auto drawStatGrid = [&](int gridY, std::initializer_list<std::pair<const char*, const char*>> stats) -> int {
+    const int total = static_cast<int>(stats.size());
+    const int totalRows = (total + gridColumns - 1) / gridColumns;
+    int i = 0;
+    for (const auto& kv : stats) {
+      const char* label = kv.first;
+      const char* value = kv.second;
+      const int col = i % gridColumns;
+      const int row = i / gridColumns;
+
+      // Cells keep the full-row width even when the last row is partial; we
+      // just center the partial row by offsetting its left edge so the cells
+      // sit close together rather than spread to the screen edges.
+      int cellsInRow = gridColumns;
+      if (row == totalRows - 1) cellsInRow = total - row * gridColumns;
+      const int rowOffsetX = (contentW - cellsInRow * gridFullColW) / 2;
+      const int cellW = gridFullColW;
+
+      const int cellX = contentX + rowOffsetX + col * cellW;
+      const int cellY = gridY + row * gridRowH;
+      const int valueY = cellY + gridRowPadTop;
+      const int labelY = valueY + valueLh + gridValueLabelGap;
+
+      const int vw = renderer.getTextWidth(UI_10_FONT_ID, value, EpdFontFamily::BOLD);
+      renderer.drawText(UI_10_FONT_ID, cellX + (cellW - vw) / 2, valueY, value, true, EpdFontFamily::BOLD);
+
+      const int lw = renderer.getTextWidth(SMALL_FONT_ID, label);
+      renderer.drawText(SMALL_FONT_ID, cellX + (cellW - lw) / 2, labelY, label, true);
+      ++i;
+    }
+    return gridY + totalRows * gridRowH;
   };
 
-  char buf[32];
-
-  // ─── Card 1: Book stats ──────────────────────────────────────────────────────
-  renderer.drawRect(cardX, y, cardW, cardTitleH + cellH * 2);
-
+  // ─── Section 2 (continued): per-book grid ────────────────────────────────
+  // 5 stats — Sessions, Reading Time, Pages Turned, Avg Session, Pages/Min.
+  // 3-col grid: row 1 fully populated, row 2's last cell stays empty.
+  char sessionsBuf[16];
+  char timeBuf[24];
+  char pagesBuf[16];
+  char avgBuf[24];
+  char ppmBuf[8];
+  snprintf(sessionsBuf, sizeof(sessionsBuf), "%u", static_cast<unsigned>(currentStats.sessionCount));
+  BookReadingStats::formatDuration(currentStats.totalReadingSeconds, timeBuf, sizeof(timeBuf));
+  snprintf(pagesBuf, sizeof(pagesBuf), "%lu", static_cast<unsigned long>(currentStats.totalPagesTurned));
   {
-    const auto lines =
-        renderer.wrappedText(UI_10_FONT_ID, bookTitle.c_str(), cardW - metrics.contentSidePadding * 2, 1);
-    if (!lines.empty()) {
-      const int tw = renderer.getTextWidth(UI_10_FONT_ID, lines[0].c_str(), EpdFontFamily::BOLD);
-      renderer.drawText(UI_10_FONT_ID, cardX + (cardW - tw) / 2, y + (cardTitleH - titleLineH) / 2, lines[0].c_str(),
-                        true, EpdFontFamily::BOLD);
-    }
+    const uint32_t avgSecs =
+        currentStats.sessionCount > 0 ? currentStats.totalReadingSeconds / currentStats.sessionCount : 0;
+    BookReadingStats::formatDuration(avgSecs, avgBuf, sizeof(avgBuf));
   }
-
-  y += cardTitleH;
-  renderer.drawLine(cardX, y, cardX + cardW, y);
-
-  const int row1Y = y;
-  snprintf(buf, sizeof(buf), "%u", static_cast<unsigned>(stats.sessionCount));
-  drawStatCell(cardX, thirdW, row1Y, buf, tr(STR_STATS_SESSIONS_LBL));
-
-  BookReadingStats::formatDuration(stats.totalReadingSeconds, buf, sizeof(buf));
-  drawStatCell(cardX + thirdW, thirdW, row1Y, buf, tr(STR_STATS_TIME_LBL));
-
-  snprintf(buf, sizeof(buf), "%lu", static_cast<unsigned long>(stats.totalPagesTurned));
-  drawStatCell(cardX + thirdW * 2, thirdW, row1Y, buf, tr(STR_STATS_PAGES_LBL));
-
-  y += cellH;
-
-  const int row2Y = y;
-  const uint32_t avgSecs = stats.sessionCount > 0 ? stats.totalReadingSeconds / stats.sessionCount : 0;
-  BookReadingStats::formatDuration(avgSecs, buf, sizeof(buf));
-  drawStatCell(cardX, halfW, row2Y, buf, tr(STR_STATS_AVG_SESSION_LBL));
-
-  if (stats.totalReadingSeconds > 60) {
-    const float ppm =
-        static_cast<float>(stats.totalPagesTurned) * 60.0f / static_cast<float>(stats.totalReadingSeconds);
-    snprintf(buf, sizeof(buf), "%.1f", ppm);
+  if (currentStats.totalReadingSeconds > 60) {
+    const float ppm = static_cast<float>(currentStats.totalPagesTurned) * 60.0f /
+                      static_cast<float>(currentStats.totalReadingSeconds);
+    snprintf(ppmBuf, sizeof(ppmBuf), "%.1f", ppm);
   } else {
-    snprintf(buf, sizeof(buf), "0.0");
-  }
-  drawStatCell(cardX + halfW, halfW, row2Y, buf, tr(STR_STATS_PAGES_PER_MIN));
-
-  y += cellH;
-  y += metrics.verticalSpacing;
-
-  // ─── Card 2: All Books ───────────────────────────────────────────────────────
-  // Only rendered if there is enough vertical space before the button hints.
-  const int screenHeight = renderer.getScreenHeight();
-  const int card2H = cardTitleH + cellH * 2;
-  if (screenHeight - y - metrics.buttonHintsHeight - metrics.verticalSpacing >= card2H) {
-    renderer.drawRect(cardX, y, cardW, card2H);
-
-    const int tw = renderer.getTextWidth(UI_10_FONT_ID, tr(STR_STATS_ALL_TIME), EpdFontFamily::BOLD);
-    renderer.drawText(UI_10_FONT_ID, cardX + (cardW - tw) / 2, y + (cardTitleH - titleLineH) / 2,
-                      tr(STR_STATS_ALL_TIME), true, EpdFontFamily::BOLD);
-
-    y += cardTitleH;
-    renderer.drawLine(cardX, y, cardX + cardW, y);
-
-    snprintf(buf, sizeof(buf), "%lu", static_cast<unsigned long>(globalStats.totalSessions));
-    drawStatCell(cardX, thirdW, y, buf, tr(STR_STATS_SESSIONS_LBL));
-
-    BookReadingStats::formatDuration(globalStats.totalReadingSeconds, buf, sizeof(buf));
-    drawStatCell(cardX + thirdW, thirdW, y, buf, tr(STR_STATS_TIME_LBL));
-
-    snprintf(buf, sizeof(buf), "%lu", static_cast<unsigned long>(globalStats.totalPagesTurned));
-    drawStatCell(cardX + thirdW * 2, thirdW, y, buf, tr(STR_STATS_PAGES_LBL));
-
-    y += cellH;
-
-    if (globalStats.completedBooks > 0) {
-      const uint32_t globalAvgSecs =
-          globalStats.totalSessions > 0 ? globalStats.totalReadingSeconds / globalStats.totalSessions : 0;
-      BookReadingStats::formatDuration(globalAvgSecs, buf, sizeof(buf));
-      drawStatCell(cardX, thirdW, y, buf, tr(STR_STATS_AVG_SESSION_LBL));
-
-      if (globalStats.totalReadingSeconds > 60) {
-        const float ppm = static_cast<float>(globalStats.totalPagesTurned) * 60.0f /
-                          static_cast<float>(globalStats.totalReadingSeconds);
-        snprintf(buf, sizeof(buf), "%.1f", ppm);
-      } else {
-        snprintf(buf, sizeof(buf), "0.0");
-      }
-      drawStatCell(cardX + thirdW, thirdW, y, buf, tr(STR_STATS_PAGES_PER_MIN));
-
-      snprintf(buf, sizeof(buf), "%lu", static_cast<unsigned long>(globalStats.completedBooks));
-      drawStatCell(cardX + thirdW * 2, thirdW, y, buf, tr(STR_STATS_COMPLETED_LBL));
-    } else {
-      const uint32_t globalAvgSecs =
-          globalStats.totalSessions > 0 ? globalStats.totalReadingSeconds / globalStats.totalSessions : 0;
-      BookReadingStats::formatDuration(globalAvgSecs, buf, sizeof(buf));
-      drawStatCell(cardX, halfW, y, buf, tr(STR_STATS_AVG_SESSION_LBL));
-
-      if (globalStats.totalReadingSeconds > 60) {
-        const float ppm = static_cast<float>(globalStats.totalPagesTurned) * 60.0f /
-                          static_cast<float>(globalStats.totalReadingSeconds);
-        snprintf(buf, sizeof(buf), "%.1f", ppm);
-      } else {
-        snprintf(buf, sizeof(buf), "0.0");
-      }
-      drawStatCell(cardX + halfW, halfW, y, buf, tr(STR_STATS_PAGES_PER_MIN));
-    }
+    snprintf(ppmBuf, sizeof(ppmBuf), "0.0");
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+  y = drawStatGrid(y, {
+                          {tr(STR_STATS_SESSIONS_LBL), sessionsBuf},
+                          {tr(STR_STATS_TIME_LBL), timeBuf},
+                          {tr(STR_STATS_PAGES_LBL), pagesBuf},
+                          {tr(STR_STATS_AVG_SESSION_LBL), avgBuf},
+                          {tr(STR_STATS_PAGES_PER_MIN), ppmBuf},
+                      });
+
+  // ─── Section 3: All Books (centered heading) ─────────────────────────────
+  // 18 px gap is the only separator — no line, no box.
+  y += 18;
+  {
+    const int hw = renderer.getTextWidth(UI_12_FONT_ID, tr(STR_STATS_ALL_TIME), EpdFontFamily::BOLD);
+    renderer.drawText(UI_12_FONT_ID, (screenWidth - hw) / 2, y, tr(STR_STATS_ALL_TIME), true, EpdFontFamily::BOLD);
+  }
+  y += ui12Lh + 10;  // heading sits 10 px above the grid that follows (matches title→grid)
+
+  // 6 stats — Sessions, Reading Time, Pages Turned, Avg Session, Pages/Min,
+  // and Books Read (existing STR_STATS_COMPLETED_LBL backing the same data).
+  char gSessionsBuf[16];
+  char gTimeBuf[24];
+  char gPagesBuf[16];
+  char gAvgBuf[24];
+  char gPpmBuf[8];
+  char gCompletedBuf[16];
+  snprintf(gSessionsBuf, sizeof(gSessionsBuf), "%lu", static_cast<unsigned long>(globalStats.totalSessions));
+  BookReadingStats::formatDuration(globalStats.totalReadingSeconds, gTimeBuf, sizeof(gTimeBuf));
+  snprintf(gPagesBuf, sizeof(gPagesBuf), "%lu", static_cast<unsigned long>(globalStats.totalPagesTurned));
+  {
+    const uint32_t globalAvgSecs =
+        globalStats.totalSessions > 0 ? globalStats.totalReadingSeconds / globalStats.totalSessions : 0;
+    BookReadingStats::formatDuration(globalAvgSecs, gAvgBuf, sizeof(gAvgBuf));
+  }
+  if (globalStats.totalReadingSeconds > 60) {
+    const float gppm = static_cast<float>(globalStats.totalPagesTurned) * 60.0f /
+                       static_cast<float>(globalStats.totalReadingSeconds);
+    snprintf(gPpmBuf, sizeof(gPpmBuf), "%.1f", gppm);
+  } else {
+    snprintf(gPpmBuf, sizeof(gPpmBuf), "0.0");
+  }
+  snprintf(gCompletedBuf, sizeof(gCompletedBuf), "%lu", static_cast<unsigned long>(globalStats.completedBooks));
+
+  drawStatGrid(y, {
+                      {tr(STR_STATS_SESSIONS_LBL), gSessionsBuf},
+                      {tr(STR_STATS_TIME_LBL), gTimeBuf},
+                      {tr(STR_STATS_PAGES_LBL), gPagesBuf},
+                      {tr(STR_STATS_AVG_SESSION_LBL), gAvgBuf},
+                      {tr(STR_STATS_PAGES_PER_MIN), gPpmBuf},
+                      {tr(STR_STATS_COMPLETED_LBL), gCompletedBuf},
+                  });
+
+  // ─── Button hints ────────────────────────────────────────────────────────
+  const char* prevLbl = nav.size() > 1 ? tr(STR_DIR_UP) : "";
+  const char* nextLbl = nav.size() > 1 ? tr(STR_DIR_DOWN) : "";
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_OPEN), prevLbl, nextLbl);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

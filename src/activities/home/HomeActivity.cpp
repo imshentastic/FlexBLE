@@ -335,12 +335,33 @@ void HomeActivity::freeCoverBuffer() {
 void HomeActivity::loop() {
   const int menuCount = getMenuItemCount();
 
-  buttonNavigator.onNext([this, menuCount] {
+  // Quick press: step by 1.
+  buttonNavigator.onNextRelease([this, menuCount] {
     selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
     requestUpdate();
   });
 
-  buttonNavigator.onPrevious([this, menuCount] {
+  buttonNavigator.onPreviousRelease([this, menuCount] {
+    selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
+    requestUpdate();
+  });
+
+  // Long-press DOWN: if the selection is on a carousel book, jump straight
+  // to the first menu item instead of paginating through every book. Once
+  // in the menu, continued holding falls back to step-by-1 stepping. The
+  // 500 ms continuous interval baked into ButtonNavigator naturally gives
+  // the user a brief pause to register the jump before stepping resumes.
+  buttonNavigator.onNextContinuous([this, menuCount] {
+    const int recentCount = static_cast<int>(recentBooks.size());
+    if (static_cast<int>(selectorIndex) < recentCount) {
+      selectorIndex = recentCount;
+    } else {
+      selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
+    }
+    requestUpdate();
+  });
+
+  buttonNavigator.onPreviousContinuous([this, menuCount] {
     selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
     requestUpdate();
   });
@@ -457,9 +478,15 @@ void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
 
 void HomeActivity::onReadingStatsOpen() {
-  startActivityForResult(
-      std::make_unique<BookStatsActivity>(renderer, mappedInput, recentBooks[0].title, currentBookStats, globalStats),
-      [this](const ActivityResult&) { requestUpdate(); });
+  // Replace home with stats so backing out lands on a fresh home with
+  // selectorIndex reset to 0 — same behavior as Browse Files / Recent
+  // Books / Settings, instead of the stack-preserved variant we had
+  // before. The reader's own stats menu still uses startActivityForResult
+  // (defined in EpubReaderActivity), so back from there returns to the
+  // reader as expected.
+  activityManager.replaceActivity(std::make_unique<BookStatsActivity>(
+      renderer, mappedInput, recentBooks[0].path, recentBooks[0].title, recentBooks[0].coverBmpPath, currentBookStats,
+      globalStats));
 }
 
 void HomeActivity::onBookmarksOpen() {
