@@ -80,13 +80,14 @@ template <TextRotation rotation>
 static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
                            const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
                            const bool pixelState, const EpdFontFamily::Style style) {
-  const EpdGlyph* glyph = fontFamily.getGlyph(cp, style);
-  if (!glyph) {
+  const auto glyphData = fontFamily.getGlyphData(cp, style);
+  const EpdGlyph* glyph = glyphData.glyph;
+  const EpdFontData* fontData = glyphData.fontData;
+  if (!glyph || !fontData) {
     LOG_ERR("GFX", "No glyph for codepoint %d", cp);
     return;
   }
 
-  const EpdFontData* fontData = fontFamily.getData(style);
   const bool is2Bit = fontData->is2Bit;
   const uint8_t width = glyph->width;
   const uint8_t height = glyph->height;
@@ -504,6 +505,41 @@ void GfxRenderer::fillRectDither(const int x, const int y, const int width, cons
   }
 }
 
+void GfxRenderer::maskRoundedRectOutsideCorners(const int x, const int y, const int width, const int height,
+                                                const int radius, const Color color) const {
+  if (radius <= 0 || color == Color::Clear) {
+    return;
+  }
+
+  const int rr = radius - 1;
+  const int rr2 = rr * rr;
+  for (int dy = 0; dy < radius; dy++) {
+    for (int dx = 0; dx < radius; dx++) {
+      const int tx = rr - dx;
+      const int ty = rr - dy;
+      if (tx * tx + ty * ty > rr2) {
+        if (color == Color::White || color == Color::Black) {
+          bool state = color == Color::Black;
+          drawPixel(x + dx, y + dy, state);                           // top-left
+          drawPixel(x + width - 1 - dx, y + dy, state);               // top-right
+          drawPixel(x + dx, y + height - 1 - dy, state);              // bottom-left
+          drawPixel(x + width - 1 - dx, y + height - 1 - dy, state);  // bottom-right
+        } else if (color == Color::LightGray) {
+          drawPixelDither<Color::LightGray>(x + dx, y + dy);                           // top-left
+          drawPixelDither<Color::LightGray>(x + width - 1 - dx, y + dy);               // top-right
+          drawPixelDither<Color::LightGray>(x + dx, y + height - 1 - dy);              // bottom-left
+          drawPixelDither<Color::LightGray>(x + width - 1 - dx, y + height - 1 - dy);  // bottom-right
+        } else if (color == Color::DarkGray) {
+          drawPixelDither<Color::DarkGray>(x + dx, y + dy);                           // top-left
+          drawPixelDither<Color::DarkGray>(x + width - 1 - dx, y + dy);               // top-right
+          drawPixelDither<Color::DarkGray>(x + dx, y + height - 1 - dy);              // bottom-left
+          drawPixelDither<Color::DarkGray>(x + width - 1 - dx, y + height - 1 - dy);  // bottom-right
+        }
+      }
+    }
+  }
+}
+
 template <Color color>
 void GfxRenderer::fillArc(const int maxRadius, const int cx, const int cy, const int xDir, const int yDir) const {
   if (maxRadius <= 0) return;
@@ -902,10 +938,10 @@ void GfxRenderer::invertScreen() const {
   }
 }
 
-void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode) const {
+void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode, const bool turnOffScreen) const {
   auto elapsed = millis() - start_ms;
   LOG_DBG("GFX", "Time = %lu ms from clearScreen to displayBuffer", elapsed);
-  display.displayBuffer(refreshMode, fadingFix);
+  display.displayBuffer(refreshMode, fadingFix || turnOffScreen);
 }
 
 std::string GfxRenderer::truncatedText(const int fontId, const char* text, const int maxWidth,
@@ -1194,7 +1230,9 @@ void GfxRenderer::copyGrayscaleLsbBuffers() const { display.copyGrayscaleLsbBuff
 
 void GfxRenderer::copyGrayscaleMsbBuffers() const { display.copyGrayscaleMsbBuffers(frameBuffer); }
 
-void GfxRenderer::displayGrayBuffer() const { display.displayGrayBuffer(fadingFix); }
+void GfxRenderer::displayGrayBuffer(const bool turnOffScreen) const {
+  display.displayGrayBuffer(fadingFix || turnOffScreen);
+}
 
 void GfxRenderer::freeBwBufferChunks() {
   for (auto& bwBufferChunk : bwBufferChunks) {
