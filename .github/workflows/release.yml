@@ -3,12 +3,12 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version, without the leading v. Example: 1.2.9"
+        description: "Release version, without the leading v. Example: 1.2.9.1"
         required: true
         type: string
   push:
     tags:
-      - "*"
+      - "v*"
 
 permissions:
   contents: write
@@ -53,38 +53,17 @@ jobs:
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
           sed -i "s/crossink_version = .*/crossink_version = $VERSION/" platformio.ini
 
-      - name: Build CrossPoint
+      - name: Build CrossInk-Carousel
         env:
           CROSSPOINT_RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
         run: pio run -e tiny -e xlarge -e no_emoji
 
-      - name: Generate release catalog
+      - name: Rename binaries with carousel prefix
         run: |
-          python3 scripts/generate_release_catalog.py \
-            --version "${{ env.RELEASE_VERSION }}" \
-            --repo "${{ github.repository }}" \
-            --firmware ".pio/build/tiny/firmware-tiny-v${{ env.RELEASE_VERSION }}.bin" \
-            --firmware ".pio/build/xlarge/firmware-xlarge-v${{ env.RELEASE_VERSION }}.bin" \
-            --firmware ".pio/build/no_emoji/firmware-no_emoji-v${{ env.RELEASE_VERSION }}.bin" \
-            --output ".pio/build/catalog"
-
-      - name: Publish catalog to GitHub Pages source
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin "$DEFAULT_BRANCH"
-          git worktree add ../crossink-pages "origin/$DEFAULT_BRANCH"
-          cp ".pio/build/catalog" "../crossink-pages/docs/catalog"
-          cd ../crossink-pages
-          if git diff --quiet -- docs/catalog; then
-            echo "docs/catalog is already current"
-            exit 0
-          fi
-          git add docs/catalog
-          git commit -m "Update release catalog for v${RELEASE_VERSION}"
-          git push origin "HEAD:$DEFAULT_BRANCH"
+          for v in tiny xlarge no_emoji; do
+            cp ".pio/build/$v/firmware-$v-v${RELEASE_VERSION}.bin" \
+               ".pio/build/$v/carousel-firmware-$v-v${RELEASE_VERSION}.bin"
+          done
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
@@ -92,8 +71,8 @@ jobs:
           tag_name: v${{ env.RELEASE_VERSION }}
           target_commitish: ${{ github.sha }}
           draft: true
+          generate_release_notes: true
           files: |
-            .pio/build/catalog
-            .pio/build/tiny/firmware-tiny-v${{ env.RELEASE_VERSION }}.bin
-            .pio/build/xlarge/firmware-xlarge-v${{ env.RELEASE_VERSION }}.bin
-            .pio/build/no_emoji/firmware-no_emoji-v${{ env.RELEASE_VERSION }}.bin
+            .pio/build/tiny/carousel-firmware-tiny-v${{ env.RELEASE_VERSION }}.bin
+            .pio/build/xlarge/carousel-firmware-xlarge-v${{ env.RELEASE_VERSION }}.bin
+            .pio/build/no_emoji/carousel-firmware-no_emoji-v${{ env.RELEASE_VERSION }}.bin
