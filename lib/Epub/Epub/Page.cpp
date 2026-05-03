@@ -6,6 +6,8 @@
 
 namespace {
 
+constexpr uint16_t MAX_PAGE_ELEMENTS = 1024;
+
 template <typename Predicate>
 void renderFilteredPageElements(const std::vector<std::shared_ptr<PageElement>>& elements, GfxRenderer& renderer,
                                 const int fontId, const int xOffset, const int yOffset, Predicate&& predicate) {
@@ -37,7 +39,17 @@ std::unique_ptr<PageLine> PageLine::deserialize(FsFile& file) {
   serialization::readPod(file, yPos);
 
   auto tb = TextBlock::deserialize(file);
-  return std::unique_ptr<PageLine>(new PageLine(std::move(tb), xPos, yPos));
+  if (!tb) {
+    LOG_ERR("PGE", "Deserialization failed: PageLine text block was invalid");
+    return nullptr;
+  }
+
+  auto* pageLine = new (std::nothrow) PageLine(std::move(tb), xPos, yPos);
+  if (!pageLine) {
+    LOG_ERR("PGE", "Deserialization failed: could not allocate PageLine");
+    return nullptr;
+  }
+  return std::unique_ptr<PageLine>(pageLine);
 }
 
 void PageImage::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset) {
@@ -60,7 +72,17 @@ std::unique_ptr<PageImage> PageImage::deserialize(FsFile& file) {
   serialization::readPod(file, yPos);
 
   auto ib = ImageBlock::deserialize(file);
-  return std::unique_ptr<PageImage>(new PageImage(std::move(ib), xPos, yPos));
+  if (!ib) {
+    LOG_ERR("PGE", "Deserialization failed: PageImage block was invalid");
+    return nullptr;
+  }
+
+  auto* pageImage = new (std::nothrow) PageImage(std::move(ib), xPos, yPos);
+  if (!pageImage) {
+    LOG_ERR("PGE", "Deserialization failed: could not allocate PageImage");
+    return nullptr;
+  }
+  return std::unique_ptr<PageImage>(pageImage);
 }
 
 void Page::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset) const {
@@ -106,10 +128,19 @@ bool Page::serialize(FsFile& file) const {
 }
 
 std::unique_ptr<Page> Page::deserialize(FsFile& file) {
-  auto page = std::unique_ptr<Page>(new Page());
+  auto* rawPage = new (std::nothrow) Page();
+  if (!rawPage) {
+    LOG_ERR("PGE", "Deserialization failed: could not allocate Page");
+    return nullptr;
+  }
+  auto page = std::unique_ptr<Page>(rawPage);
 
   uint16_t count;
   serialization::readPod(file, count);
+  if (count > MAX_PAGE_ELEMENTS) {
+    LOG_ERR("PGE", "Deserialization failed: element count %u exceeds maximum", count);
+    return nullptr;
+  }
   page->elements.reserve(count);
 
   for (uint16_t i = 0; i < count; i++) {
@@ -118,9 +149,15 @@ std::unique_ptr<Page> Page::deserialize(FsFile& file) {
 
     if (tag == TAG_PageLine) {
       auto pl = PageLine::deserialize(file);
+      if (!pl) {
+        return nullptr;
+      }
       page->elements.push_back(std::move(pl));
     } else if (tag == TAG_PageImage) {
       auto pi = PageImage::deserialize(file);
+      if (!pi) {
+        return nullptr;
+      }
       page->elements.push_back(std::move(pi));
     } else {
       LOG_ERR("PGE", "Deserialization failed: Unknown tag %u", tag);

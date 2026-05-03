@@ -7,6 +7,45 @@
 #include <algorithm>
 #include <cstring>
 
+namespace {
+
+constexpr uint16_t MAX_WORDS_PER_TEXT_BLOCK = 512;
+constexpr uint32_t MAX_SERIALIZED_WORD_BYTES = 4096;
+constexpr uint32_t SERIALIZED_TEXT_BLOCK_TAIL_BYTES =
+    sizeof(EpdFontFamily::Style) + sizeof(bool) + sizeof(int16_t) * 7 + sizeof(bool);
+constexpr uint32_t SERIALIZED_WORD_METADATA_BYTES = sizeof(uint32_t) + sizeof(int16_t) + sizeof(EpdFontFamily::Style) +
+                                                    sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t);
+
+bool readBoundedString(FsFile& file, std::string& s) {
+  uint32_t len = 0;
+  serialization::readPod(file, len);
+  if (len > MAX_SERIALIZED_WORD_BYTES) {
+    LOG_ERR("TXB", "Deserialization failed: word length %lu exceeds maximum", static_cast<unsigned long>(len));
+    return false;
+  }
+
+  const int remaining = file.available();
+  if (remaining < 0 || static_cast<uint32_t>(remaining) < len) {
+    LOG_ERR("TXB", "Deserialization failed: truncated word payload (%lu bytes requested, %d available)",
+            static_cast<unsigned long>(len), remaining);
+    return false;
+  }
+
+  if (len == 0) {
+    s.clear();
+    return true;
+  }
+
+  s.resize(len);
+  if (file.read(&s[0], len) != static_cast<int>(len)) {
+    LOG_ERR("TXB", "Deserialization failed: could not read %lu-byte word payload", static_cast<unsigned long>(len));
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
+
 void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int x, const int y) const {
   // Validate iterator bounds before rendering
   if (words.size() != wordXpos.size() || words.size() != wordStyles.size() ||
@@ -143,9 +182,19 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
   // Word count
   serialization::readPod(file, wc);
 
-  // Sanity check: prevent allocation of unreasonably large vectors (max 10000 words per block)
-  if (wc > 10000) {
+  // A TextBlock is one rendered line of text, so counts far above a few hundred are not legitimate.
+  // Clamp aggressively here so corrupted cache data cannot trigger huge STL allocations on the ESP32-C3.
+  if (wc > MAX_WORDS_PER_TEXT_BLOCK) {
     LOG_ERR("TXB", "Deserialization failed: word count %u exceeds maximum", wc);
+    return nullptr;
+  }
+
+  const uint32_t minimumRemainingBytes =
+      static_cast<uint32_t>(wc) * SERIALIZED_WORD_METADATA_BYTES + SERIALIZED_TEXT_BLOCK_TAIL_BYTES;
+  const int remainingBeforeWords = file.available();
+  if (remainingBeforeWords < 0 || static_cast<uint32_t>(remainingBeforeWords) < minimumRemainingBytes) {
+    LOG_ERR("TXB", "Deserialization failed: truncated block metadata (%u words need at least %lu bytes, %d available)",
+            wc, static_cast<unsigned long>(minimumRemainingBytes), remainingBeforeWords);
     return nullptr;
   }
 
@@ -156,7 +205,23 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
   wordBionicBoundary.resize(wc);
   wordBionicSuffixX.resize(wc);
   wordGuideDotXOffset.resize(wc);
-  for (auto& w : words) serialization::readString(file, w);
+  for (auto& w : words) {
+    if (!readBoundedString(file, w)) {
+      return nullptr;
+    }
+  }
+
+  const uint32_t remainingMetadataBytes =
+      static_cast<uint32_t>(wc) *
+          (sizeof(int16_t) + sizeof(EpdFontFamily::Style) + sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t)) +
+      SERIALIZED_TEXT_BLOCK_TAIL_BYTES;
+  const int remainingAfterWords = file.available();
+  if (remainingAfterWords < 0 || static_cast<uint32_t>(remainingAfterWords) < remainingMetadataBytes) {
+    LOG_ERR("TXB", "Deserialization failed: truncated post-word metadata (%lu bytes needed, %d available)",
+            static_cast<unsigned long>(remainingMetadataBytes), remainingAfterWords);
+    return nullptr;
+  }
+
   for (auto& x : wordXpos) serialization::readPod(file, x);
   for (auto& s : wordStyles) serialization::readPod(file, s);
   for (auto& b : wordBionicBoundary) serialization::readPod(file, b);
@@ -177,7 +242,13 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
   serialization::readPod(file, blockStyle.textIndent);
   serialization::readPod(file, blockStyle.textIndentDefined);
 
-  return std::unique_ptr<TextBlock>(new TextBlock(std::move(words), std::move(wordXpos), std::move(wordStyles),
-                                                  std::move(wordBionicBoundary), std::move(wordBionicSuffixX),
-                                                  std::move(wordGuideDotXOffset), blockStyle));
+  auto* textBlock = new (std::nothrow)
+      TextBlock(std::move(words), std::move(wordXpos), std::move(wordStyles), std::move(wordBionicBoundary),
+                std::move(wordBionicSuffixX), std::move(wordGuideDotXOffset), blockStyle);
+  if (!textBlock) {
+    LOG_ERR("TXB", "Deserialization failed: could not allocate TextBlock");
+    return nullptr;
+  }
+
+  return std::unique_ptr<TextBlock>(textBlock);
 }
