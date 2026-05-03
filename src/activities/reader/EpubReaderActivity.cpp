@@ -837,6 +837,14 @@ void EpubReaderActivity::reindexCurrentSection() {
   requestUpdate();
 }
 
+void EpubReaderActivity::openFileTransfer() {
+  if (epub && section) {
+    saveProgress(currentSpineIndex, section->currentPage, section->pageCount);
+  }
+
+  activityManager.goToFileTransfer(epub ? epub->getPath() : std::string{});
+}
+
 void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS_MENU_ACTION action) {
   switch (action) {
     case CrossPointSettings::LONG_MENU_SLEEP:
@@ -892,6 +900,9 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
       toggleAutoPageTurn(currentPageTurnOption);
       requestUpdate();
       break;
+    case CrossPointSettings::LONG_MENU_FILE_TRANSFER:
+      openFileTransfer();
+      break;
     case CrossPointSettings::LONG_MENU_OFF:
     default:
       break;
@@ -931,6 +942,9 @@ bool EpubReaderActivity::executeShortPowerButtonAction() {
       return true;
     case CrossPointSettings::SHORT_PWRBTN::CYCLE_PAGE_TURN:
       executeReaderQuickAction(CrossPointSettings::LONG_MENU_CYCLE_PAGE_TURN);
+      return true;
+    case CrossPointSettings::SHORT_PWRBTN::FILE_TRANSFER:
+      executeReaderQuickAction(CrossPointSettings::LONG_MENU_FILE_TRANSFER);
       return true;
     default:
       return false;
@@ -988,6 +1002,9 @@ bool EpubReaderActivity::executeLongPowerButtonAction() {
       return true;
     case CrossPointSettings::SHORT_PWRBTN::CYCLE_PAGE_TURN:
       executeReaderQuickAction(CrossPointSettings::LONG_MENU_CYCLE_PAGE_TURN);
+      return true;
+    case CrossPointSettings::SHORT_PWRBTN::FILE_TRANSFER:
+      executeReaderQuickAction(CrossPointSettings::LONG_MENU_FILE_TRANSFER);
       return true;
     default:
       return false;

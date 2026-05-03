@@ -75,6 +75,19 @@ bool MappedInputManager::wasPressed(const Button button) const {
 }
 
 bool MappedInputManager::wasReleased(const Button button) const {
+  if (button == Button::Back) {
+    if (!mapButton(button, &HalGPIO::wasReleased)) {
+      return false;
+    }
+
+    if (suppressBackRelease) {
+      suppressBackRelease = false;
+      return false;
+    }
+
+    return true;
+  }
+
   if (button == Button::Confirm) {
     if (mapButton(button, &HalGPIO::wasReleased)) {
       return true;

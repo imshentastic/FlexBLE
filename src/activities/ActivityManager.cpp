@@ -174,8 +174,8 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
   }
 }
 
-void ActivityManager::goToFileTransfer() {
-  replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput));
+void ActivityManager::goToFileTransfer(std::string returnBookPath) {
+  replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput, std::move(returnBookPath)));
 }
 
 void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
@@ -198,8 +198,8 @@ void ActivityManager::goToBrowser() {
   }
 }
 
-void ActivityManager::goToReader(std::string path) {
-  replaceActivity(std::make_unique<ReaderActivity>(renderer, mappedInput, std::move(path)));
+void ActivityManager::goToReader(std::string path, const bool suppressBackRelease) {
+  replaceActivity(std::make_unique<ReaderActivity>(renderer, mappedInput, std::move(path), suppressBackRelease));
 }
 
 void ActivityManager::goToSleep() {
