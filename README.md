@@ -1,6 +1,6 @@
 # CrossInk Carousel
 
-> **CrossInk Carousel is a personal fork of CrossInk** that adds book-cover-centric UI inspired by the Lua fork [CrossPoint Flow](https://github.com/ideo2004-afk/crosspoint-reader-lua). The goal is to make book covers a first-class citizen of the navigation experience: on the home screen, in the recent books browser, and on the reading stats screen. 
+> **CrossInk Carousel is a personal fork of CrossInk** that adds book-cover-centric UI inspired by the Lua fork [CrossPoint Flow](https://github.com/ideo2004-afk/crosspoint-reader-lua). As it stands, I always judge a book by its cover. I deserve to see the fruits of my good taste every time I open my X4. The goal is to make book covers the first priority of the navigation experience: on the home screen, in the recent books browser, and on the reading stats screen. 
 
 **ONLY TESTED ON XTEINK X4, NOT YET COMPATIBLE WITH X3 MODEL. BACKUP YOUR DEVICE BEFORE FLASHING.**
 
@@ -257,11 +257,11 @@ pio run -e simulator
 
 ### Web
 
-1. Download the `firmware-*.bin` file for the build variant of your choosing from the [releases](https://github.com/uxjulia/CrossInk/releases) page
+1. Download the `carousel-firmware-*.bin` file for the build variant of your choosing from the [releases](https://github.com/chintanvajariya/CrossInk-Carousel/releases) page
 2. Connect your Xteink X4 to your computer via USB-C and wake/unlock the device
 3. Go to https://crosspointreader.com/#flash-tools and choose your device
 4. Select "Custom .bin" from the options
-5. Choose the `firmware-*.bin` file you downloaded and click "Flash"
+5. Choose the `carousel-firmware-*.bin` file you downloaded and click "Flash"
 
 To revert back to the official firmware, you can flash the latest official firmware from https://crosspointreader.com/#flash-tools
 
@@ -275,7 +275,7 @@ To revert back to the official firmware, you can flash the latest official firmw
 pip3 install esptool
 ```
 
-2. Download the `firmware-*.bin` file from the release of your choice via the [releases](https://github.com/uxjulia/CrossInk/releases)
+2. Download the `carousel-firmware-*.bin` file from the release of your choice via the [releases](https://github.com/chintanvajariya/CrossInk-Carousel/releases)
 3. Connect your Xteink X4 to your computer via USB-C.
 4. Note the device location. On Linux, run `dmesg | grep tty` after connecting. On macOS, run `ls /dev/cu.*` before and after connecting — the new entry is your device (typically `/dev/cu.usbmodem*`).
 
@@ -285,10 +285,12 @@ pip3 install esptool
 # Update the device port with your actual device port (/dev/...) from step 4
 
 # Linux
-esptool.py --chip esp32c3 --port /dev/ttyACM0 --baud 921600 write_flash 0x10000 /path/to/firmware.bin
+esptool.py --chip esp32c3 --port /dev/ttyACM0 --baud 921600 write_flash 0x10000 /path/to/carousel-firmware-tiny-v1.2.8.1.bin
 
 # macOS
-esptool.py --chip esp32c3 --port /dev/cu.usbmodem2101 --baud 921600 write_flash 0x10000 /path/to/firmware.bin
+esptool.py --chip esp32c3 --port /dev/cu.usbmodem2101 --baud 921600 write_flash 0x10000 /path/to/carousel-firmware-tiny-v1.2.8.1.bin
+
+# Swap the filename for the variant (tiny / xlarge / no_emoji) and version you downloaded.
 ```
 
 ## Development
@@ -305,7 +307,7 @@ esptool.py --chip esp32c3 --port /dev/cu.usbmodem2101 --baud 921600 write_flash 
 CrossPoint uses PlatformIO for building and flashing the firmware. To get started, clone the repository:
 
 ```
-git clone --recursive https://github.com/uxjulia/CrossInk
+git clone --recursive https://github.com/chintanvajariya/CrossInk-Carousel
 
 # Or, if you've already cloned without --recursive:
 git submodule update --init --recursive

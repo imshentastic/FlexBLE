@@ -26,6 +26,11 @@ class BookStatsActivity final : public Activity {
   std::string initialCoverBmpPath;
   BookReadingStats initialStats;
   GlobalReadingStats globalStats;
+  // True when launched via replaceActivity from Home (back lands on home,
+  // so the leftmost button hint should say "Home"). False when launched
+  // via startActivityForResult from the reader (back returns to the open
+  // book, so the hint stays "Back"). Default preserves the reader path.
+  bool backToHome = false;
 
   // Navigation state populated in onEnter().
   std::vector<NavEntry> nav;
@@ -47,7 +52,7 @@ class BookStatsActivity final : public Activity {
  public:
   BookStatsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& bookPath,
                     const std::string& title, const std::string& coverBmpPath, const BookReadingStats& stats,
-                    const GlobalReadingStats& globalStats);
+                    const GlobalReadingStats& globalStats, bool backToHome = false);
 
   void onEnter() override;
   void loop() override;

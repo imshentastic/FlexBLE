@@ -35,13 +35,14 @@ std::string statsCachePathFor(const std::string& bookPath) {
 BookStatsActivity::BookStatsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                      const std::string& bookPath, const std::string& title,
                                      const std::string& coverBmpPath, const BookReadingStats& stats,
-                                     const GlobalReadingStats& globalStats)
+                                     const GlobalReadingStats& globalStats, bool backToHome)
     : Activity("BookStats", renderer, mappedInput),
       initialBookPath(bookPath),
       initialBookTitle(title),
       initialCoverBmpPath(coverBmpPath),
       initialStats(stats),
-      globalStats(globalStats) {}
+      globalStats(globalStats),
+      backToHome(backToHome) {}
 
 void BookStatsActivity::buildNavList() {
   nav.clear();
@@ -441,7 +442,7 @@ void BookStatsActivity::render(RenderLock&&) {
   // ─── Button hints ────────────────────────────────────────────────────────
   const char* prevLbl = nav.size() > 1 ? tr(STR_DIR_UP) : "";
   const char* nextLbl = nav.size() > 1 ? tr(STR_DIR_DOWN) : "";
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_OPEN), prevLbl, nextLbl);
+  const auto labels = mappedInput.mapLabels(backToHome ? tr(STR_HOME) : tr(STR_BACK), tr(STR_OPEN), prevLbl, nextLbl);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

@@ -486,7 +486,7 @@ void HomeActivity::onReadingStatsOpen() {
   // reader as expected.
   activityManager.replaceActivity(std::make_unique<BookStatsActivity>(
       renderer, mappedInput, recentBooks[0].path, recentBooks[0].title, recentBooks[0].coverBmpPath, currentBookStats,
-      globalStats));
+      globalStats, /*backToHome=*/true));
 }
 
 void HomeActivity::onBookmarksOpen() {
