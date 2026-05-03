@@ -1,5 +1,6 @@
 #include "HomeActivity.h"
 
+#include <Arduino.h>
 #include <Bitmap.h>
 #include <Epub.h>
 #include <FsHelpers.h>
@@ -209,11 +210,34 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   bool showingLoading = false;
   Rect popupRect;
 
+  // ESP32-C3 has ~380 KB usable RAM and no PSRAM. Sequential thumb generation
+  // (EPUB load + JPEG decode + BMP write) fragments the heap; once free heap
+  // drops below this floor the next decode cannot find a contiguous block and
+  // crashes. Bail out early instead — the home screen renders with whatever
+  // covers loaded so far rather than bricking. See "more than 5 books bricks"
+  // bug, May 2026.
+  constexpr size_t MIN_FREE_HEAP_FOR_THUMB = 80 * 1024;
+
   int progress = 0;
   for (RecentBook& book : recentBooks) {
+    // Skip stale entries: recent.bin may reference a book that was deleted
+    // from the SD card. Opening a missing path crashes inside Epub::load.
+    if (!Storage.exists(book.path.c_str())) {
+      progress++;
+      continue;
+    }
     if (!book.coverBmpPath.empty()) {
       std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
       if (!Storage.exists(coverPath.c_str())) {
+        // Heap-floor guard before each fresh thumb gen. If we're already low,
+        // stop the loop entirely so the remaining cards render as fallbacks
+        // instead of risking an OOM mid-decode.
+        const uint32_t freeHeap = ESP.getFreeHeap();
+        if (freeHeap < MIN_FREE_HEAP_FOR_THUMB) {
+          LOG_ERR("HOME", "Skipping remaining thumb gen (free heap %u < %u)", freeHeap,
+                  static_cast<unsigned>(MIN_FREE_HEAP_FOR_THUMB));
+          break;
+        }
         // If epub, try to load the metadata for title/author and cover
         if (FsHelpers::hasEpubExtension(book.path)) {
           Epub epub(book.path, "/.crosspoint");

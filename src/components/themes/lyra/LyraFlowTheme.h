@@ -13,7 +13,10 @@ constexpr ThemeMetrics values = [] {
   ThemeMetrics v = LyraMetrics::values;
   v.homeCoverHeight = 320;       // 25-kai book ratio (~0.7) — center cover
   v.homeCoverTileHeight = 360;   // hugs the bottom of the cover so the menu sits close
-  v.homeRecentBooksCount = 7;    // up to 7 books cycle through the carousel
+  v.homeRecentBooksCount = 5;    // matches the 5 carousel slots visible at once
+                                 // (center + 2 sides each direction). Capped at 5 to
+                                 // avoid first-boot OOM during sequential thumb gen on
+                                 // ESP32-C3 — see HomeActivity::loadRecentCovers.
   return v;
 }();
 }  // namespace LyraFlowMetrics
