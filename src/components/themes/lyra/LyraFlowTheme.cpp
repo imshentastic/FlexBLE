@@ -275,9 +275,9 @@ void LyraFlowTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonC
   const int rowStep = menuMetrics.menuRowHeight + menuMetrics.menuSpacing;
   // Reserve a thin strip at the bottom for page-indicator dots. Reserving
   // unconditionally keeps tile geometry stable whether dots are visible or not.
-  constexpr int dotSize = 8;
+  constexpr int dotSize = 10;
   constexpr int dotSpacing = 8;
-  constexpr int dotStripHeight = 16;
+  constexpr int dotStripHeight = 18;
   const int usableHeight = std::max(0, rect.height - dotStripHeight);
   const int pageItems = std::max(1, usableHeight / rowStep);
   const int safeSelectedIndex = std::max(0, selectedIndex);
@@ -351,20 +351,21 @@ void LyraFlowTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonC
   }
 
   // Page-indicator dots — pattern lifted from RecentBooksGridActivity::render.
-  // Anchor just below the last possible menu row so the dots read as
-  // attached to the menu instead of floating against the button hints.
+  // Anchor at the same vertical offset above the button hints as Recent Books
+  // does (rect.y + rect.height == pageHeight - buttonHintsHeight for the home
+  // menu rect, so this formula resolves to the same Y as Recent Books's
+  // pageHeight - buttonHintsHeight - verticalSpacing - 4).
   if (totalPages > 1) {
     const int totalDotWidth = totalPages * dotSize + (totalPages - 1) * dotSpacing;
     const int dotsStartX = rect.x + (rect.width - totalDotWidth) / 2;
-    const int lastRowBottomY = rect.y + (pageItems - 1) * rowStep + menuMetrics.menuRowHeight;
-    constexpr int dotGapAboveDots = 4;
-    const int dotY = lastRowBottomY + dotGapAboveDots;
+    const int dotY = rect.y + rect.height - menuMetrics.verticalSpacing - 4;
+    constexpr int dotRadius = dotSize / 2;  // 5 → fully-circular bullet on 10x10
     for (int p = 0; p < totalPages; ++p) {
       const int dx = dotsStartX + p * (dotSize + dotSpacing);
       if (p == currentPage) {
-        renderer.fillRect(dx, dotY, dotSize, dotSize, true);
+        renderer.fillRoundedRect(dx, dotY, dotSize, dotSize, dotRadius, Color::Black);
       } else {
-        renderer.drawRect(dx, dotY, dotSize, dotSize, true);
+        renderer.drawRoundedRect(dx, dotY, dotSize, dotSize, 1, dotRadius, true);
       }
     }
   }

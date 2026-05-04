@@ -268,17 +268,18 @@ void RecentBooksGridActivity::render(RenderLock&&) {
     }
 
     if (totalPages > 1) {
-      constexpr int dotSize = 8;
+      constexpr int dotSize = 10;
       constexpr int dotSpacing = 8;
       const int totalDotWidth = totalPages * dotSize + (totalPages - 1) * dotSpacing;
       const int dotsStartX = (pageWidth - totalDotWidth) / 2;
       const int dotY = pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing - 4;
+      constexpr int dotRadius = dotSize / 2;  // 5 → fully-circular bullet on 10x10
       for (int p = 0; p < totalPages; p++) {
         const int dx = dotsStartX + p * (dotSize + dotSpacing);
         if (p == currentPage) {
-          renderer.fillRect(dx, dotY, dotSize, dotSize, true);
+          renderer.fillRoundedRect(dx, dotY, dotSize, dotSize, dotRadius, Color::Black);
         } else {
-          renderer.drawRect(dx, dotY, dotSize, dotSize, true);
+          renderer.drawRoundedRect(dx, dotY, dotSize, dotSize, 1, dotRadius, true);
         }
       }
     }
