@@ -20,3 +20,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix the Lyra carousel simulator build by syncing its theme override signatures with the shared theme API
 - Fix missing Reading Stats and Bookmarks icons in the Lyra carousel home menu
 - Fix Lyra carousel home navigation so dynamically-added menu items stay reachable and trigger the correct action
+- Fix Lyra carousel settings lists so section headers render correctly instead of being treated like normal selectable rows
