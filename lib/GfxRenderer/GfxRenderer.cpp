@@ -36,6 +36,41 @@ void GfxRenderer::begin() {
   bwBufferChunks.assign((frameBufferSize + BW_BUFFER_CHUNK_SIZE - 1) / BW_BUFFER_CHUNK_SIZE, nullptr);
 }
 
+void GfxRenderer::freeBitmapScratchBuffers() {
+  free(bitmapScratchOutputRow_);
+  bitmapScratchOutputRow_ = nullptr;
+  bitmapScratchOutputRowSize_ = 0;
+
+  free(bitmapScratchRowBytes_);
+  bitmapScratchRowBytes_ = nullptr;
+  bitmapScratchRowBytesSize_ = 0;
+}
+
+bool GfxRenderer::ensureBitmapScratchBuffers(const size_t outputRowSize, const size_t rowBytesSize) const {
+  if (outputRowSize > bitmapScratchOutputRowSize_) {
+    auto* grownOutput = static_cast<uint8_t*>(realloc(bitmapScratchOutputRow_, outputRowSize));
+    if (!grownOutput) {
+      LOG_ERR("GFX", "!! Failed to grow BMP output row scratch buffer to %u bytes",
+              static_cast<unsigned>(outputRowSize));
+      return false;
+    }
+    bitmapScratchOutputRow_ = grownOutput;
+    bitmapScratchOutputRowSize_ = outputRowSize;
+  }
+
+  if (rowBytesSize > bitmapScratchRowBytesSize_) {
+    auto* grownRowBytes = static_cast<uint8_t*>(realloc(bitmapScratchRowBytes_, rowBytesSize));
+    if (!grownRowBytes) {
+      LOG_ERR("GFX", "!! Failed to grow BMP row-bytes scratch buffer to %u bytes", static_cast<unsigned>(rowBytesSize));
+      return false;
+    }
+    bitmapScratchRowBytes_ = grownRowBytes;
+    bitmapScratchRowBytesSize_ = rowBytesSize;
+  }
+
+  return true;
+}
+
 void GfxRenderer::insertFont(const int fontId, EpdFontFamily font) { fontMap.insert({fontId, font}); }
 
 // Translate logical (x,y) coordinates to physical panel coordinates based on current orientation
@@ -792,15 +827,11 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
   // Calculate output row size (2 bits per pixel, packed into bytes)
   // IMPORTANT: Use int, not uint8_t, to avoid overflow for images > 1020 pixels wide
   const int outputRowSize = (bitmap.getWidth() + 3) / 4;
-  auto* outputRow = static_cast<uint8_t*>(malloc(outputRowSize));
-  auto* rowBytes = static_cast<uint8_t*>(malloc(bitmap.getRowBytes()));
-
-  if (!outputRow || !rowBytes) {
-    LOG_ERR("GFX", "!! Failed to allocate BMP row buffers");
-    free(outputRow);
-    free(rowBytes);
+  if (!ensureBitmapScratchBuffers(outputRowSize, bitmap.getRowBytes())) {
     return;
   }
+  auto* outputRow = bitmapScratchOutputRow_;
+  auto* rowBytes = bitmapScratchRowBytes_;
 
   for (int bmpY = 0; bmpY < (bitmap.getHeight() - cropPixY); bmpY++) {
     // The BMP's (0, 0) is the bottom-left corner (if the height is positive, top-left if negative).
@@ -816,8 +847,6 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
 
     if (bitmap.readNextRow(outputRow, rowBytes) != BmpReaderError::Ok) {
       LOG_ERR("GFX", "Failed to read row %d from bitmap", bmpY);
-      free(outputRow);
-      free(rowBytes);
       return;
     }
 
@@ -854,9 +883,6 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
       }
     }
   }
-
-  free(outputRow);
-  free(rowBytes);
 }
 
 void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y, const int maxWidth,
@@ -874,22 +900,16 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
 
   // For 1-bit BMP, output is still 2-bit packed (for consistency with readNextRow)
   const int outputRowSize = (bitmap.getWidth() + 3) / 4;
-  auto* outputRow = static_cast<uint8_t*>(malloc(outputRowSize));
-  auto* rowBytes = static_cast<uint8_t*>(malloc(bitmap.getRowBytes()));
-
-  if (!outputRow || !rowBytes) {
-    LOG_ERR("GFX", "!! Failed to allocate 1-bit BMP row buffers");
-    free(outputRow);
-    free(rowBytes);
+  if (!ensureBitmapScratchBuffers(outputRowSize, bitmap.getRowBytes())) {
     return;
   }
+  auto* outputRow = bitmapScratchOutputRow_;
+  auto* rowBytes = bitmapScratchRowBytes_;
 
   for (int bmpY = 0; bmpY < bitmap.getHeight(); bmpY++) {
     // Read rows sequentially using readNextRow
     if (bitmap.readNextRow(outputRow, rowBytes) != BmpReaderError::Ok) {
       LOG_ERR("GFX", "Failed to read row %d from 1-bit bitmap", bmpY);
-      free(outputRow);
-      free(rowBytes);
       return;
     }
 
@@ -923,9 +943,6 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
       // White pixels (val == 3) are not drawn (leave background)
     }
   }
-
-  free(outputRow);
-  free(rowBytes);
 }
 
 void GfxRenderer::drawPerspectiveBitmap(const Bitmap& bitmap, const int x, const int y, const int w, const int hL,
@@ -943,20 +960,15 @@ void GfxRenderer::drawPerspectiveBitmap(const Bitmap& bitmap, const int x, const
   const bool topDown = bitmap.isTopDown();
 
   const int outputRowSize = (srcW + 3) / 4;
-  auto* outputRow = static_cast<uint8_t*>(malloc(outputRowSize));
-  auto* rowBytes = static_cast<uint8_t*>(malloc(bitmap.getRowBytes()));
-  if (!outputRow || !rowBytes) {
-    LOG_ERR("GFX", "!! Failed to allocate perspective row buffers");
-    free(outputRow);
-    free(rowBytes);
+  if (!ensureBitmapScratchBuffers(outputRowSize, bitmap.getRowBytes())) {
     return;
   }
+  auto* outputRow = bitmapScratchOutputRow_;
+  auto* rowBytes = bitmapScratchRowBytes_;
 
   for (int srcY = 0; srcY < srcH; srcY++) {
     if (bitmap.readNextRow(outputRow, rowBytes) != BmpReaderError::Ok) {
       LOG_ERR("GFX", "Failed to read row %d from bitmap (perspective)", srcY);
-      free(outputRow);
-      free(rowBytes);
       return;
     }
     const int srcRowIndex = topDown ? srcY : (srcH - 1 - srcY);
@@ -983,9 +995,6 @@ void GfxRenderer::drawPerspectiveBitmap(const Bitmap& bitmap, const int x, const
       }
     }
   }
-
-  free(outputRow);
-  free(rowBytes);
 }
 
 void GfxRenderer::fillPolygon(const int* xPoints, const int* yPoints, int numPoints, bool state) const {

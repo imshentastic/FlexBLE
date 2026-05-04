@@ -14,6 +14,8 @@ struct Rect;
 class HomeActivity final : public Activity {
  public:
   static constexpr int kCarouselFrameCount = 3;
+  // Must be >= LyraCarouselMetrics::values.homeRecentBooksCount (asserted in .cpp)
+  static constexpr int kMaxCachedBooks = 5;
 
  private:
   ButtonNavigator buttonNavigator;
@@ -31,6 +33,11 @@ class HomeActivity final : public Activity {
   float currentBookProgressPercent = -1.0f;
   BookReadingStats currentBookStats;
   GlobalReadingStats globalStats;
+
+  // Per-book stats and progress cached at onEnter() to avoid SD reads during navigation.
+  BookReadingStats cachedBookStats[kMaxCachedBooks] = {};
+  float cachedBookProgress[kMaxCachedBooks] = {};
+  bool bookStatsCached = false;
 
   uint8_t* carouselFrames[kCarouselFrameCount] = {nullptr, nullptr, nullptr};
   bool carouselFramesReady = false;
@@ -56,6 +63,7 @@ class HomeActivity final : public Activity {
   int getHighlightedBookIndex() const;
   void updateHighlightedBookContext();
   void loadRecentBooks(int maxBooks);
+  void loadAllBookStats();
   void loadRecentCovers(int coverHeight);
 
  public:

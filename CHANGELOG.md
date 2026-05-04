@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Improve simple EPUB tables by buffering them into multi-column grid fragments instead of rendering each cell as an unrelated paragraph
 
 ### Fixed
+- Fix Lyra carousel navigation lag by caching per-book stats and progress once on home entry instead of re-reading from SD on every button press
+- Fix Lyra carousel first-navigation hitch by pre-rendering the prev and next frames at startup alongside the current book
+- Reduce Lyra carousel cover-render heap churn by reusing bitmap row scratch buffers instead of allocating them on every draw
 - Fix a crash when opening EPUB chapters that continue with normal text after a buffered table
 - Fix a crash when using `Go to %` in EPUBs by serializing the jump calculation with other reader cache access
 - Fix OTA update checks after the streaming release parser merge by keeping variant-aware firmware asset matching
