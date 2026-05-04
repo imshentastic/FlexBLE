@@ -29,6 +29,11 @@ class HomeActivity final : public Activity {
   BookReadingStats currentBookStats;
   GlobalReadingStats globalStats;
   std::vector<RecentBook> recentBooks;
+  // Per-book stats for the carousel covers. Populated in onEnter() so the
+  // Flow theme's "hours read" indicator can update as the user scrolls
+  // sideways through the carousel without doing file I/O per render.
+  // Same index as recentBooks; default-constructed when no stats file exists.
+  std::vector<BookReadingStats> recentBookStats;
   void onSelectBook(const std::string& path);
   void onFileBrowserOpen();
   void onRecentsOpen();

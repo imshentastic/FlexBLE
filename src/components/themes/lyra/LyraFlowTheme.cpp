@@ -11,8 +11,18 @@
 #include <vector>
 
 #include "RecentBooksStore.h"
+#include "activities/reader/BookReadingStats.h"
 #include "components/UITheme.h"
+#include "components/icons/book.h"
+#include "components/icons/chart.h"
 #include "components/icons/cover.h"
+#include "components/icons/folder.h"
+#include "components/icons/hotspot.h"
+#include "components/icons/library.h"
+#include "components/icons/recent.h"
+#include "components/icons/settings2.h"
+#include "components/icons/transfer.h"
+#include "components/icons/wifi.h"
 #include "fontIds.h"
 
 namespace {
@@ -22,6 +32,39 @@ constexpr int sideCoverWidth = 66;     // 30% of center
 constexpr int sideInnerHeight = 288;   // 90% of center — taller edge (toward middle)
 constexpr int sideOuterHeight = 256;   // 80% of center — shorter edge (away from middle)
 constexpr int bookCornerRadius = 6;
+
+// Menu visuals — kept in sync with LyraTheme's anonymous-namespace constants
+// so the Flow override looks identical to the parent's button menu.
+constexpr int menuTileCornerRadius = 6;
+constexpr int menuTilePadding = 8;
+constexpr int menuIconSize = 32;
+
+// Same lookup as LyraTheme's iconForName(icon, 32). Duplicated here because
+// that helper is file-local to LyraTheme.cpp.
+const uint8_t* lyraFlowMenuIcon(UIIcon icon) {
+  switch (icon) {
+    case UIIcon::Folder:
+      return FolderIcon;
+    case UIIcon::Book:
+      return BookIcon;
+    case UIIcon::Chart:
+      return ChartIcon;
+    case UIIcon::Recent:
+      return RecentIcon;
+    case UIIcon::Settings:
+      return Settings2Icon;
+    case UIIcon::Transfer:
+      return TransferIcon;
+    case UIIcon::Library:
+      return LibraryIcon;
+    case UIIcon::Wifi:
+      return WifiIcon;
+    case UIIcon::Hotspot:
+      return HotspotIcon;
+    default:
+      return nullptr;
+  }
+}
 
 // Erase pixels outside a rounded-corner mask so a rectangular bitmap blit
 // looks like a rounded book cover. Same trick as the reference FlowTheme.
@@ -44,7 +87,7 @@ void cutRoundedCorners(GfxRenderer& renderer, int x, int y, int w, int h, int r)
 void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                         const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
                                         bool& bufferRestored, std::function<bool()> storeCoverBuffer,
-                                        const BookReadingStats* /*stats*/, float /*progressPercent*/) const {
+                                        const BookReadingStats* stats, float /*progressPercent*/) const {
   if (recentBooks.empty()) {
     drawEmptyRecents(renderer, rect);
     return;
@@ -122,11 +165,13 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
     const int rightX = drawX + sideCoverWidth - 1;
     renderer.drawLine(drawX, drawY + topL, rightX, drawY + topR, 2, true);    // top edge (slanted)
     renderer.drawLine(drawX, drawY + botL, rightX, drawY + botR, 2, true);    // bottom edge (slanted)
-    // Verticals are thicker than the 2px slants so the junctions read as
-    // properly-balanced corners — slanted drawLine stair-steps thinner than
-    // its nominal width, so a heavier vertical compensates.
-    renderer.drawLine(drawX, drawY + topL, drawX, drawY + botL, 4, true);     // left edge (vertical, height hL)
-    renderer.drawLine(rightX, drawY + topR, rightX, drawY + botR, 4, true);   // right edge (vertical, height hR)
+    // Verticals use fillRect, not drawLine — drawLine ignores its thickness
+    // arg for purely vertical strokes (x1 == x2), so the previous 4 px width
+    // was rendering as 1 px regardless. fillRect gives explicit control.
+    constexpr int verticalEdgeWidth = 2;
+    renderer.fillRect(drawX, drawY + topL, verticalEdgeWidth, hL, true);                    // left edge
+    renderer.fillRect(rightX - verticalEdgeWidth + 1, drawY + topR, verticalEdgeWidth, hR,  // right edge
+                      true);
     // The bottom slant's perpendicular thickness leaks pixels into the two
     // rows starting just below the bbox bottom (the row at drawY + hMax
     // is part of the visible outline, so we leave it). Wipe rows hMax+1
@@ -208,4 +253,119 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   const int titleWidth = renderer.getTextWidth(UI_12_FONT_ID, truncatedTitle.c_str(), EpdFontFamily::BOLD);
   renderer.drawText(UI_12_FONT_ID, centerX - titleWidth / 2, rect.y - 5, truncatedTitle.c_str(), true,
                     EpdFontFamily::BOLD);
+
+  // --- Per-book reading time, centered below the center cover. Mirrors the
+  //     reference Lua FlowTheme: "Xh Ym" in SMALL_FONT, 8 px under the cover.
+  //     Always rendered (even "0h 0m") so the layout is stable whether the
+  //     user has read the book or not. ---
+  char timeStr[16];
+  const uint32_t bookSeconds = (stats != nullptr) ? stats->totalReadingSeconds : 0;
+  const uint32_t hours = bookSeconds / 3600;
+  const uint32_t minutes = (bookSeconds % 3600) / 60;
+  snprintf(timeStr, sizeof(timeStr), "%uh %um", static_cast<unsigned>(hours), static_cast<unsigned>(minutes));
+  const int timeWidth = renderer.getTextWidth(SMALL_FONT_ID, timeStr);
+  const int timeY = centerY + centerCoverHeight + 8;
+  renderer.drawText(SMALL_FONT_ID, centerX - timeWidth / 2, timeY, timeStr, true);
+}
+
+void LyraFlowTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
+                                   const std::function<std::string(int index)>& buttonLabel,
+                                   const std::function<UIIcon(int index)>& rowIcon) const {
+  const auto& menuMetrics = UITheme::getInstance().getMetrics();
+  const int rowStep = menuMetrics.menuRowHeight + menuMetrics.menuSpacing;
+  // Reserve a thin strip at the bottom for page-indicator dots. Reserving
+  // unconditionally keeps tile geometry stable whether dots are visible or not.
+  constexpr int dotSize = 8;
+  constexpr int dotSpacing = 8;
+  constexpr int dotStripHeight = 16;
+  const int usableHeight = std::max(0, rect.height - dotStripHeight);
+  const int pageItems = std::max(1, usableHeight / rowStep);
+  const int safeSelectedIndex = std::max(0, selectedIndex);
+
+  // Two-anchor pagination: page 1 = items [0..pageItems), page 2 =
+  // last `pageItems` items. The pages overlap; we resolve which one
+  // to render via a sticky bit so the cursor "pulls" the visible
+  // window with it asymmetrically — page 2 holds while the cursor
+  // scrolls up through the overlap, and only flips back to page 1
+  // when the cursor crosses page 2's top boundary.
+  const bool needsPaging = buttonCount > pageItems;
+  const int page2StartIndex = std::max(0, buttonCount - pageItems);
+  if (!needsPaging) {
+    stickyMenuPage2 = false;
+  } else if (safeSelectedIndex >= pageItems) {
+    // Cursor is in page 2's exclusive zone — we're definitely on page 2.
+    stickyMenuPage2 = true;
+  } else if (safeSelectedIndex < page2StartIndex) {
+    // Cursor crossed page 2's top boundary going up — back to page 1.
+    stickyMenuPage2 = false;
+  }
+  // Else: cursor in the overlap zone, keep whichever page we were on.
+  const bool onPage2 = needsPaging && stickyMenuPage2;
+  const int pageStartIndex = onPage2 ? page2StartIndex : 0;
+  const int totalPages = needsPaging ? 2 : 1;
+  const int currentPage = onPage2 ? 1 : 0;
+
+  for (int i = pageStartIndex; i < buttonCount && i < pageStartIndex + pageItems; ++i) {
+    const int displayIndex = i - pageStartIndex;
+    const int tileWidth = rect.width - menuMetrics.contentSidePadding * 2;
+    const Rect tileRect{rect.x + menuMetrics.contentSidePadding, rect.y + displayIndex * rowStep, tileWidth,
+                        menuMetrics.menuRowHeight};
+
+    const bool selected = (i == selectedIndex);
+    if (selected) {
+      renderer.fillRoundedRect(tileRect.x, tileRect.y, tileRect.width, tileRect.height, menuTileCornerRadius,
+                               Color::LightGray);
+    }
+
+    const std::string labelStr = buttonLabel(i);
+    const char* label = labelStr.c_str();
+    int textX = tileRect.x + 16;
+    const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+    const int textY = tileRect.y + (menuMetrics.menuRowHeight - lineHeight) / 2;
+
+    if (rowIcon != nullptr) {
+      const UIIcon icon = rowIcon(i);
+      if (icon == UIIcon::BookmarkIcon) {
+        // Match the status-bar bookmark ribbon shape (LyraTheme parity).
+        const int ribbonWidth = 16;
+        const int ribbonHeight = 22;
+        const int notchSize = 6;
+        const int iconX = textX + (menuIconSize - ribbonWidth) / 2;
+        const int iconY = textY + 4;
+        const int centerX = iconX + ribbonWidth / 2;
+        const int polyX[5] = {iconX, iconX + ribbonWidth, iconX + ribbonWidth, centerX, iconX};
+        const int polyY[5] = {iconY, iconY, iconY + ribbonHeight, iconY + ribbonHeight - notchSize,
+                              iconY + ribbonHeight};
+        renderer.fillPolygon(polyX, polyY, 5, true);
+        textX += menuIconSize + menuTilePadding + 2;
+      } else {
+        const uint8_t* iconBitmap = lyraFlowMenuIcon(icon);
+        if (iconBitmap != nullptr) {
+          renderer.drawIcon(iconBitmap, textX, textY + 3, menuIconSize, menuIconSize);
+          textX += menuIconSize + menuTilePadding + 2;
+        }
+      }
+    }
+
+    renderer.drawText(UI_12_FONT_ID, textX, textY, label, true);
+  }
+
+  // Page-indicator dots — pattern lifted from RecentBooksGridActivity::render.
+  // Anchor just below the last possible menu row so the dots read as
+  // attached to the menu instead of floating against the button hints.
+  if (totalPages > 1) {
+    const int totalDotWidth = totalPages * dotSize + (totalPages - 1) * dotSpacing;
+    const int dotsStartX = rect.x + (rect.width - totalDotWidth) / 2;
+    const int lastRowBottomY = rect.y + (pageItems - 1) * rowStep + menuMetrics.menuRowHeight;
+    constexpr int dotGapAboveDots = 4;
+    const int dotY = lastRowBottomY + dotGapAboveDots;
+    for (int p = 0; p < totalPages; ++p) {
+      const int dx = dotsStartX + p * (dotSize + dotSpacing);
+      if (p == currentPage) {
+        renderer.fillRect(dx, dotY, dotSize, dotSize, true);
+      } else {
+        renderer.drawRect(dx, dotY, dotSize, dotSize, true);
+      }
+    }
+  }
 }

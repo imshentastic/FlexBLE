@@ -166,6 +166,18 @@ float loadRecentBookProgressPercent(const RecentBook& book) {
   }
   return -1.0f;
 }
+
+// Per-book stats live at /.crosspoint/{prefix}_{hash}/stats.bin where the
+// prefix tracks the format of the book file. Same dispatch as the progress
+// loader above so we resolve the right cache directory per book.
+std::string statsCachePathForBook(const std::string& bookPath) {
+  const char* prefix = nullptr;
+  if (FsHelpers::hasEpubExtension(bookPath)) prefix = "epub_";
+  else if (FsHelpers::hasXtcExtension(bookPath)) prefix = "xtc_";
+  else if (FsHelpers::hasTxtExtension(bookPath) || FsHelpers::hasMarkdownExtension(bookPath)) prefix = "txt_";
+  if (prefix == nullptr) return {};
+  return "/.crosspoint/" + std::string(prefix) + std::to_string(std::hash<std::string>{}(bookPath));
+}
 }  // namespace
 
 int HomeActivity::getMenuItemCount() const {
@@ -307,6 +319,20 @@ void HomeActivity::onEnter() {
   }
   if (!recentBooks.empty()) {
     currentBookProgressPercent = loadRecentBookProgressPercent(recentBooks[0]);
+  }
+
+  // Eagerly load per-book stats for the carousel covers. Each load is a
+  // 12-byte file; with homeRecentBooksCount capped at 5 this is negligible
+  // and cheaper than re-reading on every carousel scroll.
+  recentBookStats.clear();
+  recentBookStats.reserve(recentBooks.size());
+  for (const auto& book : recentBooks) {
+    BookReadingStats stats;
+    const std::string path = statsCachePathForBook(book.path);
+    if (!path.empty()) {
+      stats = BookReadingStats::load(path);
+    }
+    recentBookStats.push_back(stats);
   }
   globalStats = GlobalReadingStats::load();
   hasReadingStats = hasAnyBookStats(currentBookStats) || hasAnyGlobalStats(globalStats);
@@ -479,10 +505,21 @@ void HomeActivity::render(RenderLock&&) {
       (inMenuForCarousel && lastBookIndex >= 0 && lastBookIndex < recentCountInt)
           ? recentCountInt + lastBookIndex
           : static_cast<int>(selectorIndex);
+  // Stats for the book currently centered in the carousel — Flow theme uses
+  // this to render an "Xh Ym" indicator under the cover. Resolve the centered
+  // index the same way carouselDisplayIndex does, then index the per-book
+  // vector populated in onEnter().
+  const int centeredBookIdx = inMenuForCarousel
+                                  ? (lastBookIndex >= 0 && lastBookIndex < recentCountInt ? lastBookIndex : 0)
+                                  : static_cast<int>(selectorIndex);
+  const BookReadingStats* centeredBookStats =
+      (centeredBookIdx >= 0 && centeredBookIdx < static_cast<int>(recentBookStats.size()))
+          ? &recentBookStats[centeredBookIdx]
+          : nullptr;
   GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
                           recentBooks, carouselDisplayIndex, coverRendered, coverBufferStored, bufferRestored,
-                          std::bind(&HomeActivity::storeCoverBuffer, this),
-                          currentBookStats.sessionCount > 0 ? &currentBookStats : nullptr, currentBookProgressPercent);
+                          std::bind(&HomeActivity::storeCoverBuffer, this), centeredBookStats,
+                          currentBookProgressPercent);
 
   // Build menu items dynamically
   std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
