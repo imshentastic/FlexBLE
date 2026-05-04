@@ -38,15 +38,17 @@ constexpr int kCenterCoverMaxW = LyraCarouselTheme::kCenterCoverW;
 constexpr int kCenterCoverMaxH = LyraCarouselTheme::kCenterCoverH;
 constexpr int kSideCoverMaxW = LyraCarouselTheme::kSideCoverW;
 constexpr int kSideCoverMaxH = LyraCarouselTheme::kSideCoverH;
-constexpr int kCoverTopPad = 35;
-constexpr int kDisplayCenterW = (kCenterCoverMaxW * 86) / 100;
-constexpr int kDisplayCenterH = (kCenterCoverMaxH * 86) / 100;
-constexpr int kNearSideW = (kDisplayCenterW * 26) / 100;
-constexpr int kFarSideW = (kDisplayCenterW * 21) / 100;
-constexpr int kNearSideInnerH = (kDisplayCenterH * 90) / 100;
-constexpr int kNearSideOuterH = (kDisplayCenterH * 82) / 100;
-constexpr int kFarSideInnerH = (kDisplayCenterH * 84) / 100;
-constexpr int kFarSideOuterH = (kDisplayCenterH * 74) / 100;
+constexpr int kCoverTopPad = 40;
+constexpr int kBaseDisplayCenterW = (kCenterCoverMaxW * 86) / 100;
+constexpr int kBaseDisplayCenterH = (kCenterCoverMaxH * 86) / 100;
+constexpr int kDisplayCenterW = std::min(kCenterCoverMaxW, kBaseDisplayCenterW + 10);
+constexpr int kDisplayCenterH = std::min(kCenterCoverMaxH, kBaseDisplayCenterH + 10);
+constexpr int kNearSideW = (kBaseDisplayCenterW * 26) / 100;
+constexpr int kFarSideW = (kBaseDisplayCenterW * 21) / 100;
+constexpr int kNearSideInnerH = (kBaseDisplayCenterH * 90) / 100;
+constexpr int kNearSideOuterH = (kBaseDisplayCenterH * 82) / 100;
+constexpr int kFarSideInnerH = (kBaseDisplayCenterH * 84) / 100;
+constexpr int kFarSideOuterH = (kBaseDisplayCenterH * 74) / 100;
 constexpr int kSideOutlineW = 2;
 constexpr int kSideCornerRadius = 5;
 
@@ -330,7 +332,8 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     const int progressLineHeight = renderer.getLineHeight(UI_10_FONT_ID);
     const bool hasStats = (stats != nullptr && stats->sessionCount > 0);
     const bool hasProgress = progressPercent >= 0.0f;
-    int infoY = dotsY + kDotSize + 8;
+    constexpr int footerTopPad = 5;
+    int infoY = dotsY + kDotSize + 8 + footerTopPad;
 
     if (hasStats) {
       char buf[48];
@@ -344,16 +347,17 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
 
     if (hasProgress) {
       constexpr int progressBarHeight = 4;
+      constexpr int progressTopPad = 5;
       const int progressBarWidth = centerCoverRect.width;
       const int filledWidth =
           std::clamp(static_cast<int>((progressPercent / 100.0f) * progressBarWidth), 0, progressBarWidth);
       char progressLabel[16];
       snprintf(progressLabel, sizeof(progressLabel), "%.0f%%", progressPercent);
       const int progressLabelW = renderer.getTextWidth(UI_10_FONT_ID, progressLabel, EpdFontFamily::BOLD);
-      renderer.drawText(UI_10_FONT_ID, textCenterX - progressLabelW / 2, infoY, progressLabel, true,
+      renderer.drawText(UI_10_FONT_ID, textCenterX - progressLabelW / 2, infoY + progressTopPad, progressLabel, true,
                         EpdFontFamily::BOLD);
       const int progressBarX = textCenterX - progressBarWidth / 2;
-      const int progressBarY = infoY + progressLineHeight + 2;
+      const int progressBarY = infoY + progressTopPad + progressLineHeight + 2;
       renderer.drawRect(progressBarX, progressBarY, progressBarWidth, progressBarHeight, true);
       if (filledWidth > 0) {
         renderer.fillRect(progressBarX, progressBarY, filledWidth, progressBarHeight, true);
@@ -386,7 +390,7 @@ void LyraCarouselTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int but
   const int tileW = renderer.getScreenWidth() / buttonCount;
   // Anchor row just above button hints, ignoring rect.y which may be off-screen
   // for large cover tiles
-  const int rowY = renderer.getScreenHeight() - kButtonHintsH - tileH - 10;
+  const int rowY = renderer.getScreenHeight() - kButtonHintsH - tileH;
 
   for (int i = 0; i < buttonCount; ++i) {
     const int tileX = i * tileW;
