@@ -4,6 +4,9 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -27,13 +30,19 @@
 #include "fontIds.h"
 
 namespace {
-// Cover layout — centre cover dominates, sides slide kOverlap px behind it
+// Cover layout — keep Lyra Carousel's general geometry, but render the books
+// with the same visual treatment as Lyra Flow.
 constexpr int kCenterCoverMaxW = LyraCarouselTheme::kCenterCoverW;
 constexpr int kCenterCoverMaxH = LyraCarouselTheme::kCenterCoverH;
 constexpr int kSideCoverMaxW = LyraCarouselTheme::kSideCoverW;
 constexpr int kSideCoverMaxH = LyraCarouselTheme::kSideCoverH;
 constexpr int kOverlap = 60;
 constexpr int kCoverTopPad = 10;
+constexpr int kSidePerspectiveW = (kCenterCoverMaxW * 3) / 10;
+constexpr int kSideInnerH = (kCenterCoverMaxH * 9) / 10;
+constexpr int kSideOuterH = (kCenterCoverMaxH * 8) / 10;
+constexpr int kSideOutlineW = 2;
+constexpr int kFlowCenterBaseW = 220;
 
 constexpr int kTitleFontId = UI_12_FONT_ID;
 constexpr int kDotSize = 8;  // px square dot
@@ -52,6 +61,8 @@ constexpr int kHighlightPad = 12;  // horizontal padding around the icon on each
 constexpr int kButtonHintsH = LyraCarouselMetrics::values.buttonHintsHeight;
 
 int lastCarouselSelectorIndex = -1;
+Rect lastCenterCoverRect{0, 0, 0, 0};
+Rect cachedCenterCoverRects[LyraCarouselMetrics::values.homeRecentBooksCount];
 
 void drawMenuBookmarkIcon(const GfxRenderer& renderer, int x, int y, bool selected) {
   constexpr int ribbonWidth = 16;
@@ -86,20 +97,58 @@ const uint8_t* iconBitmapFor(UIIcon icon) {
       return nullptr;
   }
 }
+
+void drawPerspectiveOutline(GfxRenderer& renderer, int x, int y, int width, int leftHeight, int rightHeight) {
+  const int maxHeight = std::max(leftHeight, rightHeight);
+  const int topLeft = (maxHeight - leftHeight) / 2;
+  const int topRight = (maxHeight - rightHeight) / 2;
+  const int bottomLeft = topLeft + leftHeight - 1;
+  const int bottomRight = topRight + rightHeight - 1;
+  const int rightX = x + width - 1;
+
+  renderer.drawLine(x, y + topLeft, rightX, y + topRight, kSideOutlineW, true);
+  renderer.drawLine(x, y + bottomLeft, rightX, y + bottomRight, kSideOutlineW, true);
+  renderer.fillRect(x, y + topLeft, kSideOutlineW, leftHeight, true);
+  renderer.fillRect(rightX - kSideOutlineW + 1, y + topRight, kSideOutlineW, rightHeight, true);
+  renderer.fillRect(x, y + maxHeight + 1, width, 2, false);
+}
+
+void fillPerspectiveSilhouette(GfxRenderer& renderer, int x, int y, int width, int leftHeight, int rightHeight) {
+  const int maxHeight = std::max(leftHeight, rightHeight);
+  renderer.fillRect(x, y, width, maxHeight, false);
+  for (int dx = 0; dx < width; ++dx) {
+    const int columnHeight = (width <= 1) ? leftHeight : (leftHeight + ((rightHeight - leftHeight) * dx) / (width - 1));
+    const int top = y + (maxHeight - columnHeight) / 2;
+    renderer.fillRect(x + dx, top, 1, columnHeight, true);
+  }
+}
+
+int scaleFlowWidth(int value) {
+  return std::max(1, static_cast<int>(std::lround(static_cast<float>(value) * static_cast<float>(kCenterCoverMaxW) /
+                                                  static_cast<float>(kFlowCenterBaseW))));
+}
 }  // namespace
 
 // ---------------------------------------------------------------------------
 // Static helpers
 // ---------------------------------------------------------------------------
-void LyraCarouselTheme::setPreRenderIndex(int idx) { lastCarouselSelectorIndex = idx; }
+void LyraCarouselTheme::setPreRenderIndex(int idx) {
+  lastCarouselSelectorIndex = idx;
+  if (idx >= 0 && idx < LyraCarouselMetrics::values.homeRecentBooksCount) {
+    const Rect cachedRect = cachedCenterCoverRects[idx];
+    if (cachedRect.width > 0 && cachedRect.height > 0) lastCenterCoverRect = cachedRect;
+  }
+}
 
 void LyraCarouselTheme::drawCarouselBorder(GfxRenderer& renderer, Rect coverRect, bool inCarouselRow) const {
   if (!inCarouselRow) return;
-  const int screenW = renderer.getScreenWidth();
-  const int centerX = (screenW - kCenterCoverMaxW) / 2;
-  const int centerTileY = coverRect.y + kCoverTopPad;
-  renderer.drawRoundedRect(centerX, centerTileY, kCenterCoverMaxW, kCenterCoverMaxH, kSelectionLineW, kCornerRadius,
-                           true);
+  Rect borderRect = lastCenterCoverRect;
+  if (borderRect.width <= 0 || borderRect.height <= 0) {
+    const int screenW = renderer.getScreenWidth();
+    borderRect = Rect{(screenW - kCenterCoverMaxW) / 2, coverRect.y + kCoverTopPad, kCenterCoverMaxW, kCenterCoverMaxH};
+  }
+  renderer.drawRoundedRect(borderRect.x, borderRect.y, borderRect.width, borderRect.height, kSelectionLineW,
+                           kCornerRadius, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -140,44 +189,83 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
 
   const int screenW = renderer.getScreenWidth();
   const int centerTileY = rect.y + kCoverTopPad;
-  const int sideTileY = centerTileY + (kCenterCoverMaxH - kSideCoverMaxH) / 2;
+  const int sideMaxHeight = std::max(kSideInnerH, kSideOuterH);
+  const int sideTileY = centerTileY + (kCenterCoverMaxH - sideMaxHeight) / 2;
 
   const int centerX = (screenW - kCenterCoverMaxW) / 2;
-  const int leftX = centerX - kSideCoverMaxW + kOverlap;
-  const int rightX = centerX + kCenterCoverMaxW - kOverlap;
+  const int nearOverlap = scaleFlowWidth(15);
+  const int farStep = scaleFlowWidth(50);
+  const int leftNearX = centerX - kSidePerspectiveW + nearOverlap;
+  const int rightNearX = centerX + kCenterCoverMaxW - nearOverlap;
+  const int leftFarX = leftNearX - farStep;
+  const int rightFarX = rightNearX + farStep;
 
-  // Returns true if a book exists at bookIdx (cover image or placeholder drawn).
-  // Returns false only when the slot has no book — caller skips the border too.
-  auto drawCover = [&](int bookIdx, int x, int y, int maxW, int maxH) -> bool {
+  auto drawCenterCover = [&](int bookIdx, Rect& outRect) -> bool {
     if (bookIdx < 0 || bookIdx >= bookCount) return false;
     const RecentBook& book = recentBooks[bookIdx];
-    bool hasCover = false;
+    outRect = Rect{centerX, centerTileY, kCenterCoverMaxW, kCenterCoverMaxH};
+
     if (!book.coverBmpPath.empty()) {
-      const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, maxW, maxH);
+      const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, kCenterCoverMaxW, kCenterCoverMaxH);
       FsFile file;
       if (Storage.openFileForRead("HOME", thumbPath, file)) {
         Bitmap bitmap(file);
-        if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-          // Height always fills the tile. Only crop horizontally if the cover is
-          // wider than the tile; narrow covers get white space on the sides.
-          const float bmpRatio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
-          const float tileRatio = static_cast<float>(maxW) / static_cast<float>(maxH);
-          const float cropX = (bmpRatio > tileRatio) ? (1.0f - tileRatio / bmpRatio) : 0.0f;
-          renderer.drawBitmap(bitmap, x, y, maxW, maxH, cropX, 0.0f);
-          renderer.maskRoundedRectOutsideCorners(x, y, maxW, maxH, kCornerRadius, Color::White);
-          hasCover = true;
+        if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
+          const int srcW = bitmap.getWidth();
+          const int srcH = bitmap.getHeight();
+          const float fitScale = std::min(static_cast<float>(kCenterCoverMaxW) / static_cast<float>(srcW),
+                                          static_cast<float>(kCenterCoverMaxH) / static_cast<float>(srcH));
+          const int drawWidth = std::min(kCenterCoverMaxW, static_cast<int>(std::round(srcW * fitScale)));
+          const int drawHeight = std::min(kCenterCoverMaxH, static_cast<int>(std::round(srcH * fitScale)));
+          const int drawX = centerX + (kCenterCoverMaxW - drawWidth) / 2;
+          const int drawY = centerTileY + (kCenterCoverMaxH - drawHeight) / 2;
+
+          outRect = Rect{drawX, drawY, drawWidth, drawHeight};
+          renderer.fillRect(outRect.x - kCenterOutlineW, outRect.y - kCenterOutlineW,
+                            outRect.width + 2 * kCenterOutlineW, outRect.height + 2 * kCenterOutlineW, false);
+          renderer.drawBitmap(bitmap, drawX, drawY, drawWidth, drawHeight);
+          renderer.maskRoundedRectOutsideCorners(drawX, drawY, drawWidth, drawHeight, kCornerRadius, Color::White);
+          file.close();
+          return true;
         }
         file.close();
       }
     }
-    if (!hasCover) {
-      renderer.drawRoundedRect(x, y, maxW, maxH, 1, kCornerRadius, true);
-      renderer.fillRoundedRect(x, y + maxH / 3, maxW, 2 * maxH / 3, kCornerRadius, /*roundTopLeft=*/false,
-                               /*roundTopRight=*/false, /*roundBottomLeft=*/true, /*roundBottomRight=*/true,
-                               Color::Black);
-      renderer.drawIcon(CoverIcon, x + maxW / 2 - 16, y + 8, 32, 32);
+
+    renderer.fillRect(outRect.x - kCenterOutlineW, outRect.y - kCenterOutlineW, outRect.width + 2 * kCenterOutlineW,
+                      outRect.height + 2 * kCenterOutlineW, false);
+    renderer.drawRoundedRect(outRect.x, outRect.y, outRect.width, outRect.height, 1, kCornerRadius, true);
+    renderer.fillRoundedRect(outRect.x, outRect.y + outRect.height / 3, outRect.width, 2 * outRect.height / 3,
+                             kCornerRadius, /*roundTopLeft=*/false, /*roundTopRight=*/false,
+                             /*roundBottomLeft=*/true, /*roundBottomRight=*/true, Color::Black);
+    renderer.drawIcon(CoverIcon, outRect.x + outRect.width / 2 - 16, outRect.y + outRect.height / 2 - 16, 32, 32);
+    return false;
+  };
+
+  auto drawSideCover = [&](int bookIdx, int x, bool isLeft) -> bool {
+    if (bookIdx < 0 || bookIdx >= bookCount) return false;
+    const RecentBook& book = recentBooks[bookIdx];
+    const int leftHeight = isLeft ? kSideInnerH : kSideOuterH;
+    const int rightHeight = isLeft ? kSideOuterH : kSideInnerH;
+
+    if (!book.coverBmpPath.empty()) {
+      const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, kSideCoverMaxW, kSideCoverMaxH);
+      FsFile file;
+      if (Storage.openFileForRead("HOME", thumbPath, file)) {
+        Bitmap bitmap(file);
+        if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+          renderer.fillRect(x, sideTileY, kSidePerspectiveW, std::max(leftHeight, rightHeight), false);
+          renderer.drawPerspectiveBitmap(bitmap, x, sideTileY, kSidePerspectiveW, leftHeight, rightHeight);
+          file.close();
+          drawPerspectiveOutline(renderer, x, sideTileY, kSidePerspectiveW, leftHeight, rightHeight);
+          return true;
+        }
+        file.close();
+      }
     }
-    return true;
+
+    fillPerspectiveSilhouette(renderer, x, sideTileY, kSidePerspectiveW, leftHeight, rightHeight);
+    return false;
   };
 
   if (!coverRendered) {
@@ -187,28 +275,26 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     // don't persist (drawBitmap only sets black pixels, never clears).
     renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
 
-    // Sides first so centre renders on top.
-    // Left side only when there are 3+ books; right side when there are 2+ books.
-    // Border only drawn if a cover image was actually rendered (no placeholders).
-    const int prevIdx = (centerIdx + bookCount - 1) % bookCount;
-    const int nextIdx = (centerIdx + 1) % bookCount;
-    if (bookCount >= 3) {
-      if (drawCover(prevIdx, leftX, sideTileY, kSideCoverMaxW, kSideCoverMaxH))
-        renderer.drawRoundedRect(leftX, sideTileY, kSideCoverMaxW, kSideCoverMaxH, 1, kCornerRadius, true);
-    }
-    if (bookCount >= 2) {
-      if (drawCover(nextIdx, rightX, sideTileY, kSideCoverMaxW, kSideCoverMaxH))
-        renderer.drawRoundedRect(rightX, sideTileY, kSideCoverMaxW, kSideCoverMaxH, 1, kCornerRadius, true);
-    }
+    // More literal Lyra Flow layout: two visible books per side when available.
+    const int leftNearIdx = (centerIdx + bookCount - 1) % bookCount;
+    const int leftFarIdx = (centerIdx + bookCount - 2) % bookCount;
+    const int rightNearIdx = (centerIdx + 1) % bookCount;
+    const int rightFarIdx = (centerIdx + 2) % bookCount;
 
-    // Clear a white outline ring around the centre cover, then draw the cover
-    // inside it. The white ring always separates the centre from the sides.
-    renderer.fillRect(centerX - kCenterOutlineW, centerTileY - kCenterOutlineW, kCenterCoverMaxW + 2 * kCenterOutlineW,
-                      kCenterCoverMaxH + 2 * kCenterOutlineW, false);
-    drawCover(centerIdx, centerX, centerTileY, kCenterCoverMaxW, kCenterCoverMaxH);
+    if (bookCount >= 5) drawSideCover(leftFarIdx, leftFarX, true);
+    if (bookCount >= 4) drawSideCover(rightFarIdx, rightFarX, false);
+    if (bookCount >= 2) drawSideCover(leftNearIdx, leftNearX, true);
+    if (bookCount >= 3) drawSideCover(rightNearIdx, rightNearX, false);
+
+    Rect centerCoverRect{};
+    drawCenterCover(centerIdx, centerCoverRect);
+    lastCenterCoverRect = centerCoverRect;
+    if (centerIdx >= 0 && centerIdx < LyraCarouselMetrics::values.homeRecentBooksCount) {
+      cachedCenterCoverRects[centerIdx] = centerCoverRect;
+    }
 
     // Dots — centred over the cover tile, count = actual book count
-    const int dotsY = centerTileY + kCenterCoverMaxH + 8;
+    const int dotsY = centerCoverRect.y + centerCoverRect.height + 8;
     const int totalDotsW = bookCount * kDotSize + (bookCount - 1) * kDotGap;
     int dotX = centerX + (kCenterCoverMaxW - totalDotsW) / 2;
     for (int i = 0; i < bookCount; ++i) {
@@ -234,12 +320,15 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
 
     coverBufferStored = storeCoverBuffer();
     coverRendered = coverBufferStored;
+  } else if (lastCenterCoverRect.width <= 0 || lastCenterCoverRect.height <= 0) {
+    lastCenterCoverRect = Rect{centerX, centerTileY, kCenterCoverMaxW, kCenterCoverMaxH};
   }
 
   // Always outline the centre cover at its own edge (white ring sits outside the black line);
   // thicker when the carousel row is active
   const int outlineW = inCarouselRow ? kSelectionLineW : kThinOutlineW;
-  renderer.drawRoundedRect(centerX, centerTileY, kCenterCoverMaxW, kCenterCoverMaxH, outlineW, kCornerRadius, true);
+  renderer.drawRoundedRect(lastCenterCoverRect.x, lastCenterCoverRect.y, lastCenterCoverRect.width,
+                           lastCenterCoverRect.height, outlineW, kCornerRadius, true);
 }
 
 // ---------------------------------------------------------------------------

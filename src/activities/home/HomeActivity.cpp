@@ -691,6 +691,7 @@ void HomeActivity::render(RenderLock&&) {
 
     if (frameBuffer && slotIdx >= 0 && carouselFrames[slotIdx]) {
       memcpy(frameBuffer, carouselFrames[slotIdx], renderer.getBufferSize());
+      LyraCarouselTheme::setPreRenderIndex(centerIdx);
 
       GUI.drawCarouselBorder(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
                              inCarouselRow);

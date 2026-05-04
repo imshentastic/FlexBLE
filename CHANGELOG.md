@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
+### Changed
+- Update the Lyra Carousel theme to use Lyra Flow-style cover rendering while keeping the carousel's existing home menu layout
+
 ### Added
 - Prevent a crash when entering sleep with Page Overlay enabled if the cached EPUB page data is invalid
 - Clean up EPUB table rendering by removing synthetic row/cell labels and defaulting table cells to readable left alignment
