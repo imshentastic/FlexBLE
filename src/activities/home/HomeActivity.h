@@ -12,12 +12,16 @@ struct RecentBook;
 struct Rect;
 
 class HomeActivity final : public Activity {
+ public:
+  static constexpr int kCarouselFrameCount = 3;
+
+ private:
   ButtonNavigator buttonNavigator;
   int selectorIndex = 0;
+  int lastCarouselBookIndex = 0;  // remembered position when leaving carousel row
   bool recentsLoading = false;
   bool recentsLoaded = false;
   bool firstRenderDone = false;
-  bool hasOpdsUrl = false;
   bool hasReadingStats = false;
   bool hasBookmarks = false;
   bool hasOpdsServers = false;
@@ -27,6 +31,10 @@ class HomeActivity final : public Activity {
   float currentBookProgressPercent = -1.0f;
   BookReadingStats currentBookStats;
   GlobalReadingStats globalStats;
+
+  uint8_t* carouselFrames[kCarouselFrameCount] = {nullptr, nullptr, nullptr};
+  bool carouselFramesReady = false;
+
   std::vector<RecentBook> recentBooks;
   void onSelectBook(const std::string& path);
   void onFileBrowserOpen();
@@ -41,6 +49,10 @@ class HomeActivity final : public Activity {
   bool storeCoverBuffer();    // Store frame buffer for cover image
   bool restoreCoverBuffer();  // Restore frame buffer from stored cover
   void freeCoverBuffer();     // Free the stored cover buffer
+  void preRenderCarouselFrames();
+  void freeCarouselFrames();
+  void renderCarouselFrame(int bookIdx, int slotIdx);
+  void updateSlidingWindowCache(int centerIdx, int bookCount);
   void loadRecentBooks(int maxBooks);
   void loadRecentCovers(int coverHeight);
 

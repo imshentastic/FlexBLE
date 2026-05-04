@@ -179,6 +179,7 @@ class BaseTheme {
                                const char* secondaryLabel = nullptr, KeyboardKeyType keyType = KeyboardKeyType::Normal,
                                bool inactiveSelection = false) const;
   virtual bool showsFileIcons() const { return false; }
+  virtual void drawCarouselBorder(GfxRenderer& renderer, Rect coverRect, bool inCarouselRow) const {}
 
   // Shared constants and helpers for battery drawing (used by all themes)
   static constexpr int batteryPercentSpacing = 4;
