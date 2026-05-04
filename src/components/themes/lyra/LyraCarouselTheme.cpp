@@ -344,7 +344,7 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
 
     if (hasProgress) {
       constexpr int progressBarHeight = 4;
-      const int progressBarWidth = textMaxWidth;
+      const int progressBarWidth = centerCoverRect.width;
       const int filledWidth =
           std::clamp(static_cast<int>((progressPercent / 100.0f) * progressBarWidth), 0, progressBarWidth);
       char progressLabel[16];
