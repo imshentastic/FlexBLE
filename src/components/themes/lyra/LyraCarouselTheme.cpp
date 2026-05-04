@@ -41,8 +41,8 @@ constexpr int kSideCoverMaxH = LyraCarouselTheme::kSideCoverH;
 constexpr int kCoverTopPad = 40;
 constexpr int kBaseDisplayCenterW = (kCenterCoverMaxW * 86) / 100;
 constexpr int kBaseDisplayCenterH = (kCenterCoverMaxH * 86) / 100;
-constexpr int kDisplayCenterW = std::min(kCenterCoverMaxW, kBaseDisplayCenterW + 10);
-constexpr int kDisplayCenterH = std::min(kCenterCoverMaxH, kBaseDisplayCenterH + 10);
+constexpr int kDisplayCenterW = std::min(kCenterCoverMaxW, kBaseDisplayCenterW + 24);
+constexpr int kDisplayCenterH = std::min(kCenterCoverMaxH, kBaseDisplayCenterH + 24);
 constexpr int kNearSideW = (kBaseDisplayCenterW * 26) / 100;
 constexpr int kFarSideW = (kBaseDisplayCenterW * 21) / 100;
 constexpr int kNearSideInnerH = (kBaseDisplayCenterH * 90) / 100;
@@ -200,10 +200,13 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   const int centerX = (screenW - kDisplayCenterW) / 2;
   const int nearOverlap = 4;
   const int farOverlap = 2;
-  const int leftNearX = centerX - kNearSideW + nearOverlap;
-  const int rightNearX = centerX + kDisplayCenterW - nearOverlap;
-  const int leftFarX = std::max(0, leftNearX - kFarSideW + farOverlap);
-  const int rightFarX = std::min(screenW - kFarSideW, rightNearX + kNearSideW - farOverlap);
+  constexpr int nearCoverInset = 10;
+  const int baseLeftNearX = centerX - kNearSideW + nearOverlap;
+  const int baseRightNearX = centerX + kDisplayCenterW - nearOverlap;
+  const int leftNearX = baseLeftNearX + nearCoverInset;
+  const int rightNearX = baseRightNearX - nearCoverInset;
+  const int leftFarX = std::max(0, baseLeftNearX - kFarSideW + farOverlap);
+  const int rightFarX = std::min(screenW - kFarSideW, baseRightNearX + kNearSideW - farOverlap);
 
   auto drawCenterCover = [&](int bookIdx, Rect& outRect) -> bool {
     if (bookIdx < 0 || bookIdx >= bookCount) return false;
@@ -307,7 +310,9 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
         renderer.wrappedText(kTitleFontId, recentBooks[centerIdx].title.c_str(), textMaxWidth, 2, EpdFontFamily::BOLD);
     const int titleLineHeight = renderer.getLineHeight(kTitleFontId);
     const int titleBlockHeight = titleLineHeight * static_cast<int>(titleLines.size());
-    int currentTitleY = rect.y + std::max(4, (centerCoverRect.y - rect.y - titleBlockHeight) / 2);
+    constexpr int titleNudgeY = 3;
+    int currentTitleY =
+        rect.y + std::max(1, std::max(4, (centerCoverRect.y - rect.y - titleBlockHeight) / 2) - titleNudgeY);
     for (const auto& titleLine : titleLines) {
       const int titleW = renderer.getTextWidth(kTitleFontId, titleLine.c_str(), EpdFontFamily::BOLD);
       renderer.drawText(kTitleFontId, textCenterX - titleW / 2, currentTitleY, titleLine.c_str(), true,
