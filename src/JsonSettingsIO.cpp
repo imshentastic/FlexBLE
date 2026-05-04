@@ -374,7 +374,7 @@ bool JsonSettingsIO::loadRecentBooks(RecentBooksStore& store, const char* json) 
   store.recentBooks.clear();
   JsonArray arr = doc["books"].as<JsonArray>();
   for (JsonObject obj : arr) {
-    if (store.getCount() >= 10) break;
+    if (store.getCount() >= RecentBooksStore::MAX_RECENT_BOOKS) break;
     RecentBook book;
     book.path = obj["path"] | std::string("");
     book.title = obj["title"] | std::string("");

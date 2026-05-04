@@ -25,6 +25,10 @@ class RecentBooksStore {
   friend bool JsonSettingsIO::loadRecentBooks(RecentBooksStore&, const char*);
 
  public:
+  // Cap on stored recents. 18 = two full pages of the 3x3 RecentBooksGridActivity,
+  // which is the only consumer that paginates. addBook() trims to this on insert.
+  static constexpr int MAX_RECENT_BOOKS = 18;
+
   ~RecentBooksStore() = default;
 
   // Get singleton instance

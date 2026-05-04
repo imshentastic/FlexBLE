@@ -57,9 +57,17 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
 
   // selectorIndex >= count means HomeActivity has navigated past the books and
   // is highlighting a menu item; in that case we keep the carousel visible but
-  // drop the selection border and pin the center to book 0.
+  // drop the selection border. HomeActivity may encode the preferred center as
+  // (count + lastBookIndex) so the carousel keeps the user's place when they
+  // pop into the menu. Decode if in range, otherwise fall back to book 0.
   const bool hasSelection = (selectorIndex >= 0 && selectorIndex < count);
-  const int curIdx = hasSelection ? selectorIndex : 0;
+  int curIdx = 0;
+  if (hasSelection) {
+    curIdx = selectorIndex;
+  } else {
+    const int decoded = selectorIndex - count;
+    if (decoded >= 0 && decoded < count) curIdx = decoded;
+  }
 
   // The carousel chrome (header date, footer hints, etc.) is drawn by
   // HomeActivity, not by us. We have nothing static to cache here, so just

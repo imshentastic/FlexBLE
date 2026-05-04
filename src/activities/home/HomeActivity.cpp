@@ -374,12 +374,18 @@ void HomeActivity::loop() {
   // menu boundaries (Up from first item, Down from last item) drops back to
   // the first book — the carousel is "home base", so vertical motion past
   // the menu always returns there.
+  // Falling off either menu boundary drops back into the carousel on the
+  // book that's currently centered (lastBookIndex), not book 0. The carousel
+  // already shows that book while the user navigates the menu (see render's
+  // carouselDisplayIndex encoding), so this just makes the selection match
+  // what's already visible.
+  const int returnToBookIndex = (lastBookIndex >= 0 && lastBookIndex < recentCount) ? lastBookIndex : 0;
   if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
     if (inCarousel) {
       lastBookIndex = selectorIndex;
       selectorIndex = recentCount;
     } else if (selectorIndex >= menuCount - 1) {
-      selectorIndex = 0;
+      selectorIndex = returnToBookIndex;
     } else {
       ++selectorIndex;
     }
@@ -390,7 +396,7 @@ void HomeActivity::loop() {
       lastBookIndex = selectorIndex;
       selectorIndex = menuCount - 1;
     } else if (selectorIndex <= recentCount) {
-      selectorIndex = 0;
+      selectorIndex = returnToBookIndex;
     } else {
       --selectorIndex;
     }
@@ -460,8 +466,21 @@ void HomeActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding},
                  metrics.homeContinueReadingInMenu && !recentBooks.empty() ? recentBooks[0].title.c_str() : nullptr);
 
+  // When the user has navigated up/down into the menu, selectorIndex points
+  // at a menu row (>= recentCount). The carousel's "no selection" branch
+  // would otherwise pin to book 0 (most recent), losing the user's place.
+  // Encode the preferred center as (recentCount + lastBookIndex) so themes
+  // that scroll through covers (LyraFlowTheme) can keep that book centered;
+  // single-cover themes still see "selectorIndex != 0" → no selection drawn,
+  // unchanged behavior.
+  const int recentCountInt = static_cast<int>(recentBooks.size());
+  const bool inMenuForCarousel = static_cast<int>(selectorIndex) >= recentCountInt;
+  const int carouselDisplayIndex =
+      (inMenuForCarousel && lastBookIndex >= 0 && lastBookIndex < recentCountInt)
+          ? recentCountInt + lastBookIndex
+          : static_cast<int>(selectorIndex);
   GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
-                          recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
+                          recentBooks, carouselDisplayIndex, coverRendered, coverBufferStored, bufferRestored,
                           std::bind(&HomeActivity::storeCoverBuffer, this),
                           currentBookStats.sessionCount > 0 ? &currentBookStats : nullptr, currentBookProgressPercent);
 
