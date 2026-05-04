@@ -53,6 +53,8 @@ class HomeActivity final : public Activity {
   void freeCarouselFrames();
   void renderCarouselFrame(int bookIdx, int slotIdx);
   void updateSlidingWindowCache(int centerIdx, int bookCount);
+  int getHighlightedBookIndex() const;
+  void updateHighlightedBookContext();
   void loadRecentBooks(int maxBooks);
   void loadRecentCovers(int coverHeight);
 

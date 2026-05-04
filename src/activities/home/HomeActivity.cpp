@@ -441,36 +441,14 @@ void HomeActivity::onEnter() {
   hasBookmarks = BookmarkStore::hasAnyBookmarks();
 
   selectorIndex = 0;
+  lastCarouselBookIndex = 0;
   carouselFramesReady = false;
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   loadRecentBooks(metrics.homeRecentBooksCount);
 
-  // Load reading stats for the most recent EPUB book so they can be shown on the home card.
-  currentBookStats = BookReadingStats{};
-  currentBookProgressPercent = -1.0f;
-  if (!recentBooks.empty() && FsHelpers::hasEpubExtension(recentBooks[0].path)) {
-    const std::string cachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(recentBooks[0].path));
-    currentBookStats = BookReadingStats::load(cachePath);
-  }
-  if (!recentBooks.empty()) {
-    currentBookProgressPercent = loadRecentBookProgressPercent(recentBooks[0]);
-  }
   globalStats = GlobalReadingStats::load();
-  hasReadingStats = hasAnyBookStats(currentBookStats) || hasAnyGlobalStats(globalStats);
-
-  // Load reading stats for the most recent EPUB book so they can be shown on the home card.
-  currentBookStats = BookReadingStats{};
-  currentBookProgressPercent = -1.0f;
-  if (!recentBooks.empty() && FsHelpers::hasEpubExtension(recentBooks[0].path)) {
-    const std::string cachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(recentBooks[0].path));
-    currentBookStats = BookReadingStats::load(cachePath);
-  }
-  if (!recentBooks.empty()) {
-    currentBookProgressPercent = loadRecentBookProgressPercent(recentBooks[0]);
-  }
-  globalStats = GlobalReadingStats::load();
-  hasReadingStats = hasAnyBookStats(currentBookStats) || hasAnyGlobalStats(globalStats);
+  updateHighlightedBookContext();
 
   // Pre-render carousel frames before the first display update so the fast
   // path is active from render #1. Cache hit = instant. Cache miss = SD reads
@@ -480,6 +458,29 @@ void HomeActivity::onEnter() {
   }
 
   requestUpdate();
+}
+
+int HomeActivity::getHighlightedBookIndex() const {
+  if (recentBooks.empty()) {
+    return -1;
+  }
+
+  const int bookCount = static_cast<int>(recentBooks.size());
+  const int highlightedBookIdx = (selectorIndex < bookCount) ? selectorIndex : lastCarouselBookIndex;
+  return std::clamp(highlightedBookIdx, 0, bookCount - 1);
+}
+
+void HomeActivity::updateHighlightedBookContext() {
+  currentBookStats = BookReadingStats{};
+  currentBookProgressPercent = -1.0f;
+
+  const int highlightedBookIdx = getHighlightedBookIndex();
+  if (highlightedBookIdx >= 0) {
+    currentBookStats = loadRecentBookStats(recentBooks[highlightedBookIdx]);
+    currentBookProgressPercent = loadRecentBookProgressPercent(recentBooks[highlightedBookIdx]);
+  }
+
+  hasReadingStats = hasAnyBookStats(currentBookStats) || hasAnyGlobalStats(globalStats);
 }
 
 void HomeActivity::onExit() {
@@ -595,6 +596,7 @@ void HomeActivity::preRenderCarouselFrames() {
 void HomeActivity::loop() {
   const bool isCarousel =
       static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_CAROUSEL;
+  const int previousHighlightedBookIdx = getHighlightedBookIndex();
 
   if (isCarousel) {
     const int bookCount = static_cast<int>(recentBooks.size());
@@ -645,6 +647,10 @@ void HomeActivity::loop() {
       selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
       requestUpdate();
     });
+  }
+
+  if (getHighlightedBookIndex() != previousHighlightedBookIdx) {
+    updateHighlightedBookContext();
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
@@ -869,7 +875,9 @@ void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
 
 void HomeActivity::onReadingStatsOpen() {
-  const std::string bookTitle = recentBooks.empty() ? std::string(tr(STR_READING_STATS)) : recentBooks[0].title;
+  const int highlightedBookIdx = getHighlightedBookIndex();
+  const std::string bookTitle =
+      highlightedBookIdx >= 0 ? recentBooks[highlightedBookIdx].title : std::string(tr(STR_READING_STATS));
   startActivityForResult(
       std::make_unique<BookStatsActivity>(renderer, mappedInput, bookTitle, currentBookStats, globalStats),
       [this](const ActivityResult&) { requestUpdate(); });
