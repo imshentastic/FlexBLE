@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 ### Changed
-- Update the Lyra Carousel theme to use Lyra Flow-style cover rendering while keeping the carousel's existing home menu layout
+- Update the Lyra Carousel theme to use Lyra Flow-style cover rendering, move the active book title above the cover, and show per-book reading stats below while keeping the carousel's existing home menu layout
 
 ### Added
 - Prevent a crash when entering sleep with Page Overlay enabled if the cached EPUB page data is invalid

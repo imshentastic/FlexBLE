@@ -184,6 +184,15 @@ float loadRecentBookProgressPercent(const RecentBook& book) {
   return -1.0f;
 }
 
+BookReadingStats loadRecentBookStats(const RecentBook& book) {
+  if (!FsHelpers::hasEpubExtension(book.path)) {
+    return BookReadingStats{};
+  }
+
+  const std::string cachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(book.path));
+  return BookReadingStats::load(cachePath);
+}
+
 std::vector<HomeMenuItem> buildHomeMenuItems(bool hasOpdsServers, bool hasReadingStats, bool hasBookmarks) {
   std::vector<HomeMenuItem> items = {
       {tr(STR_BROWSE_FILES), Folder, HomeMenuAction::BrowseFiles},
@@ -735,7 +744,7 @@ void HomeActivity::render(RenderLock&&) {
   GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
                           recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
                           std::bind(&HomeActivity::storeCoverBuffer, this),
-                          currentBookStats.sessionCount > 0 ? &currentBookStats : nullptr, currentBookProgressPercent);
+                          hasAnyBookStats(currentBookStats) ? &currentBookStats : nullptr, currentBookProgressPercent);
 
   auto menuItems = buildHomeMenuItems(hasOpdsServers, hasReadingStats, hasBookmarks);
 
@@ -779,14 +788,26 @@ void HomeActivity::renderCarouselFrame(int bookIdx, int slotIdx) {
   const int pageWidth = renderer.getScreenWidth();
   const int bookCount = static_cast<int>(recentBooks.size());
   bool dummy1 = false, dummy2 = false, dummy3 = false;
+  BookReadingStats frameStats;
+  const BookReadingStats* frameStatsPtr = nullptr;
+  float frameProgressPercent = -1.0f;
+
+  if (bookIdx >= 0 && bookIdx < bookCount) {
+    frameStats = loadRecentBookStats(recentBooks[bookIdx]);
+    if (hasAnyBookStats(frameStats)) {
+      frameStatsPtr = &frameStats;
+    }
+    frameProgressPercent = loadRecentBookProgressPercent(recentBooks[bookIdx]);
+  }
 
   // selectorIndex = bookCount → drawRecentBookCover uses lastCarouselSelectorIndex (set below)
   // and draws no selection border.
   LyraCarouselTheme::setPreRenderIndex(bookIdx);
   renderer.clearScreen();
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding}, nullptr);
-  GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
-                          recentBooks, bookCount, dummy1, dummy2, dummy3, []() { return true; });
+  GUI.drawRecentBookCover(
+      renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight}, recentBooks, bookCount, dummy1,
+      dummy2, dummy3, []() { return true; }, frameStatsPtr, frameProgressPercent);
 
   memcpy(gCachedFrames[slotIdx], frameBuffer, renderer.getBufferSize());
   gCachedFrameBookIdx[slotIdx] = bookIdx;

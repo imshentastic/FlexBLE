@@ -3,6 +3,7 @@
 #include <Bitmap.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
+#include <I18n.h>
 
 #include <algorithm>
 #include <cmath>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include "RecentBooksStore.h"
+#include "activities/reader/BookReadingStats.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
 #include "components/icons/book24.h"
@@ -36,7 +38,7 @@ constexpr int kCenterCoverMaxW = LyraCarouselTheme::kCenterCoverW;
 constexpr int kCenterCoverMaxH = LyraCarouselTheme::kCenterCoverH;
 constexpr int kSideCoverMaxW = LyraCarouselTheme::kSideCoverW;
 constexpr int kSideCoverMaxH = LyraCarouselTheme::kSideCoverH;
-constexpr int kCoverTopPad = 10;
+constexpr int kCoverTopPad = 35;
 constexpr int kDisplayCenterW = (kCenterCoverMaxW * 86) / 100;
 constexpr int kDisplayCenterH = (kCenterCoverMaxH * 86) / 100;
 constexpr int kNearSideW = (kDisplayCenterW * 26) / 100;
@@ -161,8 +163,6 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
                                             bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
                                             std::function<bool()> storeCoverBuffer, const BookReadingStats* stats,
                                             float progressPercent) const {
-  (void)stats;
-  (void)progressPercent;
   (void)bufferRestored;
   if (recentBooks.empty()) {
     drawEmptyRecents(renderer, rect);
@@ -298,6 +298,21 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
       cachedCenterCoverRects[centerIdx] = centerCoverRect;
     }
 
+    // Title sits above the center cover; wrap to 2 lines and ellipsize on line 2 if needed.
+    const int textCenterX = centerCoverRect.x + centerCoverRect.width / 2;
+    const int textMaxWidth = std::min(screenW - 40, kCenterCoverMaxW + 40);
+    const auto titleLines =
+        renderer.wrappedText(kTitleFontId, recentBooks[centerIdx].title.c_str(), textMaxWidth, 2, EpdFontFamily::BOLD);
+    const int titleLineHeight = renderer.getLineHeight(kTitleFontId);
+    const int titleBlockHeight = titleLineHeight * static_cast<int>(titleLines.size());
+    int currentTitleY = rect.y + std::max(4, (centerCoverRect.y - rect.y - titleBlockHeight) / 2);
+    for (const auto& titleLine : titleLines) {
+      const int titleW = renderer.getTextWidth(kTitleFontId, titleLine.c_str(), EpdFontFamily::BOLD);
+      renderer.drawText(kTitleFontId, textCenterX - titleW / 2, currentTitleY, titleLine.c_str(), true,
+                        EpdFontFamily::BOLD);
+      currentTitleY += titleLineHeight;
+    }
+
     // Dots — centred under the displayed centre cover, count = actual book count
     const int dotsY = centerCoverRect.y + centerCoverRect.height + 8;
     const int totalDotsW = bookCount * kDotSize + (bookCount - 1) * kDotGap;
@@ -310,25 +325,39 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
       dotX += kDotSize + kDotGap;
     }
 
-    // Author/title can use the full centered text lane under the carousel,
-    // not just the rendered bitmap width. Narrower covers would otherwise
-    // clip text too early even when the surrounding space is empty.
-    const int textCenterX = centerCoverRect.x + centerCoverRect.width / 2;
-    const int textMaxWidth = std::min(screenW - 40, kCenterCoverMaxW + 40);
-    const int authorY = dotsY + kDotSize + 6;
-    const std::string authorTrunc =
-        renderer.truncatedText(kTitleFontId, recentBooks[centerIdx].author.c_str(), textMaxWidth);
-    const int authorW = renderer.getTextWidth(kTitleFontId, authorTrunc.c_str());
-    renderer.drawText(kTitleFontId, textCenterX - authorW / 2, authorY, authorTrunc.c_str(), true);
+    // Lyra-style per-book stats, centered below the cover.
+    const int statsLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+    const int progressLineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+    const bool hasStats = (stats != nullptr && stats->sessionCount > 0);
+    const bool hasProgress = progressPercent >= 0.0f;
+    int infoY = dotsY + kDotSize + 8;
 
-    const int titleY = authorY + renderer.getLineHeight(kTitleFontId) + 2;
-    const auto titleLines = renderer.wrappedText(kTitleFontId, recentBooks[centerIdx].title.c_str(), textMaxWidth, 2);
-    const int titleLineHeight = renderer.getLineHeight(kTitleFontId);
-    int currentTitleY = titleY;
-    for (const auto& titleLine : titleLines) {
-      const int titleW = renderer.getTextWidth(kTitleFontId, titleLine.c_str());
-      renderer.drawText(kTitleFontId, textCenterX - titleW / 2, currentTitleY, titleLine.c_str(), true);
-      currentTitleY += titleLineHeight;
+    if (hasStats) {
+      char buf[48];
+      char statLine[64];
+      BookReadingStats::formatDuration(stats->totalReadingSeconds, buf, sizeof(buf));
+      snprintf(statLine, sizeof(statLine), "%s%s", tr(STR_STATS_TOTAL_TIME), buf);
+      const int totalTimeW = renderer.getTextWidth(SMALL_FONT_ID, statLine);
+      renderer.drawText(SMALL_FONT_ID, textCenterX - totalTimeW / 2, infoY, statLine, true);
+      infoY += statsLineHeight + 6;
+    }
+
+    if (hasProgress) {
+      constexpr int progressBarHeight = 4;
+      const int progressBarWidth = textMaxWidth;
+      const int filledWidth =
+          std::clamp(static_cast<int>((progressPercent / 100.0f) * progressBarWidth), 0, progressBarWidth);
+      char progressLabel[16];
+      snprintf(progressLabel, sizeof(progressLabel), "%.0f%%", progressPercent);
+      const int progressLabelW = renderer.getTextWidth(UI_10_FONT_ID, progressLabel, EpdFontFamily::BOLD);
+      renderer.drawText(UI_10_FONT_ID, textCenterX - progressLabelW / 2, infoY, progressLabel, true,
+                        EpdFontFamily::BOLD);
+      const int progressBarX = textCenterX - progressBarWidth / 2;
+      const int progressBarY = infoY + progressLineHeight + 2;
+      renderer.drawRect(progressBarX, progressBarY, progressBarWidth, progressBarHeight, true);
+      if (filledWidth > 0) {
+        renderer.fillRect(progressBarX, progressBarY, filledWidth, progressBarHeight, true);
+      }
     }
 
     coverBufferStored = storeCoverBuffer();
