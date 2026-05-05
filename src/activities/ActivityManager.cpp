@@ -103,9 +103,12 @@ void ActivityManager::loop() {
           handler(pendingResult);
         }
 
-        // Request an update to ensure the popped activity gets re-rendered
+        // Request an update to ensure the popped activity gets re-rendered.
+        // Do not block here: result handlers may transiently take RenderLock while
+        // reconciling state, and a synchronous wait at this point can trip the
+        // deadlock guard even though the queued repaint is sufficient.
         if (pendingAction == PendingAction::None) {
-          requestUpdateAndWait();
+          requestUpdate();
         }
 
         // Handler may request another pending action, we will handle it in the next loop iteration
