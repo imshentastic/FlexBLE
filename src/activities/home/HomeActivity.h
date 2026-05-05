@@ -15,7 +15,7 @@ class HomeActivity final : public Activity {
  public:
   static constexpr int kCarouselFrameCount = 3;
   // Must be >= LyraCarouselMetrics::values.homeRecentBooksCount (asserted in .cpp)
-  static constexpr int kMaxCachedBooks = 5;
+  static constexpr int kMaxCachedBooks = 3;
 
  private:
   ButtonNavigator buttonNavigator;
@@ -41,6 +41,7 @@ class HomeActivity final : public Activity {
 
   uint8_t* carouselFrames[kCarouselFrameCount] = {nullptr, nullptr, nullptr};
   bool carouselFramesReady = false;
+  bool carouselWarmupPending = false;
 
   std::vector<RecentBook> recentBooks;
   void onSelectBook(const std::string& path);
@@ -56,10 +57,11 @@ class HomeActivity final : public Activity {
   bool storeCoverBuffer();    // Store frame buffer for cover image
   bool restoreCoverBuffer();  // Restore frame buffer from stored cover
   void freeCoverBuffer();     // Free the stored cover buffer
-  void preRenderCarouselFrames();
+  bool preRenderCarouselFrames(bool showProgressPopup = false);
   void freeCarouselFrames();
   bool allocateCarouselFrameSlots(int targetFrameCount);
-  bool buildCarouselCacheFile(const std::string& cacheKey, uint64_t cacheKeyHash, int bookCount);
+  bool buildCarouselCacheFile(const std::string& cacheKey, uint64_t cacheKeyHash, int bookCount,
+                              bool showProgressPopup = false);
   bool loadCarouselFrameFromDisk(uint64_t cacheKeyHash, int bookCount, int bookIdx, int slotIdx);
   int chooseCarouselEvictionSlot(int centerIdx, int bookCount, int protectedBookIdx = -1) const;
   void renderCarouselFrameToCurrentBuffer(int bookIdx, BookReadingStats* outStats, float* outProgressPercent,

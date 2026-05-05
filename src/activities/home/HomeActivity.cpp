@@ -240,6 +240,28 @@ std::vector<HomeMenuItem> buildHomeMenuItems(bool hasOpdsServers, bool hasReadin
   items.push_back({tr(STR_SETTINGS_TITLE), Settings, HomeMenuAction::Settings});
   return items;
 }
+
+void appendCarouselCoverStateToKey(std::string& key, const RecentBook& book) {
+  key += book.path;
+  key += '\0';
+  key += book.coverBmpPath;
+  key += '\0';
+
+  if (book.coverBmpPath.empty()) {
+    key += "0:0";
+    key += '\0';
+    return;
+  }
+
+  const std::string centerPath =
+      UITheme::getCoverThumbPath(book.coverBmpPath, LyraCarouselTheme::kCenterCoverW, LyraCarouselTheme::kCenterCoverH);
+  const std::string sidePath =
+      UITheme::getCoverThumbPath(book.coverBmpPath, LyraCarouselTheme::kSideCoverW, LyraCarouselTheme::kSideCoverH);
+  key += Storage.exists(centerPath.c_str()) ? '1' : '0';
+  key += ':';
+  key += Storage.exists(sidePath.c_str()) ? '1' : '0';
+  key += '\0';
+}
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -327,9 +349,9 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   recentsLoading = true;
   bool showingLoading = false;
   // Tracks which book indices had a thumbnail generated this pass.
-  // Sized to LyraCarousel's max (5) since recentBooks is bounded by the active
-  // theme's homeRecentBooksCount and LyraCarousel is the maximum across themes.
-  static_assert(LyraCarouselMetrics::values.homeRecentBooksCount == 5,
+  // Sized to LyraCarousel's current recents count since recentBooks is bounded
+  // by the active theme's homeRecentBooksCount.
+  static_assert(LyraCarouselMetrics::values.homeRecentBooksCount == 3,
                 "bookUpdated array sized to LyraCarousel max; if this metric "
                 "changes or another theme exceeds it, resize the array.");
   bool bookUpdated[LyraCarouselMetrics::values.homeRecentBooksCount] = {};
@@ -358,12 +380,16 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
         if (centerMissing || sideMissing) {
           if (FsHelpers::hasEpubExtension(book.path)) {
             Epub epub(book.path, "/.crosspoint");
-            epub.load(false, true);
             if (!showingLoading) {
               showingLoading = true;
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
+            if (!epub.load(true, true)) {
+              LOG_ERR("HOME", "carousel: failed to load EPUB cache for thumb generation: %s", book.path.c_str());
+              progress++;
+              continue;
+            }
             bool success = true;
             if (centerMissing)
               success =
@@ -411,12 +437,16 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
         if (!Storage.exists(coverPath.c_str())) {
           if (FsHelpers::hasEpubExtension(book.path)) {
             Epub epub(book.path, "/.crosspoint");
-            epub.load(false, true);
             if (!showingLoading) {
               showingLoading = true;
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
+            if (!epub.load(true, true)) {
+              LOG_ERR("HOME", "failed to load EPUB cache for thumb generation: %s", book.path.c_str());
+              progress++;
+              continue;
+            }
             bool success = epub.generateThumbBmp(coverHeight);
             if (!success) {
               RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
@@ -468,13 +498,28 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
       }
     }
     if (anyUpdated) {
-      const std::string cacheKey = gCacheKey;
-      const uint64_t cacheKeyHash = gCacheKeyHash;
       if (!carouselFramesReady) {
-        // Cache not yet initialised (shouldn't happen) — fall back to full render.
+        // Cover assets changed before the carousel cache was initialised, so
+        // any existing SD snapshot may still contain placeholder frames.
+        // Force a rebuild from the fresh thumbs instead of reusing stale
+        // `home_carousel_cache.bin` content keyed only by book order/layout.
+        if (Storage.exists(CAROUSEL_CACHE_PATH)) {
+          Storage.remove(CAROUSEL_CACHE_PATH);
+        }
+        if (Storage.exists(CAROUSEL_CACHE_TMP_PATH)) {
+          Storage.remove(CAROUSEL_CACHE_TMP_PATH);
+        }
         preRenderCarouselFrames();
-      } else if (!cacheKey.empty() && cacheKeyHash != 0) {
-        buildCarouselCacheFile(cacheKey, cacheKeyHash, static_cast<int>(recentBooks.size()));
+      } else {
+        // The live carousel frames are already updated above. Keep Home
+        // responsive by invalidating any stale SD snapshot instead of
+        // rewriting all 5 frames synchronously on this return-to-Home path.
+        if (Storage.exists(CAROUSEL_CACHE_PATH)) {
+          Storage.remove(CAROUSEL_CACHE_PATH);
+        }
+        if (Storage.exists(CAROUSEL_CACHE_TMP_PATH)) {
+          Storage.remove(CAROUSEL_CACHE_TMP_PATH);
+        }
       }
       requestUpdate();
     }
@@ -494,6 +539,7 @@ void HomeActivity::onEnter() {
   selectorIndex = 0;
   lastCarouselBookIndex = 0;
   carouselFramesReady = false;
+  carouselWarmupPending = isCarouselTheme;
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   loadRecentBooks(metrics.homeRecentBooksCount);
@@ -503,13 +549,6 @@ void HomeActivity::onEnter() {
     loadAllBookStats();
   }
   updateHighlightedBookContext();
-
-  // Pre-render carousel frames before the first display update so the fast
-  // path is active from render #1. Cache hit = instant. Cache miss = SD reads
-  // here, but the E-ink is still refreshing from the previous activity anyway.
-  if (isCarouselTheme) {
-    preRenderCarouselFrames();
-  }
 
   requestUpdate();
 }
@@ -553,6 +592,7 @@ void HomeActivity::onExit() {
   freeCoverBuffer();
   invalidateCarouselCache();
   freeCarouselFrames();
+  carouselWarmupPending = false;
 }
 
 bool HomeActivity::storeCoverBuffer() {
@@ -678,7 +718,8 @@ void HomeActivity::renderCarouselFrameToCurrentBuffer(int bookIdx, BookReadingSt
   if (outUsedCachedStats) *outUsedCachedStats = usedCachedStats;
 }
 
-bool HomeActivity::buildCarouselCacheFile(const std::string& cacheKey, uint64_t cacheKeyHash, int bookCount) {
+bool HomeActivity::buildCarouselCacheFile(const std::string& cacheKey, uint64_t cacheKeyHash, int bookCount,
+                                          bool showProgressPopup) {
   (void)cacheKey;
   uint8_t* frameBuffer = renderer.getFrameBuffer();
   if (!frameBuffer || bookCount <= 0) return false;
@@ -709,12 +750,33 @@ bool HomeActivity::buildCarouselCacheFile(const std::string& cacheKey, uint64_t 
   serialization::writePod(file, header);
 
   const auto start = millis();
+  Rect popupRect{};
+  uint8_t* progressFrameBuffer = nullptr;
+  const size_t bufferSize = renderer.getBufferSize();
+  if (showProgressPopup) {
+    progressFrameBuffer = static_cast<uint8_t*>(malloc(bufferSize));
+    if (progressFrameBuffer) {
+      memcpy(progressFrameBuffer, frameBuffer, bufferSize);
+    } else {
+      LOG_ERR("HOME", "carousel: failed to allocate progress overlay buffer");
+      showProgressPopup = false;
+    }
+  }
+  if (showProgressPopup) {
+    popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+    GUI.fillPopupProgress(renderer, popupRect, 0);
+    memcpy(progressFrameBuffer, frameBuffer, bufferSize);
+  }
   bool writeFailed = false;
   for (int i = 0; i < bookCount; ++i) {
     renderCarouselFrameToCurrentBuffer(i, nullptr, nullptr, nullptr);
     if (file.write(frameBuffer, renderer.getBufferSize()) != renderer.getBufferSize()) {
       writeFailed = true;
       break;
+    }
+    if (showProgressPopup) {
+      memcpy(frameBuffer, progressFrameBuffer, bufferSize);
+      GUI.fillPopupProgress(renderer, popupRect, ((i + 1) * 100) / bookCount);
     }
   }
 
@@ -723,6 +785,7 @@ bool HomeActivity::buildCarouselCacheFile(const std::string& cacheKey, uint64_t 
   file.close();
 
   if (writeFailed || !syncOk) {
+    free(progressFrameBuffer);
     Storage.remove(CAROUSEL_CACHE_TMP_PATH);
     LOG_ERR("HOME", "carousel: failed to write SD cache snapshot");
     return false;
@@ -732,11 +795,13 @@ bool HomeActivity::buildCarouselCacheFile(const std::string& cacheKey, uint64_t 
     Storage.remove(CAROUSEL_CACHE_PATH);
   }
   if (!Storage.rename(CAROUSEL_CACHE_TMP_PATH, CAROUSEL_CACHE_PATH)) {
+    free(progressFrameBuffer);
     Storage.remove(CAROUSEL_CACHE_TMP_PATH);
     LOG_ERR("HOME", "carousel: failed to promote SD cache snapshot");
     return false;
   }
 
+  free(progressFrameBuffer);
   LOG_DBG("HOME", "carousel: built SD cache for %d book(s) in %lums", bookCount, millis() - start);
   return true;
 }
@@ -804,16 +869,17 @@ int HomeActivity::chooseCarouselEvictionSlot(int centerIdx, int bookCount, int p
   return evictSlot;
 }
 
-void HomeActivity::preRenderCarouselFrames() {
+bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
   const int bookCount = static_cast<int>(recentBooks.size());
-  if (bookCount == 0) return;
+  if (bookCount == 0) return false;
+  bool showedProgressPopup = false;
 
-  // Build cache key from book paths in order
+  // Build cache key from book paths plus thumb-asset availability so we don't
+  // reuse a stale snapshot built before carousel-sized thumbs existed.
   std::string newKey;
-  newKey.reserve(128);
+  newKey.reserve(256);
   for (const auto& b : recentBooks) {
-    newKey += b.path;
-    newKey += '\0';
+    appendCarouselCoverStateToKey(newKey, b);
   }
   const uint64_t newKeyHash = fnvHash64(newKey);
 
@@ -823,11 +889,11 @@ void HomeActivity::preRenderCarouselFrames() {
     carouselFramesReady = true;
     coverRendered = false;
     coverBufferStored = false;
-    return;
+    return false;
   }
 
   // Cache miss: free old cache and re-render
-  if (!renderer.getFrameBuffer()) return;
+  if (!renderer.getFrameBuffer()) return false;
   freeCoverBuffer();  // reclaim 48KB before allocating frames
   invalidateCarouselCache();
 
@@ -847,32 +913,38 @@ void HomeActivity::preRenderCarouselFrames() {
         header.sideCoverW == LyraCarouselTheme::kSideCoverW && header.sideCoverH == LyraCarouselTheme::kSideCoverH;
   }
 
-  if (!diskCacheValid && !buildCarouselCacheFile(newKey, newKeyHash, bookCount)) {
-    return;
-  }
   if (!allocateCarouselFrameSlots(targetFrameCount)) {
-    return;
+    if (!diskCacheValid) {
+      return showedProgressPopup;
+    }
+    return showedProgressPopup;
   }
 
   // Pre-render current, next, and prev so the first navigation in either
   // direction is always a cache hit, but now they come from the SD snapshot.
   const int selectedBookIdx = (selectorIndex < bookCount) ? selectorIndex : lastCarouselBookIndex;
   const int initialBookIdx = (selectedBookIdx >= 0 && selectedBookIdx < bookCount) ? selectedBookIdx : 0;
-  if (!loadCarouselFrameFromDisk(newKeyHash, bookCount, initialBookIdx, 0)) {
+  if (diskCacheValid && !loadCarouselFrameFromDisk(newKeyHash, bookCount, initialBookIdx, 0)) {
+    renderCarouselFrame(initialBookIdx, 0);
+  } else if (!diskCacheValid) {
     renderCarouselFrame(initialBookIdx, 0);
   }
   gLastCarouselCenterIdx = initialBookIdx;
 
   if (gCachedFrameCount >= 2 && bookCount >= 2) {
     const int nextIdx = (initialBookIdx + 1) % bookCount;
-    if (!loadCarouselFrameFromDisk(newKeyHash, bookCount, nextIdx, 1)) {
+    if (diskCacheValid && !loadCarouselFrameFromDisk(newKeyHash, bookCount, nextIdx, 1)) {
+      renderCarouselFrame(nextIdx, 1);
+    } else if (!diskCacheValid) {
       renderCarouselFrame(nextIdx, 1);
     }
   }
 
   if (gCachedFrameCount >= 3 && bookCount >= 3) {
     const int prevIdx = (initialBookIdx + bookCount - 1) % bookCount;
-    if (!loadCarouselFrameFromDisk(newKeyHash, bookCount, prevIdx, 2)) {
+    if (diskCacheValid && !loadCarouselFrameFromDisk(newKeyHash, bookCount, prevIdx, 2)) {
+      renderCarouselFrame(prevIdx, 2);
+    } else if (!diskCacheValid) {
       renderCarouselFrame(prevIdx, 2);
     }
   }
@@ -882,6 +954,7 @@ void HomeActivity::preRenderCarouselFrames() {
   carouselFramesReady = true;
   coverRendered = false;
   coverBufferStored = false;
+  return showedProgressPopup;
 }
 
 void HomeActivity::loop() {
@@ -1078,9 +1151,22 @@ void HomeActivity::render(RenderLock&&) {
   if (!firstRenderDone) {
     firstRenderDone = true;
     requestUpdate();
-  } else if (!recentsLoaded && !recentsLoading) {
+    return;
+  }
+
+  if (!recentsLoaded && !recentsLoading) {
     recentsLoading = true;
     loadRecentCovers(metrics.homeCoverHeight);
+  }
+
+  if (carouselWarmupPending && !carouselFramesReady) {
+    // Resolve any missing cover thumbs first, then warm the carousel snapshot.
+    // Cover generation needs more contiguous heap than the frame cache path.
+    carouselWarmupPending = false;
+    const bool showedWarmupProgress = preRenderCarouselFrames(true);
+    if (carouselFramesReady || showedWarmupProgress) {
+      requestUpdate();
+    }
   }
 }
 
@@ -1105,6 +1191,15 @@ void HomeActivity::updateSlidingWindowCache(int centerIdx, int bookCount) {
   if (!carouselFramesReady) return;
   if (gCachedFrameCount <= 1 || bookCount <= 1) return;
   if (gCachedFrameCount >= bookCount) return;
+  if (gCachedFrameCount < kCarouselFrameCount) {
+    // In degraded memory mode we may only have 2 frame slots. Proactively
+    // rendering the missing adjacent frame here keeps the render task busy for
+    // ~1.5s while input continues to change on the main task, which has proven
+    // unstable on hardware. Fall back to rendering frames on demand instead of
+    // background-filling them.
+    gLastCarouselCenterIdx = centerIdx;
+    return;
+  }
   int renderedCount = 0;
 
   const int prevIdx = (centerIdx + bookCount - 1) % bookCount;
@@ -1195,9 +1290,6 @@ void HomeActivity::updateSlidingWindowCache(int centerIdx, int bookCount) {
 void HomeActivity::onSelectBook(const std::string& path) {
   invalidateCarouselCache();
   freeCarouselFrames();
-  if (Storage.exists(CAROUSEL_CACHE_PATH)) {
-    Storage.remove(CAROUSEL_CACHE_PATH);
-  }
   if (Storage.exists(CAROUSEL_CACHE_TMP_PATH)) {
     Storage.remove(CAROUSEL_CACHE_TMP_PATH);
   }

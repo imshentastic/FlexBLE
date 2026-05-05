@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 ### Changed
 - Update the Lyra Carousel theme to use Lyra Flow-style cover rendering, move the active book title above the cover, and show per-book reading stats below while keeping the carousel's existing home menu layout
+- Reduce Lyra Carousel from 5 visible recent books to 3 so the on-screen carousel matches its 3-frame RAM cache and navigation stays more responsive
 
 ### Added
 - Prevent a crash when entering sleep with Page Overlay enabled if the cached EPUB page data is invalid
@@ -17,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix Lyra carousel navigation lag by caching per-book stats and progress once on home entry instead of re-reading from SD on every button press
 - Fix Lyra carousel first-navigation hitch by pre-rendering the prev and next frames at startup alongside the current book
 - Reduce Lyra carousel cover-render heap churn by reusing bitmap row scratch buffers instead of allocating them on every draw
+- Fix Home cover thumbnail generation failing for EPUBs with missing metadata cache by allowing the Home loading path to rebuild the EPUB cache before generating missing thumbs
+- Fix Lyra Carousel returning from the reader feeling frozen by showing Home before rebuilding the carousel snapshot cache, reusing the last valid SD snapshot when it still matches the current recent-books list, and showing a progress popup only when a full snapshot rebuild is actually needed
 - Fix Lyra Carousel generic fallback covers by overlaying the book title inside the placeholder cover instead of showing only a blank generic icon
 - Fix a crash when opening EPUB chapters that continue with normal text after a buffered table
 - Fix a crash when using `Go to %` in EPUBs by serializing the jump calculation with other reader cache access
