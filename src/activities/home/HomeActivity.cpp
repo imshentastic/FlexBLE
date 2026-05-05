@@ -89,6 +89,48 @@ bool hasAnyGlobalStats(const GlobalReadingStats& stats) {
          stats.completedBooks > 0;
 }
 
+void appendHashedFileStateToKey(std::string& key, const std::string& path) {
+  FsFile file;
+  if (!Storage.openFileForRead("HOME", path, file)) {
+    key += "missing";
+    key += '\0';
+    return;
+  }
+
+  uint64_t hash = 14695981039346656037ull;
+  size_t totalBytes = 0;
+  uint8_t buffer[64];
+  while (true) {
+    const int bytesRead = file.read(buffer, sizeof(buffer));
+    if (bytesRead <= 0) break;
+    totalBytes += static_cast<size_t>(bytesRead);
+    for (int i = 0; i < bytesRead; ++i) {
+      hash ^= buffer[i];
+      hash *= 1099511628211ull;
+    }
+  }
+  file.close();
+
+  char digest[48];
+  snprintf(digest, sizeof(digest), "%lu:%llu", static_cast<unsigned long>(totalBytes),
+           static_cast<unsigned long long>(hash));
+  key += digest;
+  key += '\0';
+}
+
+std::string getRecentBookCachePath(const RecentBook& book) {
+  if (FsHelpers::hasEpubExtension(book.path)) {
+    return "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(book.path));
+  }
+  if (FsHelpers::hasXtcExtension(book.path)) {
+    return "/.crosspoint/xtc_" + std::to_string(std::hash<std::string>{}(book.path));
+  }
+  if (FsHelpers::hasTxtExtension(book.path) || FsHelpers::hasMarkdownExtension(book.path)) {
+    return "/.crosspoint/txt_" + std::to_string(std::hash<std::string>{}(book.path));
+  }
+  return "";
+}
+
 float loadEpubProgressPercent(const RecentBook& book) {
   Epub epub(book.path, "/.crosspoint");
   if (!epub.load(false, true)) {
@@ -261,14 +303,26 @@ void appendCarouselCoverStateToKey(std::string& key, const RecentBook& book) {
   key += ':';
   key += Storage.exists(sidePath.c_str()) ? '1' : '0';
   key += '\0';
+
+  const std::string cachePath = getRecentBookCachePath(book);
+  if (!cachePath.empty()) {
+    appendHashedFileStateToKey(key, cachePath + "/progress.bin");
+    if (FsHelpers::hasEpubExtension(book.path)) {
+      appendHashedFileStateToKey(key, cachePath + "/stats.bin");
+    }
+  } else {
+    key += "no-cache-path";
+    key += '\0';
+  }
 }
 
 void buildCarouselCacheKey(const std::vector<RecentBook>& recentBooks, std::string& key, uint64_t& keyHash) {
   key.clear();
-  key.reserve(256);
+  key.reserve(512);
   for (const auto& book : recentBooks) {
     appendCarouselCoverStateToKey(key, book);
   }
+  appendHashedFileStateToKey(key, "/.crosspoint/global_stats.bin");
   keyHash = fnvHash64(key);
 }
 
@@ -581,6 +635,16 @@ void HomeActivity::onEnter() {
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   loadRecentBooks(metrics.homeRecentBooksCount);
+
+  if (!APP_STATE.openEpubPath.empty()) {
+    for (int i = 0; i < static_cast<int>(recentBooks.size()); ++i) {
+      if (recentBooks[i].path == APP_STATE.openEpubPath) {
+        selectorIndex = i;
+        lastCarouselBookIndex = i;
+        break;
+      }
+    }
+  }
 
   globalStats = GlobalReadingStats::load();
   if (isCarouselTheme) {

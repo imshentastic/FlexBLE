@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 - Update the Lyra Carousel theme to use Lyra Flow-style cover rendering, move the active book title above the cover, and show per-book reading stats below while keeping the carousel's existing home menu layout
 - Reduce Lyra Carousel from 5 visible recent books to 3 so the on-screen carousel matches its 3-frame RAM cache and navigation stays more responsive
+- Reduce the overall Lyra Carousel front book size by 5 pixels on each side while keeping the surrounding title, dots, and stats anchored in place
+- Nudge the Lyra Carousel cover stack slightly upward and add a bit more spacing between the total-time stat and the progress block
 
 ### Added
 - Prevent a crash when entering sleep with Page Overlay enabled if the cached EPUB page data is invalid
@@ -18,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Fix Lyra carousel navigation lag by caching per-book stats and progress once on home entry instead of re-reading from SD on every button press
 - Fix Lyra carousel first-navigation hitch by pre-rendering the prev and next frames at startup alongside the current book
 - Reduce Lyra carousel cover-render heap churn by reusing bitmap row scratch buffers instead of allocating them on every draw
+- Fix a simulator/assertion crash when closing the EPUB reader menu by queuing the parent reader repaint after pop-result handling instead of forcing a synchronous redraw while the activity transition is still unwinding
+- Fix Lyra Carousel reusing stale frames after EPUB progress or reading stats changed by including per-book progress/stats files and global reading stats in the snapshot cache key
+- Fix Lyra Carousel returning to the wrong recent book after exiting a reader session by centering the still-open book on Home entry instead of always resetting to the first carousel slot
+- Fix Lyra Carousel reusing stale SD snapshot frames after front-book layout changes so the updated center-book sizing actually appears instead of only the inset highlight border
 - Fix Home cover thumbnail generation failing for EPUBs with missing metadata cache by allowing the Home loading path to rebuild the EPUB cache before generating missing thumbs
 - Fix Lyra Carousel returning from the reader feeling frozen by showing Home before rebuilding the carousel snapshot cache, reusing the last valid SD snapshot when it still matches the current recent-books list, and showing a progress popup only when a full snapshot rebuild is actually needed
 - Fix Lyra Carousel losing its saved SD snapshot fast path after the deferred warmup changes by restoring snapshot reuse on Home entry and rebuilding the snapshot after warmup when the visible carousel set fits in RAM
