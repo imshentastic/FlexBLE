@@ -465,6 +465,50 @@ void LyraCarouselTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int but
   }
 }
 
+void LyraCarouselTheme::drawButtonMenuSelectionOverlay(GfxRenderer& renderer, int buttonCount, int selectedIndex,
+                                                       const std::function<std::string(int index)>& buttonLabel,
+                                                       const std::function<UIIcon(int index)>& rowIcon) const {
+  if (buttonCount <= 0 || selectedIndex < 0 || selectedIndex >= buttonCount) return;
+
+  const int tileH = kMenuIconPad + kMenuIconSize + kMenuIconPad;
+  const int tileW = renderer.getScreenWidth() / buttonCount;
+  const int labelLineHeight = renderer.getLineHeight(kMenuLabelFontId);
+  const int rowY = renderer.getScreenHeight() - kButtonHintsH - tileH - kMenuLabelTopGap - labelLineHeight -
+                   kMenuLabelBottomGap + kMenuRowDrop;
+  const int labelY = rowY - kMenuLabelTopGap - labelLineHeight;
+
+  const int tileX = selectedIndex * tileW;
+  const int iconX = tileX + (tileW - kMenuIconSize) / 2;
+  const int iconY = rowY + kMenuIconPad;
+  const int highlightSize = kMenuIconSize + 2 * kHighlightPad;
+  const int highlightY = rowY + (tileH - highlightSize) / 2;
+
+  renderer.fillRoundedRect(iconX - kHighlightPad, highlightY, highlightSize, highlightSize, kCornerRadius,
+                           Color::Black);
+
+  if (rowIcon != nullptr) {
+    const UIIcon icon = rowIcon(selectedIndex);
+    if (icon == UIIcon::BookmarkIcon) {
+      drawMenuBookmarkIcon(renderer, iconX, iconY, true);
+    } else {
+      const uint8_t* bmp = iconForName(icon, kMenuIconSize);
+      if (bmp != nullptr) {
+        renderer.drawIconInverted(bmp, iconX, iconY, kMenuIconSize, kMenuIconSize);
+      }
+    }
+  }
+
+  renderer.fillRect(0, labelY, renderer.getScreenWidth(), labelLineHeight, false);
+  if (buttonLabel != nullptr) {
+    const std::string labelStr = buttonLabel(selectedIndex);
+    const auto centeredLabel =
+        renderer.truncatedText(kMenuLabelFontId, labelStr.c_str(), renderer.getScreenWidth() - 40);
+    const int labelWidth = renderer.getTextWidth(kMenuLabelFontId, centeredLabel.c_str(), EpdFontFamily::REGULAR);
+    renderer.drawText(kMenuLabelFontId, (renderer.getScreenWidth() - labelWidth) / 2, labelY + 2, centeredLabel.c_str(),
+                      true, EpdFontFamily::REGULAR);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // List — solid black highlight, inverted text and icons on selected row
 // ---------------------------------------------------------------------------

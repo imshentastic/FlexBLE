@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Reduce Lyra carousel cover-render heap churn by reusing bitmap row scratch buffers instead of allocating them on every draw
 - Fix Home cover thumbnail generation failing for EPUBs with missing metadata cache by allowing the Home loading path to rebuild the EPUB cache before generating missing thumbs
 - Fix Lyra Carousel returning from the reader feeling frozen by showing Home before rebuilding the carousel snapshot cache, reusing the last valid SD snapshot when it still matches the current recent-books list, and showing a progress popup only when a full snapshot rebuild is actually needed
+- Fix Lyra Carousel losing its saved SD snapshot fast path after the deferred warmup changes by restoring snapshot reuse on Home entry and rebuilding the snapshot after warmup when the visible carousel set fits in RAM
+- Fix Lyra Carousel still repainting the full bottom menu row on cached-frame navigation by baking the static menu strip into cached frames and only overlaying the active menu selection at render time
+- Fix Lyra Carousel still live-rendering the third book in degraded 2/3 RAM-slot mode by writing the full 3-book SD snapshot even when only part of the carousel fits in RAM
+- Fix reopening an existing book still reshuffling the Home carousel by refreshing recent-book metadata in place instead of moving already-known books to the front
 - Fix Lyra Carousel generic fallback covers by overlaying the book title inside the placeholder cover instead of showing only a blank generic icon
 - Fix a crash when opening EPUB chapters that continue with normal text after a buffered table
 - Fix a crash when using `Go to %` in EPUBs by serializing the jump calculation with other reader cache access

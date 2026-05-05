@@ -262,6 +262,44 @@ void appendCarouselCoverStateToKey(std::string& key, const RecentBook& book) {
   key += Storage.exists(sidePath.c_str()) ? '1' : '0';
   key += '\0';
 }
+
+void buildCarouselCacheKey(const std::vector<RecentBook>& recentBooks, std::string& key, uint64_t& keyHash) {
+  key.clear();
+  key.reserve(256);
+  for (const auto& book : recentBooks) {
+    appendCarouselCoverStateToKey(key, book);
+  }
+  keyHash = fnvHash64(key);
+}
+
+bool isCarouselCacheHeaderValid(const CarouselCacheHeader& header, uint64_t cacheKeyHash, int bookCount,
+                                const GfxRenderer& renderer) {
+  return header.magic == CAROUSEL_CACHE_MAGIC && header.version == CAROUSEL_CACHE_VERSION &&
+         header.keyHash == cacheKeyHash && header.frameCount == bookCount &&
+         header.frameBufferSize == renderer.getBufferSize() && header.screenWidth == renderer.getScreenWidth() &&
+         header.screenHeight == renderer.getScreenHeight() && header.centerCoverW == LyraCarouselTheme::kCenterCoverW &&
+         header.centerCoverH == LyraCarouselTheme::kCenterCoverH &&
+         header.sideCoverW == LyraCarouselTheme::kSideCoverW && header.sideCoverH == LyraCarouselTheme::kSideCoverH;
+}
+
+bool hasValidCarouselDiskCache(const std::vector<RecentBook>& recentBooks, const GfxRenderer& renderer) {
+  const int bookCount = static_cast<int>(recentBooks.size());
+  if (bookCount <= 0) return false;
+
+  std::string cacheKey;
+  uint64_t cacheKeyHash = 0;
+  buildCarouselCacheKey(recentBooks, cacheKey, cacheKeyHash);
+
+  FsFile cacheFile;
+  if (!Storage.openFileForRead("HOME", CAROUSEL_CACHE_PATH, cacheFile)) {
+    return false;
+  }
+
+  CarouselCacheHeader header{};
+  serialization::readPod(cacheFile, header);
+  cacheFile.close();
+  return isCarouselCacheHeaderValid(header, cacheKeyHash, bookCount, renderer);
+}
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -550,6 +588,10 @@ void HomeActivity::onEnter() {
   }
   updateHighlightedBookContext();
 
+  if (isCarouselTheme && hasValidCarouselDiskCache(recentBooks, renderer)) {
+    preRenderCarouselFrames(false);
+  }
+
   requestUpdate();
 }
 
@@ -687,6 +729,7 @@ void HomeActivity::renderCarouselFrameToCurrentBuffer(int bookIdx, BookReadingSt
                                                       float* outProgressPercent, bool* outUsedCachedStats) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
   const int bookCount = static_cast<int>(recentBooks.size());
   bool dummy1 = false, dummy2 = false, dummy3 = false;
   BookReadingStats frameStats;
@@ -712,6 +755,19 @@ void HomeActivity::renderCarouselFrameToCurrentBuffer(int bookIdx, BookReadingSt
   GUI.drawRecentBookCover(
       renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight}, recentBooks, bookCount, dummy1,
       dummy2, dummy3, []() { return true; }, frameStatsPtr, frameProgressPercent);
+
+  const bool frameHasReadingStats = hasAnyBookStats(frameStats) || hasAnyGlobalStats(globalStats);
+  const auto menuItems = buildHomeMenuItems(hasOpdsServers, frameHasReadingStats, hasBookmarks);
+  GUI.drawButtonMenu(
+      renderer,
+      Rect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.verticalSpacing, pageWidth,
+           pageHeight - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing * 2 +
+                         metrics.buttonHintsHeight)},
+      static_cast<int>(menuItems.size()), -1, [&menuItems](int index) { return std::string(menuItems[index].label); },
+      [&menuItems](int index) { return menuItems[index].icon; });
+
+  const auto labels = mappedInput.mapLabels("", tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   if (outStats) *outStats = frameStats;
   if (outProgressPercent) *outProgressPercent = frameProgressPercent;
@@ -769,7 +825,12 @@ bool HomeActivity::buildCarouselCacheFile(const std::string& cacheKey, uint64_t 
   }
   bool writeFailed = false;
   for (int i = 0; i < bookCount; ++i) {
-    renderCarouselFrameToCurrentBuffer(i, nullptr, nullptr, nullptr);
+    const int cachedSlot = findFrameSlot(i);
+    if (cachedSlot >= 0 && carouselFrames[cachedSlot]) {
+      memcpy(frameBuffer, carouselFrames[cachedSlot], renderer.getBufferSize());
+    } else {
+      renderCarouselFrameToCurrentBuffer(i, nullptr, nullptr, nullptr);
+    }
     if (file.write(frameBuffer, renderer.getBufferSize()) != renderer.getBufferSize()) {
       writeFailed = true;
       break;
@@ -818,13 +879,7 @@ bool HomeActivity::loadCarouselFrameFromDisk(uint64_t cacheKeyHash, int bookCoun
 
   CarouselCacheHeader header{};
   serialization::readPod(file, header);
-  const bool valid =
-      header.magic == CAROUSEL_CACHE_MAGIC && header.version == CAROUSEL_CACHE_VERSION &&
-      header.keyHash == cacheKeyHash && header.frameCount == bookCount &&
-      header.frameBufferSize == renderer.getBufferSize() && header.screenWidth == renderer.getScreenWidth() &&
-      header.screenHeight == renderer.getScreenHeight() && header.centerCoverW == LyraCarouselTheme::kCenterCoverW &&
-      header.centerCoverH == LyraCarouselTheme::kCenterCoverH && header.sideCoverW == LyraCarouselTheme::kSideCoverW &&
-      header.sideCoverH == LyraCarouselTheme::kSideCoverH;
+  const bool valid = isCarouselCacheHeaderValid(header, cacheKeyHash, bookCount, renderer);
   if (!valid) {
     file.close();
     return false;
@@ -877,11 +932,8 @@ bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
   // Build cache key from book paths plus thumb-asset availability so we don't
   // reuse a stale snapshot built before carousel-sized thumbs existed.
   std::string newKey;
-  newKey.reserve(256);
-  for (const auto& b : recentBooks) {
-    appendCarouselCoverStateToKey(newKey, b);
-  }
-  const uint64_t newKeyHash = fnvHash64(newKey);
+  uint64_t newKeyHash = 0;
+  buildCarouselCacheKey(recentBooks, newKey, newKeyHash);
 
   // Cache hit: same books in same order — reuse without any SD reads
   if (newKey == gCacheKey && gCachedFrameCount > 0) {
@@ -904,13 +956,7 @@ bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
     CarouselCacheHeader header{};
     serialization::readPod(cacheFile, header);
     cacheFile.close();
-    diskCacheValid =
-        header.magic == CAROUSEL_CACHE_MAGIC && header.version == CAROUSEL_CACHE_VERSION &&
-        header.keyHash == newKeyHash && header.frameCount == bookCount &&
-        header.frameBufferSize == renderer.getBufferSize() && header.screenWidth == renderer.getScreenWidth() &&
-        header.screenHeight == renderer.getScreenHeight() && header.centerCoverW == LyraCarouselTheme::kCenterCoverW &&
-        header.centerCoverH == LyraCarouselTheme::kCenterCoverH &&
-        header.sideCoverW == LyraCarouselTheme::kSideCoverW && header.sideCoverH == LyraCarouselTheme::kSideCoverH;
+    diskCacheValid = isCarouselCacheHeaderValid(header, newKeyHash, bookCount, renderer);
   }
 
   if (!allocateCarouselFrameSlots(targetFrameCount)) {
@@ -954,6 +1000,16 @@ bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
   carouselFramesReady = true;
   coverRendered = false;
   coverBufferStored = false;
+
+  // Persist the freshly-rendered carousel snapshot back to SD after Home is
+  // already visible so later reader->Home returns can bootstrap from disk
+  // instead of live-rendering covers again. This also matters in degraded
+  // memory mode (for example 2/3 RAM slots), where the missing third slot can
+  // still be served from SD on selection/menu navigation.
+  if (!diskCacheValid && gCachedFrameCount > 0) {
+    showedProgressPopup =
+        buildCarouselCacheFile(newKey, newKeyHash, bookCount, showProgressPopup) || showedProgressPopup;
+  }
   return showedProgressPopup;
 }
 
@@ -1081,20 +1137,13 @@ void HomeActivity::render(RenderLock&&) {
 
       GUI.drawCarouselBorder(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
                              recentBooks, centerIdx, inCarouselRow);
-
-      const auto menuItems = buildHomeMenuItems(hasOpdsServers, hasReadingStats, hasBookmarks);
-
-      GUI.drawButtonMenu(
-          renderer,
-          Rect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.verticalSpacing, pageWidth,
-               pageHeight - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing * 2 +
-                             metrics.buttonHintsHeight)},
-          static_cast<int>(menuItems.size()), selectorIndex - recentBooks.size(),
-          [&menuItems](int index) { return std::string(menuItems[index].label); },
-          [&menuItems](int index) { return menuItems[index].icon; });
-
-      const auto labels = mappedInput.mapLabels("", tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
-      GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+      if (!inCarouselRow) {
+        const auto menuItems = buildHomeMenuItems(hasOpdsServers, hasReadingStats, hasBookmarks);
+        static_cast<const LyraCarouselTheme&>(GUI).drawButtonMenuSelectionOverlay(
+            renderer, static_cast<int>(menuItems.size()), selectorIndex - recentBooks.size(),
+            [&menuItems](int index) { return std::string(menuItems[index].label); },
+            [&menuItems](int index) { return menuItems[index].icon; });
+      }
 
       renderer.displayBuffer();
       // E-ink refresh complete — pre-render the missing adjacent frame while idle.

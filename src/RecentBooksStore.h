@@ -34,6 +34,11 @@ class RecentBooksStore {
   void addBook(const std::string& path, const std::string& title, const std::string& author,
                const std::string& coverBmpPath);
 
+  // Add a new book to the front, or refresh an existing entry in place without
+  // changing the current recent-books order.
+  void addOrUpdateBook(const std::string& path, const std::string& title, const std::string& author,
+                       const std::string& coverBmpPath);
+
   void updateBook(const std::string& path, const std::string& title, const std::string& author,
                   const std::string& coverBmpPath);
 
