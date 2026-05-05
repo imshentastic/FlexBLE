@@ -58,6 +58,12 @@ class HomeActivity final : public Activity {
   void freeCoverBuffer();     // Free the stored cover buffer
   void preRenderCarouselFrames();
   void freeCarouselFrames();
+  bool allocateCarouselFrameSlots(int targetFrameCount);
+  bool buildCarouselCacheFile(const std::string& cacheKey, uint64_t cacheKeyHash, int bookCount);
+  bool loadCarouselFrameFromDisk(uint64_t cacheKeyHash, int bookCount, int bookIdx, int slotIdx);
+  int chooseCarouselEvictionSlot(int centerIdx, int bookCount, int protectedBookIdx = -1) const;
+  void renderCarouselFrameToCurrentBuffer(int bookIdx, BookReadingStats* outStats, float* outProgressPercent,
+                                          bool* outUsedCachedStats);
   void renderCarouselFrame(int bookIdx, int slotIdx);
   void updateSlidingWindowCache(int centerIdx, int bookCount);
   int getHighlightedBookIndex() const;

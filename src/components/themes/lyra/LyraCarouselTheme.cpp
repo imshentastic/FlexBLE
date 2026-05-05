@@ -69,6 +69,31 @@ int lastCarouselSelectorIndex = -1;
 Rect lastCenterCoverRect{0, 0, 0, 0};
 Rect cachedCenterCoverRects[LyraCarouselMetrics::values.homeRecentBooksCount];
 
+Rect computeCenterCoverRect(const GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
+                            int centerIdx) {
+  if (recentBooks.empty()) {
+    const int screenW = renderer.getScreenWidth();
+    const int fallbackX = (screenW - kDisplayCenterW) / 2;
+    const int fallbackY = rect.y + kCoverTopPad + kCenterCoverTopInset;
+    return Rect{fallbackX, fallbackY, kDisplayCenterW, kDisplayCenterH};
+  }
+
+  centerIdx = std::clamp(centerIdx, 0, static_cast<int>(recentBooks.size()) - 1);
+
+  const int screenW = renderer.getScreenWidth();
+  const int textMaxWidth = std::min(screenW - 40, kCenterCoverMaxW + 40);
+  const auto titleLines =
+      renderer.wrappedText(kTitleFontId, recentBooks[centerIdx].title.c_str(), textMaxWidth, 2, EpdFontFamily::BOLD);
+  const int titleLineHeight = renderer.getLineHeight(kTitleFontId);
+  const int titleBlockHeight = titleLineHeight * static_cast<int>(titleLines.size());
+  const int reservedTitleBlockHeight = titleLineHeight * 2;
+  const int titleY = rect.y + kTitleTopClearance;
+  const int centerTileY = std::max(rect.y + kCoverTopPad, titleY + reservedTitleBlockHeight + kTitleBottomGap);
+  const int centerDrawY = centerTileY + kCenterCoverTopInset;
+  const int centerX = (screenW - kDisplayCenterW) / 2;
+  return Rect{centerX, centerDrawY, kDisplayCenterW, kDisplayCenterH};
+}
+
 void drawMenuBookmarkIcon(const GfxRenderer& renderer, int x, int y, bool selected) {
   constexpr int ribbonWidth = 16;
   constexpr int ribbonHeight = 22;
@@ -120,15 +145,11 @@ void LyraCarouselTheme::setPreRenderIndex(int idx) {
   }
 }
 
-void LyraCarouselTheme::drawCarouselBorder(GfxRenderer& renderer, Rect coverRect, bool inCarouselRow) const {
+void LyraCarouselTheme::drawCarouselBorder(GfxRenderer& renderer, Rect coverRect,
+                                           const std::vector<RecentBook>& recentBooks, int centerIdx,
+                                           bool inCarouselRow) const {
   if (!inCarouselRow) return;
-  Rect borderRect = lastCenterCoverRect;
-  if (borderRect.width <= 0 || borderRect.height <= 0) {
-    const int screenW = renderer.getScreenWidth();
-    const int fallbackX = (screenW - kDisplayCenterW) / 2;
-    const int fallbackY = coverRect.y + kCoverTopPad + kCenterCoverTopInset;
-    borderRect = Rect{fallbackX, fallbackY, kDisplayCenterW, kDisplayCenterH};
-  }
+  Rect borderRect = computeCenterCoverRect(renderer, coverRect, recentBooks, centerIdx);
   renderer.drawRoundedRect(borderRect.x, borderRect.y, borderRect.width, borderRect.height, kSelectionLineW,
                            kCornerRadius, true);
 }
@@ -177,10 +198,11 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   const int titleY = rect.y + kTitleTopClearance;
   const int centerTileY = std::max(rect.y + kCoverTopPad, titleY + reservedTitleBlockHeight + kTitleBottomGap);
   const int sideMaxHeight = std::max(kNearSideInnerH, kNearSideOuterH);
-  const int centerDrawY = centerTileY + kCenterCoverTopInset;
+  const Rect computedCenterCoverRect = computeCenterCoverRect(renderer, rect, recentBooks, centerIdx);
+  const int centerDrawY = computedCenterCoverRect.y;
   const int sideTileY = centerDrawY + (kDisplayCenterH - sideMaxHeight) / 2;
 
-  const int centerX = (screenW - kDisplayCenterW) / 2;
+  const int centerX = computedCenterCoverRect.x;
   const int nearOverlap = 4;
   const int farOverlap = 2;
   constexpr int nearCoverInset = 10;
@@ -233,7 +255,29 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     renderer.fillRoundedRect(outRect.x, outRect.y + outRect.height / 3, outRect.width, 2 * outRect.height / 3,
                              kCornerRadius, /*roundTopLeft=*/false, /*roundTopRight=*/false,
                              /*roundBottomLeft=*/true, /*roundBottomRight=*/true, Color::Black);
-    renderer.drawIcon(CoverIcon, outRect.x + outRect.width / 2 - 16, outRect.y + outRect.height / 2 - 16, 32, 32);
+    constexpr int kFallbackTitlePadX = 14;
+    constexpr int kFallbackTitlePadBottom = 14;
+    constexpr int kFallbackIconGap = 10;
+    const int iconX = outRect.x + outRect.width / 2 - 16;
+    const int iconY = outRect.y + outRect.height / 3 + 14;
+    renderer.drawIcon(CoverIcon, iconX, iconY, 32, 32);
+
+    const int fallbackTitleX = outRect.x + kFallbackTitlePadX;
+    const int fallbackTitleY = iconY + 32 + kFallbackIconGap;
+    const int fallbackTitleW = outRect.width - kFallbackTitlePadX * 2;
+    const int fallbackTitleH = outRect.y + outRect.height - kFallbackTitlePadBottom - fallbackTitleY;
+    const int fallbackLineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+    const int maxFallbackLines = std::clamp(fallbackTitleH / std::max(1, fallbackLineHeight), 1, 4);
+    const auto fallbackTitleLines =
+        renderer.wrappedText(UI_10_FONT_ID, book.title.c_str(), fallbackTitleW, maxFallbackLines, EpdFontFamily::BOLD);
+    const int fallbackBlockH = fallbackLineHeight * static_cast<int>(fallbackTitleLines.size());
+    int fallbackLineY = fallbackTitleY + std::max(0, (fallbackTitleH - fallbackBlockH) / 2);
+    for (const auto& line : fallbackTitleLines) {
+      const int lineW = renderer.getTextWidth(UI_10_FONT_ID, line.c_str(), EpdFontFamily::BOLD);
+      renderer.drawText(UI_10_FONT_ID, outRect.x + (outRect.width - lineW) / 2, fallbackLineY, line.c_str(), false,
+                        EpdFontFamily::BOLD);
+      fallbackLineY += fallbackLineHeight;
+    }
     return false;
   };
 
