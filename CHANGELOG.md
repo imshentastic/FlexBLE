@@ -17,3 +17,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 - Fix a crash when using `Go to %` in EPUBs by serializing the jump calculation with other reader cache access
 - Fix OTA update checks after the streaming release parser merge by keeping variant-aware firmware asset matching
+- Fix power-button shortcut conflicts outside the reader so reader-only actions fall back to `Confirm` while Sleep, Refresh, Screenshot, Sync Progress, and File Transfer remain real power actions
