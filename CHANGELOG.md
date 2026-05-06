@@ -1,15 +1,11 @@
 # Changelog
 
 ## [Unreleased]
-### Fixed
-- Add missing non-English translations for Lyra Carousel and the Recent Books View list/grid labels
-
-### Changed
 
 ### Added
-- Add real EPUB `<hr>` rendering so horizontal rules now display as visible separators instead of being ignored
 - Add Lyra Carousel theme
 - Add a `Recent Books View` setting so the dedicated Recent Books screen can switch between the classic list and a 3x3 cover grid
+- Add real EPUB `<hr>` rendering so horizontal rules now display as visible separators instead of being ignored
 
 ## [v1.2.9.1] - 2026-05-03
 
