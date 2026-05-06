@@ -18,6 +18,7 @@ void CrashActivity::onEnter() {
 
   if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
     LOG_ERR("CRASH", "Crash screen could not be rendered synchronously");
+    requestUpdate();
   }
 }
 
