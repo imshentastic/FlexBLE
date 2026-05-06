@@ -372,7 +372,6 @@ void ChapterHtmlSlimParser::emitBufferedTableAsFragments(BufferedTable& table) {
               viewportHeight);
       return false;
     }
-
     for (size_t colIndex = 0; colIndex < row.cells.size(); colIndex++) {
       const auto& sourceCell = row.cells[colIndex];
       auto& destCell = prepared.fragmentRow.cells[colIndex];

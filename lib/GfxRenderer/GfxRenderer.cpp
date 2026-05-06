@@ -36,6 +36,41 @@ void GfxRenderer::begin() {
   bwBufferChunks.assign((frameBufferSize + BW_BUFFER_CHUNK_SIZE - 1) / BW_BUFFER_CHUNK_SIZE, nullptr);
 }
 
+void GfxRenderer::freeBitmapScratchBuffers() {
+  free(bitmapScratchOutputRow_);
+  bitmapScratchOutputRow_ = nullptr;
+  bitmapScratchOutputRowSize_ = 0;
+
+  free(bitmapScratchRowBytes_);
+  bitmapScratchRowBytes_ = nullptr;
+  bitmapScratchRowBytesSize_ = 0;
+}
+
+bool GfxRenderer::ensureBitmapScratchBuffers(const size_t outputRowSize, const size_t rowBytesSize) const {
+  if (outputRowSize > bitmapScratchOutputRowSize_) {
+    auto* grownOutput = static_cast<uint8_t*>(realloc(bitmapScratchOutputRow_, outputRowSize));
+    if (!grownOutput) {
+      LOG_ERR("GFX", "!! Failed to grow BMP output row scratch buffer to %u bytes",
+              static_cast<unsigned>(outputRowSize));
+      return false;
+    }
+    bitmapScratchOutputRow_ = grownOutput;
+    bitmapScratchOutputRowSize_ = outputRowSize;
+  }
+
+  if (rowBytesSize > bitmapScratchRowBytesSize_) {
+    auto* grownRowBytes = static_cast<uint8_t*>(realloc(bitmapScratchRowBytes_, rowBytesSize));
+    if (!grownRowBytes) {
+      LOG_ERR("GFX", "!! Failed to grow BMP row-bytes scratch buffer to %u bytes", static_cast<unsigned>(rowBytesSize));
+      return false;
+    }
+    bitmapScratchRowBytes_ = grownRowBytes;
+    bitmapScratchRowBytesSize_ = rowBytesSize;
+  }
+
+  return true;
+}
+
 void GfxRenderer::insertFont(const int fontId, EpdFontFamily font) { fontMap.insert({fontId, font}); }
 
 // Translate logical (x,y) coordinates to physical panel coordinates based on current orientation
@@ -287,17 +322,21 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
 
 void GfxRenderer::drawLine(int x1, int y1, int x2, int y2, const bool state) const {
   if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
+  const int sw = getScreenWidth();
+  const int sh = getScreenHeight();
   if (x1 == x2) {
-    if (y2 < y1) {
-      std::swap(y1, y2);
-    }
+    if (x1 < 0 || x1 >= sw) return;
+    if (y2 < y1) std::swap(y1, y2);
+    y1 = std::max(y1, 0);
+    y2 = std::min(y2, sh - 1);
     for (int y = y1; y <= y2; y++) {
       drawPixel(x1, y, state);
     }
   } else if (y1 == y2) {
-    if (x2 < x1) {
-      std::swap(x1, x2);
-    }
+    if (y1 < 0 || y1 >= sh) return;
+    if (x2 < x1) std::swap(x1, x2);
+    x1 = std::max(x1, 0);
+    x2 = std::min(x2, sw - 1);
     for (int x = x1; x <= x2; x++) {
       drawPixel(x, y1, state);
     }
@@ -490,16 +529,23 @@ void GfxRenderer::fillRectDither(const int x, const int y, const int width, cons
     fillRect(x, y, width, height, true);
   } else if (color == Color::White) {
     fillRect(x, y, width, height, false);
-  } else if (color == Color::LightGray) {
-    for (int fillY = y; fillY < y + height; fillY++) {
-      for (int fillX = x; fillX < x + width; fillX++) {
-        drawPixelDither<Color::LightGray>(fillX, fillY);
+  } else if (color == Color::LightGray || color == Color::DarkGray) {
+    const int x0 = std::max(x, 0);
+    const int y0 = std::max(y, 0);
+    const int x1 = std::min(x + width, getScreenWidth());
+    const int y1 = std::min(y + height, getScreenHeight());
+    if (x0 >= x1 || y0 >= y1) return;
+    if (color == Color::LightGray) {
+      for (int fillY = y0; fillY < y1; fillY++) {
+        for (int fillX = x0; fillX < x1; fillX++) {
+          drawPixelDither<Color::LightGray>(fillX, fillY);
+        }
       }
-    }
-  } else if (color == Color::DarkGray) {
-    for (int fillY = y; fillY < y + height; fillY++) {
-      for (int fillX = x; fillX < x + width; fillX++) {
-        drawPixelDither<Color::DarkGray>(fillX, fillY);
+    } else {
+      for (int fillY = y0; fillY < y1; fillY++) {
+        for (int fillX = x0; fillX < x1; fillX++) {
+          drawPixelDither<Color::DarkGray>(fillX, fillY);
+        }
       }
     }
   }
@@ -679,6 +725,67 @@ void GfxRenderer::drawIcon(const uint8_t bitmap[], const int x, const int y, con
   display.drawImageTransparent(bitmap, y, getScreenWidth() - width - x, height, width);
 }
 
+void GfxRenderer::drawIconInverted(const uint8_t bitmap[], const int x, const int y, const int width,
+                                   const int height) const {
+  // Portrait-mode coordinate transform (x↔y swap), matching drawIcon.
+  // OR with ~srcByte sets framebuffer bits to 1 (white) wherever the icon
+  // bitmap is 0 (black) — produces a white icon on a black background.
+  const int physX = y;
+  const int physY = getScreenWidth() - width - x;
+  const int imgW = height;  // dimensions swapped by portrait transform
+  const int imgH = width;
+  const int srcStride = (imgW + 7) / 8;  // round up so non-byte-aligned widths copy fully
+
+  // Trivial off-screen rejection.
+  if (physX + imgW <= 0 || physX >= HalDisplay::DISPLAY_WIDTH) return;
+  if (physY + imgH <= 0 || physY >= HalDisplay::DISPLAY_HEIGHT) return;
+
+  // Floor-divide so a negative physX produces the correct (negative) base byte;
+  // C++ integer division truncates toward zero, which would round up for negatives.
+  const int baseByte = (physX >= 0) ? (physX >> 3) : -(((-physX) + 7) >> 3);
+  const int bitShift = ((physX % 8) + 8) % 8;  // 0..7
+
+  // Strip spurious low bits in the trailing source byte when imgW is not a
+  // multiple of 8 — without this, ~bitmap would set them to 1 and bleed extra
+  // white pixels past the icon's right edge.
+  const int trail = srcStride * 8 - imgW;
+  const uint8_t trailMask = static_cast<uint8_t>(0xFF << trail);
+  const int lastCol = srcStride - 1;
+
+  for (int row = 0; row < imgH; ++row) {
+    const int destY = physY + row;
+    if (destY < 0 || destY >= HalDisplay::DISPLAY_HEIGHT) continue;
+    const int rowBase = destY * HalDisplay::DISPLAY_WIDTH_BYTES;
+    const int srcOffset = row * srcStride;
+
+    if (bitShift == 0) {
+      for (int col = 0; col < srcStride; ++col) {
+        const int dst = baseByte + col;
+        if (dst < 0) continue;
+        if (dst >= HalDisplay::DISPLAY_WIDTH_BYTES) break;
+        uint8_t inv = ~bitmap[srcOffset + col];
+        if (col == lastCol && trail > 0) inv &= trailMask;
+        frameBuffer[rowBase + dst] |= inv;
+      }
+    } else {
+      const int rsh = bitShift;
+      const int lsh = 8 - bitShift;
+      for (int col = 0; col < srcStride; ++col) {
+        uint8_t inv = ~bitmap[srcOffset + col];
+        if (col == lastCol && trail > 0) inv &= trailMask;
+        const int dstHi = baseByte + col;
+        const int dstLo = dstHi + 1;
+        if (dstHi >= 0 && dstHi < HalDisplay::DISPLAY_WIDTH_BYTES) {
+          frameBuffer[rowBase + dstHi] |= static_cast<uint8_t>(inv >> rsh);
+        }
+        if (dstLo >= 0 && dstLo < HalDisplay::DISPLAY_WIDTH_BYTES) {
+          frameBuffer[rowBase + dstLo] |= static_cast<uint8_t>(inv << lsh);
+        }
+      }
+    }
+  }
+}
+
 void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, const int maxWidth, const int maxHeight,
                              const float cropX, const float cropY) const {
   if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
@@ -720,15 +827,11 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
   // Calculate output row size (2 bits per pixel, packed into bytes)
   // IMPORTANT: Use int, not uint8_t, to avoid overflow for images > 1020 pixels wide
   const int outputRowSize = (bitmap.getWidth() + 3) / 4;
-  auto* outputRow = static_cast<uint8_t*>(malloc(outputRowSize));
-  auto* rowBytes = static_cast<uint8_t*>(malloc(bitmap.getRowBytes()));
-
-  if (!outputRow || !rowBytes) {
-    LOG_ERR("GFX", "!! Failed to allocate BMP row buffers");
-    free(outputRow);
-    free(rowBytes);
+  if (!ensureBitmapScratchBuffers(outputRowSize, bitmap.getRowBytes())) {
     return;
   }
+  auto* outputRow = bitmapScratchOutputRow_;
+  auto* rowBytes = bitmapScratchRowBytes_;
 
   for (int bmpY = 0; bmpY < (bitmap.getHeight() - cropPixY); bmpY++) {
     // The BMP's (0, 0) is the bottom-left corner (if the height is positive, top-left if negative).
@@ -744,8 +847,6 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
 
     if (bitmap.readNextRow(outputRow, rowBytes) != BmpReaderError::Ok) {
       LOG_ERR("GFX", "Failed to read row %d from bitmap", bmpY);
-      free(outputRow);
-      free(rowBytes);
       return;
     }
 
@@ -782,9 +883,6 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
       }
     }
   }
-
-  free(outputRow);
-  free(rowBytes);
 }
 
 void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y, const int maxWidth,
@@ -802,22 +900,16 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
 
   // For 1-bit BMP, output is still 2-bit packed (for consistency with readNextRow)
   const int outputRowSize = (bitmap.getWidth() + 3) / 4;
-  auto* outputRow = static_cast<uint8_t*>(malloc(outputRowSize));
-  auto* rowBytes = static_cast<uint8_t*>(malloc(bitmap.getRowBytes()));
-
-  if (!outputRow || !rowBytes) {
-    LOG_ERR("GFX", "!! Failed to allocate 1-bit BMP row buffers");
-    free(outputRow);
-    free(rowBytes);
+  if (!ensureBitmapScratchBuffers(outputRowSize, bitmap.getRowBytes())) {
     return;
   }
+  auto* outputRow = bitmapScratchOutputRow_;
+  auto* rowBytes = bitmapScratchRowBytes_;
 
   for (int bmpY = 0; bmpY < bitmap.getHeight(); bmpY++) {
     // Read rows sequentially using readNextRow
     if (bitmap.readNextRow(outputRow, rowBytes) != BmpReaderError::Ok) {
       LOG_ERR("GFX", "Failed to read row %d from 1-bit bitmap", bmpY);
-      free(outputRow);
-      free(rowBytes);
       return;
     }
 
@@ -851,9 +943,58 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
       // White pixels (val == 3) are not drawn (leave background)
     }
   }
+}
 
-  free(outputRow);
-  free(rowBytes);
+void GfxRenderer::drawPerspectiveBitmap(const Bitmap& bitmap, const int x, const int y, const int w, const int hL,
+                                        const int hR) const {
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
+  if (w <= 0 || hL <= 0 || hR <= 0) return;
+
+  const int srcW = bitmap.getWidth();
+  const int srcH = bitmap.getHeight();
+  if (srcW <= 0 || srcH <= 0) return;
+
+  const int hMax = std::max(hL, hR);
+  const int screenW = getScreenWidth();
+  const int screenH = getScreenHeight();
+  const bool topDown = bitmap.isTopDown();
+
+  const int outputRowSize = (srcW + 3) / 4;
+  if (!ensureBitmapScratchBuffers(outputRowSize, bitmap.getRowBytes())) {
+    return;
+  }
+  auto* outputRow = bitmapScratchOutputRow_;
+  auto* rowBytes = bitmapScratchRowBytes_;
+
+  for (int srcY = 0; srcY < srcH; srcY++) {
+    if (bitmap.readNextRow(outputRow, rowBytes) != BmpReaderError::Ok) {
+      LOG_ERR("GFX", "Failed to read row %d from bitmap (perspective)", srcY);
+      return;
+    }
+    const int srcRowIndex = topDown ? srcY : (srcH - 1 - srcY);
+
+    for (int dx = 0; dx < w; dx++) {
+      const int colH = (w == 1) ? hL : (hL + (hR - hL) * dx / (w - 1));
+      if (colH <= 0) continue;
+      const int colTop = (hMax - colH) / 2;
+      const int dy = (srcRowIndex * colH) / srcH;
+      const int screenX = x + dx;
+      const int screenY = y + colTop + dy;
+      if (screenX < 0 || screenX >= screenW) continue;
+      if (screenY < 0 || screenY >= screenH) continue;
+
+      const int srcX = (dx * srcW) / w;
+      const uint8_t val = (outputRow[srcX / 4] >> (6 - ((srcX * 2) % 8))) & 0x3;
+
+      if (renderMode == BW && val < 3) {
+        drawPixel(screenX, screenY);
+      } else if (renderMode == GRAYSCALE_MSB && (val == 1 || val == 2)) {
+        drawPixel(screenX, screenY, false);
+      } else if (renderMode == GRAYSCALE_LSB && val == 1) {
+        drawPixel(screenX, screenY, false);
+      }
+    }
+  }
 }
 
 void GfxRenderer::fillPolygon(const int* xPoints, const int* yPoints, int numPoints, bool state) const {

@@ -7,6 +7,9 @@
 namespace {
 
 constexpr uint16_t MAX_PAGE_ELEMENTS = 1024;
+constexpr uint8_t MAX_TABLE_ROWS_PER_FRAGMENT = 64;
+constexpr uint8_t MAX_TABLE_CELLS_PER_ROW = 8;
+constexpr uint8_t MAX_TABLE_LINES_PER_CELL = 64;
 
 template <typename Predicate>
 void renderFilteredPageElements(const std::vector<std::shared_ptr<PageElement>>& elements, GfxRenderer& renderer,

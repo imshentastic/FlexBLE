@@ -1,9 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
 
 ### Added
 - Add real EPUB `<hr>` rendering so horizontal rules now display as visible separators instead of being ignored
+- Add Lyra Carousel theme
 
 ## [v1.2.9.1] - 2026-05-03
 
