@@ -3,8 +3,6 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
-#include <cassert>
-
 class HalSpiBus {
  public:
   class Lock {
@@ -13,6 +11,9 @@ class HalSpiBus {
     ~Lock();
     Lock(const Lock&) = delete;
     Lock& operator=(const Lock&) = delete;
+
+   private:
+    bool acquired = false;
   };
 
   static HalSpiBus& getInstance();
