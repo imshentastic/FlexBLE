@@ -25,22 +25,51 @@ int moveHorizontalInGrid(const int currentIndex, const int totalItems, const boo
                    : ButtonNavigator::previousIndex(currentIndex, totalItems);
 }
 
-int moveVerticalInGrid(const int currentIndex, const int totalItems, const int columns, const bool moveDown) {
+int moveVerticalInGrid(const int currentIndex, const int totalItems, const int columns, const int itemsPerPage,
+                       const bool moveDown) {
   if (totalItems <= 0 || columns <= 0) return 0;
 
-  const int totalRows = (totalItems + columns - 1) / columns;
-  const int currentRow = currentIndex / columns;
-  const int column = currentIndex % columns;
+  const int safeItemsPerPage = std::max(columns, itemsPerPage);
+  const int totalPages = (totalItems + safeItemsPerPage - 1) / safeItemsPerPage;
+  const int currentPage = currentIndex / safeItemsPerPage;
+  const int indexInPage = currentIndex % safeItemsPerPage;
+  const int currentRow = indexInPage / columns;
+  const int currentColumn = indexInPage % columns;
+  const int rowsPerPage = safeItemsPerPage / columns;
 
-  for (int step = 1; step <= totalRows; ++step) {
-    const int targetRow = moveDown ? (currentRow + step) % totalRows : (currentRow - step + totalRows) % totalRows;
-    const int candidate = targetRow * columns + column;
-    if (candidate < totalItems) {
-      return candidate;
+  if (moveDown) {
+    if (currentRow < rowsPerPage - 1) {
+      const int nextRowCandidate = currentIndex + columns;
+      if (nextRowCandidate < totalItems && (nextRowCandidate / safeItemsPerPage) == currentPage) {
+        return nextRowCandidate;
+      }
     }
+
+    const int nextPage = (currentPage + 1) % totalPages;
+    const int nextPageStart = nextPage * safeItemsPerPage;
+    const int nextPageCount = std::min(safeItemsPerPage, totalItems - nextPageStart);
+    if (nextPageCount <= 0) return currentIndex;
+
+    if (currentColumn < nextPageCount) {
+      return nextPageStart + currentColumn;
+    }
+    return nextPageStart + nextPageCount - 1;
   }
 
-  return currentIndex;
+  if (currentRow > 0) {
+    return currentIndex - columns;
+  }
+
+  const int previousPage = (currentPage - 1 + totalPages) % totalPages;
+  const int previousPageStart = previousPage * safeItemsPerPage;
+  const int previousPageCount = std::min(safeItemsPerPage, totalItems - previousPageStart);
+  if (previousPageCount <= 0) return currentIndex;
+
+  int previousPageCandidate = previousPageStart + ((previousPageCount - 1) / columns) * columns + currentColumn;
+  while (previousPageCandidate >= previousPageStart + previousPageCount) {
+    previousPageCandidate -= columns;
+  }
+  return std::max(previousPageStart, previousPageCandidate);
 }
 }  // namespace
 
@@ -149,6 +178,7 @@ void RecentBooksGridActivity::loop() {
 
   const int listSize = static_cast<int>(recentBooks.size());
   constexpr int columns = 3;
+  constexpr int itemsPerPage = 9;
 
   buttonNavigator.onRelease({MappedInputManager::Button::Right}, [this, listSize] {
     selectorIndex = moveHorizontalInGrid(static_cast<int>(selectorIndex), listSize, true);
@@ -159,11 +189,11 @@ void RecentBooksGridActivity::loop() {
     requestUpdate();
   });
   buttonNavigator.onRelease({MappedInputManager::Button::Down}, [this, listSize] {
-    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, true);
+    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, itemsPerPage, true);
     requestUpdate();
   });
   buttonNavigator.onRelease({MappedInputManager::Button::Up}, [this, listSize] {
-    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, false);
+    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, itemsPerPage, false);
     requestUpdate();
   });
 
@@ -176,11 +206,11 @@ void RecentBooksGridActivity::loop() {
     requestUpdate();
   });
   buttonNavigator.onContinuous({MappedInputManager::Button::Down}, [this, listSize] {
-    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, true);
+    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, itemsPerPage, true);
     requestUpdate();
   });
   buttonNavigator.onContinuous({MappedInputManager::Button::Up}, [this, listSize] {
-    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, false);
+    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, itemsPerPage, false);
     requestUpdate();
   });
 }
