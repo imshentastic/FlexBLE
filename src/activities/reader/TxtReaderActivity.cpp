@@ -100,7 +100,7 @@ void TxtReaderActivity::onEnter() {
   auto fileName = filePath.substr(filePath.rfind('/') + 1);
   APP_STATE.openEpubPath = filePath;
   APP_STATE.saveToFile();
-  RECENT_BOOKS.addOrUpdateBook(filePath, fileName, "", "");
+  RECENT_BOOKS.addBook(filePath, fileName, "", "");
 
   // Trigger first update
   requestUpdate();
