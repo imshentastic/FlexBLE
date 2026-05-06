@@ -11,6 +11,7 @@
 class RecentBooksGridActivity final : public Activity {
  public:
   static constexpr int BOOKS_PER_PAGE = 9;  // 3 cols x 3 rows
+  static constexpr int MAX_GRID_BOOKS = BOOKS_PER_PAGE * 2;
   static constexpr int COVER_HEIGHT = 180;
   static constexpr int COVER_WIDTH = 123;
 

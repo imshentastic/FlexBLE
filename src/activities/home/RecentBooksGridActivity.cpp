@@ -16,12 +16,41 @@
 #include "components/icons/book.h"
 #include "fontIds.h"
 
+namespace {
+constexpr int kCoverCornerRadius = 2;
+
+int moveHorizontalInGrid(const int currentIndex, const int totalItems, const bool moveRight) {
+  if (totalItems <= 0) return 0;
+  return moveRight ? ButtonNavigator::nextIndex(currentIndex, totalItems)
+                   : ButtonNavigator::previousIndex(currentIndex, totalItems);
+}
+
+int moveVerticalInGrid(const int currentIndex, const int totalItems, const int columns, const bool moveDown) {
+  if (totalItems <= 0 || columns <= 0) return 0;
+
+  const int totalRows = (totalItems + columns - 1) / columns;
+  const int currentRow = currentIndex / columns;
+  const int column = currentIndex % columns;
+
+  for (int step = 1; step <= totalRows; ++step) {
+    const int targetRow = moveDown ? (currentRow + step) % totalRows : (currentRow - step + totalRows) % totalRows;
+    const int candidate = targetRow * columns + column;
+    if (candidate < totalItems) {
+      return candidate;
+    }
+  }
+
+  return currentIndex;
+}
+}  // namespace
+
 void RecentBooksGridActivity::loadRecentBooks() {
   recentBooks.clear();
   const auto& books = RECENT_BOOKS.getBooks();
-  recentBooks.reserve(books.size());
+  recentBooks.reserve(std::min(books.size(), static_cast<size_t>(MAX_GRID_BOOKS)));
 
   for (const auto& book : books) {
+    if (recentBooks.size() >= MAX_GRID_BOOKS) break;
     if (!Storage.exists(book.path.c_str())) continue;
     recentBooks.push_back(book);
   }
@@ -119,23 +148,39 @@ void RecentBooksGridActivity::loop() {
   }
 
   const int listSize = static_cast<int>(recentBooks.size());
+  constexpr int columns = 3;
 
-  buttonNavigator.onNextRelease([this, listSize] {
-    selectorIndex = ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize);
+  buttonNavigator.onRelease({MappedInputManager::Button::Right}, [this, listSize] {
+    selectorIndex = moveHorizontalInGrid(static_cast<int>(selectorIndex), listSize, true);
     requestUpdate();
   });
-  buttonNavigator.onPreviousRelease([this, listSize] {
-    selectorIndex = ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize);
+  buttonNavigator.onRelease({MappedInputManager::Button::Left}, [this, listSize] {
+    selectorIndex = moveHorizontalInGrid(static_cast<int>(selectorIndex), listSize, false);
+    requestUpdate();
+  });
+  buttonNavigator.onRelease({MappedInputManager::Button::Down}, [this, listSize] {
+    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, true);
+    requestUpdate();
+  });
+  buttonNavigator.onRelease({MappedInputManager::Button::Up}, [this, listSize] {
+    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, false);
     requestUpdate();
   });
 
-  constexpr int ROW_STEP = 3;
-  buttonNavigator.onNextContinuous([this, listSize] {
-    selectorIndex = ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, ROW_STEP);
+  buttonNavigator.onContinuous({MappedInputManager::Button::Right}, [this, listSize] {
+    selectorIndex = moveHorizontalInGrid(static_cast<int>(selectorIndex), listSize, true);
     requestUpdate();
   });
-  buttonNavigator.onPreviousContinuous([this, listSize] {
-    selectorIndex = ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, ROW_STEP);
+  buttonNavigator.onContinuous({MappedInputManager::Button::Left}, [this, listSize] {
+    selectorIndex = moveHorizontalInGrid(static_cast<int>(selectorIndex), listSize, false);
+    requestUpdate();
+  });
+  buttonNavigator.onContinuous({MappedInputManager::Button::Down}, [this, listSize] {
+    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, true);
+    requestUpdate();
+  });
+  buttonNavigator.onContinuous({MappedInputManager::Button::Up}, [this, listSize] {
+    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, false);
     requestUpdate();
   });
 }
@@ -153,6 +198,9 @@ void RecentBooksGridActivity::render(RenderLock&&) {
   constexpr int titleStripHeight = 32;
   constexpr int titleGridGap = 16;
   constexpr int columns = 3;
+  constexpr int selectionPadding = 4;
+  constexpr int selectionOutlineGap = 2;
+  constexpr int selectionOuterInset = selectionPadding + selectionOutlineGap;
   const int rowSpacing = metrics.verticalSpacing + 4;
   const int totalGridWidth = columns * COVER_WIDTH + (columns - 1) * metrics.verticalSpacing;
   const int startXOffset = (pageWidth - totalGridWidth) / 2;
@@ -173,10 +221,6 @@ void RecentBooksGridActivity::render(RenderLock&&) {
                                                             totalGridWidth, EpdFontFamily::BOLD);
       renderer.drawText(UI_12_FONT_ID, startXOffset, titleY, truncTitle.c_str(), true, EpdFontFamily::BOLD);
     }
-
-    int sampleBw = COVER_WIDTH;
-    int sampleBh = COVER_HEIGHT;
-    bool haveSample = false;
 
     for (int i = 0; i < pageCount; ++i) {
       const int bookIdx = pageStart + i;
@@ -203,58 +247,44 @@ void RecentBooksGridActivity::render(RenderLock&&) {
             bx = x + (COVER_WIDTH - bw) / 2;
             by = y + (COVER_HEIGHT - bh) / 2;
             renderer.drawBitmap(bmp, bx, by, bw, bh);
-            renderer.drawRect(bx, by, bw, bh, 2, true);
+            renderer.maskRoundedRectOutsideCorners(bx, by, bw, bh, kCoverCornerRadius, Color::White);
+            renderer.drawRoundedRect(bx, by, bw, bh, 2, kCoverCornerRadius, true);
             drawn = true;
-            sampleBw = bw;
-            sampleBh = bh;
-            haveSample = true;
           }
           file.close();
         }
       }
       if (!drawn) {
-        renderer.drawRect(bx, by, bw, bh, 2, true);
-        renderer.fillRect(bx + 2, by + 2, bw - 4, bh - 4, false);
+        renderer.fillRoundedRect(bx, by, bw, bh, kCoverCornerRadius, Color::White);
+        renderer.drawRoundedRect(bx, by, bw, bh, 2, kCoverCornerRadius, true);
         renderer.drawIcon(BookIcon, bx + (bw - 32) / 2, by + (bh - 32) / 2, 32, 32);
       }
       if (bookIdx == static_cast<int>(selectorIndex)) {
-        renderer.drawRect(bx - 2, by - 2, bw + 4, bh + 4, 3, true);
+        renderer.drawRoundedRect(bx - selectionPadding, by - selectionPadding, bw + selectionPadding * 2,
+                                 bh + selectionPadding * 2, 3, kCoverCornerRadius + selectionPadding, true);
+        renderer.drawRoundedRect(bx - selectionOuterInset, by - selectionOuterInset, bw + selectionOuterInset * 2,
+                                 bh + selectionOuterInset * 2, 1, kCoverCornerRadius + selectionOuterInset, true);
       }
     }
 
-    if (!haveSample) {
-      sampleBh = COVER_HEIGHT;
-      sampleBw = (COVER_HEIGHT * 66) / 100;
-    }
-    const int sampleXInset = (COVER_WIDTH - sampleBw) / 2;
-    const int sampleYInset = (COVER_HEIGHT - sampleBh) / 2;
-    for (int i = pageCount; i < BOOKS_PER_PAGE; ++i) {
-      const int col = i % columns;
-      const int row = i / columns;
-      const int px = startXOffset + col * (COVER_WIDTH + metrics.verticalSpacing) + sampleXInset;
-      const int py = contentTop + titleStripHeight + titleGridGap + row * (COVER_HEIGHT + rowSpacing) + sampleYInset;
-      renderer.drawRect(px, py, sampleBw, sampleBh, 1, true);
-    }
-
     if (totalPages > 1) {
-      constexpr int dotSize = 10;
-      constexpr int dotSpacing = 8;
+      constexpr int dotSize = 8;
+      constexpr int dotSpacing = 6;
       const int totalDotWidth = totalPages * dotSize + (totalPages - 1) * dotSpacing;
       const int dotsStartX = (pageWidth - totalDotWidth) / 2;
       const int dotY = pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing - 4;
-      constexpr int dotRadius = dotSize / 2;
       for (int p = 0; p < totalPages; p++) {
         const int dx = dotsStartX + p * (dotSize + dotSpacing);
         if (p == currentPage) {
-          renderer.fillRoundedRect(dx, dotY, dotSize, dotSize, dotRadius, Color::Black);
+          renderer.fillRect(dx, dotY, dotSize, dotSize, true);
         } else {
-          renderer.drawRoundedRect(dx, dotY, dotSize, dotSize, 1, dotRadius, true);
+          renderer.drawRect(dx, dotY, dotSize, dotSize, true);
         }
       }
     }
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_OPEN), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();
