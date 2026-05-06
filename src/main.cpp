@@ -2,6 +2,7 @@
 #include <Epub.h>
 #include <FontCacheManager.h>
 #include <FontDecompressor.h>
+#include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
 #include <HalGPIO.h>
@@ -14,6 +15,7 @@
 #include <SPI.h>
 #include <builtinFonts/all.h>
 
+#include <algorithm>
 #include <cstring>
 
 #include "AppVersion.h"
@@ -26,6 +28,8 @@
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/reader/KOReaderSyncActivity.h"
+#include "activities/settings/KOReaderSettingsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/ButtonNavigator.h"
@@ -260,7 +264,58 @@ void waitForPowerRelease() {
 }
 
 bool isGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action) {
-  return action == CrossPointSettings::SHORT_PWRBTN::SLEEP || action == CrossPointSettings::SHORT_PWRBTN::FORCE_REFRESH;
+  return isPowerButtonActionAvailableOutsideReader(action);
+}
+
+bool startGlobalSyncProgress() {
+  if (!KOREADER_STORE.hasCredentials()) {
+    activityManager.pushActivity(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInputManager));
+    return true;
+  }
+
+  const std::string epubPath = APP_STATE.openEpubPath;
+  if (epubPath.empty() || !FsHelpers::hasEpubExtension(epubPath) || !Storage.exists(epubPath.c_str())) {
+    LOG_DBG("MAIN", "No syncable EPUB open, opening KOReader settings instead");
+    activityManager.pushActivity(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInputManager));
+    return true;
+  }
+
+  auto epub = std::make_shared<Epub>(epubPath, "/.crosspoint");
+  if (!epub->load(true, SETTINGS.embeddedStyle == 0)) {
+    LOG_ERR("MAIN", "Failed to load EPUB for global sync: %s", epubPath.c_str());
+    activityManager.pushActivity(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInputManager));
+    return true;
+  }
+
+  epub->setupCacheDir();
+
+  int spineIndex = 0;
+  int pageNumber = 0;
+  int totalPagesInSpine = 1;
+  FsFile progressFile;
+  if (Storage.openFileForRead("MAIN", epub->getCachePath() + "/progress.bin", progressFile)) {
+    uint8_t data[6];
+    const int dataSize = progressFile.read(data, sizeof(data));
+    if (dataSize >= 4) {
+      spineIndex = data[0] | (data[1] << 8);
+      pageNumber = data[2] | (data[3] << 8);
+      if (pageNumber == UINT16_MAX) {
+        pageNumber = 0;
+      }
+    }
+    if (dataSize >= 6) {
+      totalPagesInSpine = std::max(1, static_cast<int>(data[4] | (data[5] << 8)));
+    }
+    progressFile.close();
+  }
+
+  if (spineIndex < 0 || spineIndex >= epub->getSpineItemsCount()) {
+    spineIndex = 0;
+  }
+
+  activityManager.pushActivity(std::make_unique<KOReaderSyncActivity>(renderer, mappedInputManager, epub, epubPath,
+                                                                      spineIndex, pageNumber, totalPagesInSpine));
+  return true;
 }
 
 CrossPointSettings::SHORT_PWRBTN getPowerButtonAction() {
@@ -308,6 +363,25 @@ bool handleGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
       return true;
     }
+    case CrossPointSettings::SHORT_PWRBTN::SCREENSHOT: {
+      if (activityManager.canSnapshotForSleepOverlay()) {
+        return false;
+      }
+      RenderLock lock;
+      ScreenshotUtil::takeScreenshot(renderer);
+      return true;
+    }
+    case CrossPointSettings::SHORT_PWRBTN::SYNC_PROGRESS:
+      if (activityManager.canSnapshotForSleepOverlay()) {
+        return false;
+      }
+      return startGlobalSyncProgress();
+    case CrossPointSettings::SHORT_PWRBTN::FILE_TRANSFER:
+      if (activityManager.canSnapshotForSleepOverlay()) {
+        return false;
+      }
+      activityManager.goToFileTransfer();
+      return true;
     default:
       return false;
   }
