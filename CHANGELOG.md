@@ -1,40 +1,19 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-
 ## [Unreleased]
 ### Changed
-- Update the Lyra Carousel theme to use Lyra Flow-style cover rendering, move the active book title above the cover, and show per-book reading stats below while keeping the carousel's existing home menu layout
-- Reduce Lyra Carousel from 5 visible recent books to 3 so the on-screen carousel matches its 3-frame RAM cache and navigation stays more responsive
-- Reduce the overall Lyra Carousel front book size by 5 pixels on each side while keeping the surrounding title, dots, and stats anchored in place
-- Nudge the Lyra Carousel cover stack slightly upward and add a bit more spacing between the total-time stat and the progress block
 
 ### Added
-- Prevent a crash when entering sleep with Page Overlay enabled if the cached EPUB page data is invalid
-- Clean up EPUB table rendering by removing synthetic row/cell labels and defaulting table cells to readable left alignment
-- Improve simple EPUB tables by buffering them into multi-column grid fragments instead of rendering each cell as an unrelated paragraph
+- Add real EPUB `<hr>` rendering so horizontal rules now display as visible separators instead of being ignored
+- Add Lyra Carousel theme
+
+## [v1.2.9.1] - 2026-05-03
+
+### Changed
+- Cleaned up EPUB table rendering by removing synthetic row/cell labels and defaulting table cells to readable left alignment
+- Allow simple EPUB tables with full-width note rows so a single `colspan` cell spanning the whole table no longer forces the entire table back to paragraph fallback
 
 ### Fixed
-- Fix Lyra carousel navigation lag by caching per-book stats and progress once on home entry instead of re-reading from SD on every button press
-- Fix Lyra carousel first-navigation hitch by pre-rendering the prev and next frames at startup alongside the current book
-- Reduce Lyra carousel cover-render heap churn by reusing bitmap row scratch buffers instead of allocating them on every draw
-- Fix a simulator/assertion crash when closing the EPUB reader menu by queuing the parent reader repaint after pop-result handling instead of forcing a synchronous redraw while the activity transition is still unwinding
-- Fix Lyra Carousel reusing stale frames after EPUB progress or reading stats changed by including per-book progress/stats files and global reading stats in the snapshot cache key
-- Fix Lyra Carousel returning to the wrong recent book after exiting a reader session by centering the still-open book on Home entry instead of always resetting to the first carousel slot
-- Fix Lyra Carousel reusing stale SD snapshot frames after front-book layout changes so the updated center-book sizing actually appears instead of only the inset highlight border
-- Fix Home cover thumbnail generation failing for EPUBs with missing metadata cache by allowing the Home loading path to rebuild the EPUB cache before generating missing thumbs
-- Fix Lyra Carousel returning from the reader feeling frozen by showing Home before rebuilding the carousel snapshot cache, reusing the last valid SD snapshot when it still matches the current recent-books list, and showing a progress popup only when a full snapshot rebuild is actually needed
-- Fix Lyra Carousel losing its saved SD snapshot fast path after the deferred warmup changes by restoring snapshot reuse on Home entry and rebuilding the snapshot after warmup when the visible carousel set fits in RAM
-- Fix Lyra Carousel still repainting the full bottom menu row on cached-frame navigation by baking the static menu strip into cached frames and only overlaying the active menu selection at render time
-- Fix Lyra Carousel still live-rendering the third book in degraded 2/3 RAM-slot mode by writing the full 3-book SD snapshot even when only part of the carousel fits in RAM
-- Fix reopening an existing book still reshuffling the Home carousel by refreshing recent-book metadata in place instead of moving already-known books to the front
-- Fix Lyra Carousel generic fallback covers by overlaying the book title inside the placeholder cover instead of showing only a blank generic icon
-- Fix a crash when opening EPUB chapters that continue with normal text after a buffered table
-- Fix a crash when using `Go to %` in EPUBs by serializing the jump calculation with other reader cache access
-- Fix OTA update checks after the streaming release parser merge by keeping variant-aware firmware asset matching
-- Fix the Lyra carousel simulator build by syncing its theme override signatures with the shared theme API
-- Fix missing Reading Stats and Bookmarks icons in the Lyra carousel home menu
-- Fix Lyra carousel home navigation so dynamically-added menu items stay reachable and trigger the correct action
-- Fix Lyra carousel settings lists so section headers render correctly instead of being treated like normal selectable rows
+- Fix power-button shortcut conflicts outside the reader so reader-only actions fall back to `Confirm` while Sleep, Refresh, Screenshot, Sync Progress, and File Transfer remain real power actions. Those that had short-press power button to act as sleep saw unstable behavior previously. This should be fixed now
+- Fix a potential crash when using `Go to %` in EPUBs
+- Fix a potential crash when entering sleep with Page Overlay enabled if the cached EPUB page data is invalid

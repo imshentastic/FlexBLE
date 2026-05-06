@@ -182,7 +182,8 @@ fn format_word_string(WordString s) {
 enum PageElementTag : u8 {
     PageLine = 1,
     PageImage = 2,
-    PageTableFragment = 3
+    PageTableFragment = 3,
+    PageHorizontalRule = 4
 };
 
 enum WordStyle : u8 {
@@ -227,6 +228,13 @@ struct PageLine {
     s16 xPos;
     s16 yPos;
     TextBlock textBlock [[inline]];
+};
+
+struct PageHorizontalRule {
+    s16 xPos;
+    s16 yPos;
+    u16 width;
+    u8 thickness;
 };
 
 struct ImageBlock {

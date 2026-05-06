@@ -24,6 +24,7 @@ My goal with this fork was to maintain the core Crosspoint firmware while integr
 - Adjusted font sizes: Teensy (8pt), Tiny (10pt), Small (12pt), Medium (14pt), Large (16pt), Extra Large (18pt), Huge (20pt). See [Font Sizes](#font-sizes) for more details.
 - Added ~~strikethrough~~ support
 - Made <u>underlines</u> thicker for better visibility
+- Added improved support for tables with simple markup
 - Added ability to add bookmarks
 - Added ability to remap front buttons that only applies in the reader
 - Added Bionic Reading and Guide Dots as optional reader modes

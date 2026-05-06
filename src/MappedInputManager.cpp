@@ -1,6 +1,7 @@
 #include "MappedInputManager.h"
 
 #include "CrossPointSettings.h"
+#include "GlobalActions.h"
 
 namespace {
 using ButtonIndex = uint8_t;
@@ -16,9 +17,6 @@ constexpr SideLayoutMap kSideLayouts[] = {
     {HalGPIO::BTN_DOWN, HalGPIO::BTN_UP},
 };
 
-bool isGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action) {
-  return action == CrossPointSettings::SHORT_PWRBTN::SLEEP || action == CrossPointSettings::SHORT_PWRBTN::FORCE_REFRESH;
-}
 }  // namespace
 
 bool MappedInputManager::mapButton(const Button button, bool (HalGPIO::*fn)(uint8_t) const) const {
@@ -60,7 +58,7 @@ bool MappedInputManager::shouldUsePowerAsConfirmFallback() const { return !reade
 
 bool MappedInputManager::shouldMirrorPowerAsConfirmHold() const {
   return shouldUsePowerAsConfirmFallback() &&
-         !isGlobalPowerButtonAction(static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.longPwrBtn));
+         !isPowerButtonActionAvailableOutsideReader(static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.longPwrBtn));
 }
 
 bool MappedInputManager::wasPressed(const Button button) const {
@@ -68,7 +66,11 @@ bool MappedInputManager::wasPressed(const Button button) const {
     if (mapButton(button, &HalGPIO::wasPressed)) {
       return true;
     }
-    return shouldMirrorPowerAsConfirmHold() && gpio.wasPressed(HalGPIO::BTN_POWER);
+
+    return shouldUsePowerAsConfirmFallback() &&
+           !isPowerButtonActionAvailableOutsideReader(
+               static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.shortPwrBtn)) &&
+           gpio.wasPressed(HalGPIO::BTN_POWER);
   }
 
   return mapButton(button, &HalGPIO::wasPressed);
@@ -102,7 +104,10 @@ bool MappedInputManager::wasReleased(const Button button) const {
       return false;
     }
 
-    return shouldMirrorPowerAsConfirmHold() || gpio.getHeldTime() < SETTINGS.getPowerButtonLongPressDuration();
+    const bool longPress = gpio.getHeldTime() >= SETTINGS.getPowerButtonLongPressDuration();
+    const auto action = longPress ? static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.longPwrBtn)
+                                  : static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.shortPwrBtn);
+    return !isPowerButtonActionAvailableOutsideReader(action);
   }
 
   return mapButton(button, &HalGPIO::wasReleased);
@@ -110,8 +115,17 @@ bool MappedInputManager::wasReleased(const Button button) const {
 
 bool MappedInputManager::isPressed(const Button button) const {
   if (button == Button::Confirm) {
-    return mapButton(button, &HalGPIO::isPressed) ||
-           (shouldMirrorPowerAsConfirmHold() && gpio.isPressed(HalGPIO::BTN_POWER));
+    if (mapButton(button, &HalGPIO::isPressed)) {
+      return true;
+    }
+
+    if (!shouldMirrorPowerAsConfirmHold() || !gpio.isPressed(HalGPIO::BTN_POWER)) {
+      return false;
+    }
+
+    return !isPowerButtonActionAvailableOutsideReader(
+               static_cast<CrossPointSettings::SHORT_PWRBTN>(SETTINGS.shortPwrBtn)) ||
+           gpio.getHeldTime() >= SETTINGS.getPowerButtonLongPressDuration();
   }
 
   return mapButton(button, &HalGPIO::isPressed);
