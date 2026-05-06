@@ -2,6 +2,7 @@
 #include <HalStorage.h>
 
 #include <iostream>
+#include <limits>
 
 namespace serialization {
 template <typename T>
@@ -70,7 +71,11 @@ static bool tryReadString(FsFile& file, std::string& s) {
   if (!tryReadPod(file, len)) {
     return false;
   }
+  if (static_cast<size_t>(len) > s.max_size() || len > static_cast<uint32_t>(std::numeric_limits<int>::max())) {
+    return false;
+  }
   s.resize(len);
-  return len == 0 || file.read(&s[0], len) == static_cast<int>(len);
+  const int readLen = static_cast<int>(len);
+  return len == 0 || file.read(&s[0], readLen) == readLen;
 }
 }  // namespace serialization
