@@ -5,6 +5,9 @@
 ### Added
 - Add real EPUB `<hr>` rendering so horizontal rules now display as visible separators instead of being ignored
 
+### Fixed
+- Serialize SD-card and display access on the shared SPI bus to prevent task-ownership crashes during state saves, sleep transitions, and other concurrent render/storage activity
+
 ## [v1.2.9.1] - 2026-05-03
 
 ### Changed
