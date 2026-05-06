@@ -18,7 +18,10 @@ constexpr uint32_t SERIALIZED_WORD_METADATA_BYTES = sizeof(uint32_t) + sizeof(in
 
 bool readBoundedString(FsFile& file, std::string& s) {
   uint32_t len = 0;
-  serialization::readPod(file, len);
+  if (!serialization::tryReadPod(file, len)) {
+    LOG_ERR("TXB", "Deserialization failed: could not read word length");
+    return false;
+  }
   if (len > MAX_SERIALIZED_WORD_BYTES) {
     LOG_ERR("TXB", "Deserialization failed: word length %lu exceeds maximum", static_cast<unsigned long>(len));
     return false;
@@ -144,29 +147,45 @@ bool TextBlock::serialize(FsFile& file) const {
   }
 
   // Word data
-  serialization::writePod(file, static_cast<uint16_t>(words.size()));
-  for (const auto& w : words) serialization::writeString(file, w);
-  for (auto x : wordXpos) serialization::writePod(file, x);
-  for (auto s : wordStyles) serialization::writePod(file, s);
-  for (auto b : wordBionicBoundary) serialization::writePod(file, b);
-  for (auto sx : wordBionicSuffixX) serialization::writePod(file, sx);
-  for (auto dx : wordGuideDotXOffset) serialization::writePod(file, dx);
+  if (!serialization::tryWritePod(file, static_cast<uint16_t>(words.size()))) {
+    LOG_ERR("TXB", "Serialization failed: could not write word count");
+    return false;
+  }
+  for (const auto& w : words) {
+    if (!serialization::tryWriteString(file, w)) {
+      LOG_ERR("TXB", "Serialization failed: could not write word payload");
+      return false;
+    }
+  }
+  for (auto x : wordXpos) {
+    if (!serialization::tryWritePod(file, x)) return false;
+  }
+  for (auto s : wordStyles) {
+    if (!serialization::tryWritePod(file, s)) return false;
+  }
+  for (auto b : wordBionicBoundary) {
+    if (!serialization::tryWritePod(file, b)) return false;
+  }
+  for (auto sx : wordBionicSuffixX) {
+    if (!serialization::tryWritePod(file, sx)) return false;
+  }
+  for (auto dx : wordGuideDotXOffset) {
+    if (!serialization::tryWritePod(file, dx)) return false;
+  }
 
   // Style (alignment + margins/padding/indent)
-  serialization::writePod(file, blockStyle.alignment);
-  serialization::writePod(file, blockStyle.textAlignDefined);
-  serialization::writePod(file, blockStyle.marginTop);
-  serialization::writePod(file, blockStyle.marginBottom);
-  serialization::writePod(file, blockStyle.marginLeft);
-  serialization::writePod(file, blockStyle.marginRight);
-  serialization::writePod(file, blockStyle.paddingTop);
-  serialization::writePod(file, blockStyle.paddingBottom);
-  serialization::writePod(file, blockStyle.paddingLeft);
-  serialization::writePod(file, blockStyle.paddingRight);
-  serialization::writePod(file, blockStyle.textIndent);
-  serialization::writePod(file, blockStyle.textIndentDefined);
-
-  return true;
+  return serialization::tryWritePod(file, blockStyle.alignment) &&
+         serialization::tryWritePod(file, blockStyle.textAlignDefined) &&
+         serialization::tryWritePod(file, blockStyle.marginTop) &&
+         serialization::tryWritePod(file, blockStyle.marginBottom) &&
+         serialization::tryWritePod(file, blockStyle.marginLeft) &&
+         serialization::tryWritePod(file, blockStyle.marginRight) &&
+         serialization::tryWritePod(file, blockStyle.paddingTop) &&
+         serialization::tryWritePod(file, blockStyle.paddingBottom) &&
+         serialization::tryWritePod(file, blockStyle.paddingLeft) &&
+         serialization::tryWritePod(file, blockStyle.paddingRight) &&
+         serialization::tryWritePod(file, blockStyle.textIndent) &&
+         serialization::tryWritePod(file, blockStyle.textIndentDefined);
 }
 
 std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
@@ -180,7 +199,10 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
   BlockStyle blockStyle;
 
   // Word count
-  serialization::readPod(file, wc);
+  if (!serialization::tryReadPod(file, wc)) {
+    LOG_ERR("TXB", "Deserialization failed: could not read word count");
+    return nullptr;
+  }
 
   // A TextBlock is one rendered line of text, so counts far above a few hundred are not legitimate.
   // Clamp aggressively here so corrupted cache data cannot trigger huge STL allocations on the ESP32-C3.
@@ -222,25 +244,38 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
     return nullptr;
   }
 
-  for (auto& x : wordXpos) serialization::readPod(file, x);
-  for (auto& s : wordStyles) serialization::readPod(file, s);
-  for (auto& b : wordBionicBoundary) serialization::readPod(file, b);
-  for (auto& sx : wordBionicSuffixX) serialization::readPod(file, sx);
-  for (auto& dx : wordGuideDotXOffset) serialization::readPod(file, dx);
+  for (auto& x : wordXpos) {
+    if (!serialization::tryReadPod(file, x)) return nullptr;
+  }
+  for (auto& s : wordStyles) {
+    if (!serialization::tryReadPod(file, s)) return nullptr;
+  }
+  for (auto& b : wordBionicBoundary) {
+    if (!serialization::tryReadPod(file, b)) return nullptr;
+  }
+  for (auto& sx : wordBionicSuffixX) {
+    if (!serialization::tryReadPod(file, sx)) return nullptr;
+  }
+  for (auto& dx : wordGuideDotXOffset) {
+    if (!serialization::tryReadPod(file, dx)) return nullptr;
+  }
 
   // Style (alignment + margins/padding/indent)
-  serialization::readPod(file, blockStyle.alignment);
-  serialization::readPod(file, blockStyle.textAlignDefined);
-  serialization::readPod(file, blockStyle.marginTop);
-  serialization::readPod(file, blockStyle.marginBottom);
-  serialization::readPod(file, blockStyle.marginLeft);
-  serialization::readPod(file, blockStyle.marginRight);
-  serialization::readPod(file, blockStyle.paddingTop);
-  serialization::readPod(file, blockStyle.paddingBottom);
-  serialization::readPod(file, blockStyle.paddingLeft);
-  serialization::readPod(file, blockStyle.paddingRight);
-  serialization::readPod(file, blockStyle.textIndent);
-  serialization::readPod(file, blockStyle.textIndentDefined);
+  if (!serialization::tryReadPod(file, blockStyle.alignment) ||
+      !serialization::tryReadPod(file, blockStyle.textAlignDefined) ||
+      !serialization::tryReadPod(file, blockStyle.marginTop) ||
+      !serialization::tryReadPod(file, blockStyle.marginBottom) ||
+      !serialization::tryReadPod(file, blockStyle.marginLeft) ||
+      !serialization::tryReadPod(file, blockStyle.marginRight) ||
+      !serialization::tryReadPod(file, blockStyle.paddingTop) ||
+      !serialization::tryReadPod(file, blockStyle.paddingBottom) ||
+      !serialization::tryReadPod(file, blockStyle.paddingLeft) ||
+      !serialization::tryReadPod(file, blockStyle.paddingRight) ||
+      !serialization::tryReadPod(file, blockStyle.textIndent) ||
+      !serialization::tryReadPod(file, blockStyle.textIndentDefined)) {
+    LOG_ERR("TXB", "Deserialization failed: truncated block style metadata");
+    return nullptr;
+  }
 
   auto* textBlock = new (std::nothrow)
       TextBlock(std::move(words), std::move(wordXpos), std::move(wordStyles), std::move(wordBionicBoundary),

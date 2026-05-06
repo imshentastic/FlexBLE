@@ -7,6 +7,12 @@
 - Add a `Recent Books View` setting so the dedicated Recent Books screen can switch between the classic list and a 3x3 cover grid
 - Add real EPUB `<hr>` rendering so horizontal rules now display as visible separators instead of being ignored
 
+### Fixed
+- Serialize SD-card and display access on the shared SPI bus to prevent task-ownership crashes during state saves, sleep transitions, and other concurrent render/storage activity
+- Guard SPI bus lock acquisition so a failed recursive mutex take no longer marks the lock as held and triggers a mismatched release
+- Harden EPUB section-cache writes and promotion so truncated SD writes fail fast, temp caches are synced before rename, and invalid page-cache files are less likely to persist across reloads
+- Reject invalid serialized string lengths before allocation so corrupted cache data cannot trigger oversized string resizes during reads
+
 ## [v1.2.9.1] - 2026-05-03
 
 ### Changed

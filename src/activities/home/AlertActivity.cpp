@@ -11,7 +11,10 @@ void AlertActivity::onEnter() {
   Activity::onEnter();
   title = APP_STATE.pendingAlertTitle;
   body = APP_STATE.pendingAlertBody;
-  requestUpdateAndWait();
+  if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
+    LOG_ERR("ALERT", "Alert screen could not be rendered synchronously");
+    requestUpdate();
+  }
 }
 
 void AlertActivity::loop() {
