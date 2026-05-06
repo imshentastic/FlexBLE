@@ -16,7 +16,8 @@
 #ifndef portMUX_INITIALIZER_UNLOCKED
 struct portMUX_TYPE {};
 #define portMUX_INITIALIZER_UNLOCKED \
-  {}
+  {                                  \
+  }
 #endif
 
 class Activity;    // forward declaration
