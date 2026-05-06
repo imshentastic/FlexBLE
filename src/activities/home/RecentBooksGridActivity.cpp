@@ -245,11 +245,11 @@ void RecentBooksGridActivity::render(RenderLock&&) {
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, tr(STR_NO_RECENT_BOOKS));
   } else {
     if (selectorIndex < recentBooks.size()) {
-      const int titleLh = renderer.getLineHeight(UI_12_FONT_ID);
+      const int titleLh = renderer.getLineHeight(UI_10_FONT_ID);
       const int titleY = contentTop + (titleStripHeight - titleLh) / 2;
-      const std::string truncTitle = renderer.truncatedText(UI_12_FONT_ID, recentBooks[selectorIndex].title.c_str(),
-                                                            totalGridWidth, EpdFontFamily::BOLD);
-      renderer.drawText(UI_12_FONT_ID, startXOffset, titleY, truncTitle.c_str(), true, EpdFontFamily::BOLD);
+      const std::string truncTitle = renderer.truncatedText(UI_10_FONT_ID, recentBooks[selectorIndex].title.c_str(),
+                                                            totalGridWidth, EpdFontFamily::REGULAR);
+      renderer.drawText(UI_10_FONT_ID, startXOffset, titleY, truncTitle.c_str(), true, EpdFontFamily::REGULAR);
     }
 
     for (int i = 0; i < pageCount; ++i) {
