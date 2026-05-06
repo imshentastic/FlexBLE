@@ -7,6 +7,7 @@
 
 ### Fixed
 - Serialize SD-card and display access on the shared SPI bus to prevent task-ownership crashes during state saves, sleep transitions, and other concurrent render/storage activity
+- Harden EPUB section-cache writes and promotion so truncated SD writes fail fast, temp caches are synced before rename, and invalid page-cache files are less likely to persist across reloads
 
 ## [v1.2.9.1] - 2026-05-03
 
