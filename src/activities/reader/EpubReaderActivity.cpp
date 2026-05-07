@@ -58,13 +58,7 @@ int clampPercent(int percent) {
 }
 
 uint16_t clampAutoPageTurnIntervalSeconds(const uint16_t seconds) {
-  if (seconds < MIN_AUTO_PAGE_TURN_INTERVAL_S) {
-    return MIN_AUTO_PAGE_TURN_INTERVAL_S;
-  }
-  if (seconds > MAX_AUTO_PAGE_TURN_INTERVAL_S) {
-    return MAX_AUTO_PAGE_TURN_INTERVAL_S;
-  }
-  return seconds;
+  return std::clamp(seconds, MIN_AUTO_PAGE_TURN_INTERVAL_S, MAX_AUTO_PAGE_TURN_INTERVAL_S);
 }
 
 }  // namespace
@@ -536,7 +530,7 @@ void EpubReaderActivity::loop() {
   const bool skipChapter =
       !fromTilt && mappedInput.getHeldTime() > skipChapterMs &&
       (fromSideBtn ? SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_CHAPTER_SKIP
-                   : static_cast<bool>(SETTINGS.longPressChapterSkip));
+                   : SETTINGS.longPressChapterSkip);
 
   // Don't skip chapter after screenshot
   if (gpio.wasReleased(HalGPIO::BTN_POWER) && gpio.wasReleased(HalGPIO::BTN_DOWN)) {

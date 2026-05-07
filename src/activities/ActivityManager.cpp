@@ -2,6 +2,8 @@
 
 #include <HalPowerManager.h>
 
+#include <algorithm>
+
 #include "CrossPointState.h"
 #include "OpdsServerStore.h"
 #include "boot_sleep/BootActivity.h"
@@ -256,13 +258,8 @@ bool ActivityManager::isReaderActivity() const {
     return true;
   }
 
-  for (const auto& activity : stackActivities) {
-    if (activity && activity->isReaderActivity()) {
-      return true;
-    }
-  }
-
-  return false;
+  return std::any_of(stackActivities.begin(), stackActivities.end(),
+                     [](const auto& activity) { return activity && activity->isReaderActivity(); });
 }
 
 bool ActivityManager::canSnapshotForSleepOverlay() const {

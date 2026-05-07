@@ -1,7 +1,5 @@
 #pragma once
-#include <I18n.h>
 
-#include <string>
 #include <vector>
 
 #include "../Activity.h"
@@ -15,20 +13,19 @@ class RecentBooksGridActivity final : public Activity {
   static constexpr int COVER_HEIGHT = 180;
   static constexpr int COVER_WIDTH = 123;
 
- private:
-  ButtonNavigator buttonNavigator;
-  size_t selectorIndex = 0;
-  std::vector<RecentBook> recentBooks;
-  int loadedPageStart = -1;
-
-  void loadRecentBooks();
-  void loadPageCovers(int pageStart);
-
- public:
   explicit RecentBooksGridActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
       : Activity("RecentBooksGrid", renderer, mappedInput) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+
+ private:
+  ButtonNavigator buttonNavigator;
+  int selectorIndex = 0;
+  std::vector<RecentBook> recentBooks;
+  int loadedPageStart = -1;
+
+  void loadRecentBooks();
+  void loadPageCovers(int pageStart);
 };

@@ -6,6 +6,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Logging.h>
 #include <Xtc.h>
 
 #include <algorithm>
@@ -18,6 +19,7 @@
 
 namespace {
 constexpr int kCoverCornerRadius = 2;
+constexpr int kGridColumns = 3;
 
 int moveHorizontalInGrid(const int currentIndex, const int totalItems, const bool moveRight) {
   if (totalItems <= 0) return 0;
@@ -30,6 +32,12 @@ int moveVerticalInGrid(const int currentIndex, const int totalItems, const int c
   if (totalItems <= 0 || columns <= 0) return 0;
 
   const int safeItemsPerPage = std::max(columns, itemsPerPage);
+  // Contract: safeItemsPerPage should describe whole grid rows. Partial rows
+  // are allowed only on the final page after totalItems is applied below.
+  if (safeItemsPerPage % columns != 0) {
+    LOG_ERR("RBGA", "moveVerticalInGrid requires whole rows (itemsPerPage=%d columns=%d)", safeItemsPerPage, columns);
+    return currentIndex;
+  }
   const int totalPages = (totalItems + safeItemsPerPage - 1) / safeItemsPerPage;
   const int currentPage = currentIndex / safeItemsPerPage;
   const int indexInPage = currentIndex % safeItemsPerPage;
@@ -90,7 +98,10 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
 
   bool needsGeneration = false;
   for (int i = pageStart; i < pageEnd; ++i) {
-    if (recentBooks[i].coverBmpPath.empty()) continue;
+    if (recentBooks[i].coverBmpPath.empty()) {
+      needsGeneration = true;
+      break;
+    }
     const std::string thumbPath = UITheme::getCoverThumbPath(recentBooks[i].coverBmpPath, COVER_HEIGHT);
     if (!Storage.exists(thumbPath.c_str())) {
       needsGeneration = true;
@@ -119,7 +130,7 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
             showingLoading = true;
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
           }
-          GUI.fillPopupProgress(renderer, popupRect, 10 + processedCount * (90 / totalToProcess));
+          GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
           if (!epub.generateThumbBmp(COVER_HEIGHT)) {
             RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
             book.coverBmpPath = "";
@@ -132,7 +143,7 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
             showingLoading = true;
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
           }
-          GUI.fillPopupProgress(renderer, popupRect, 10 + processedCount * (90 / totalToProcess));
+          GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
           if (!xtc.generateThumbBmp(COVER_HEIGHT)) {
             RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
             book.coverBmpPath = "";
@@ -164,7 +175,7 @@ void RecentBooksGridActivity::onExit() {
 
 void RecentBooksGridActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (!recentBooks.empty() && selectorIndex < recentBooks.size()) {
+    if (!recentBooks.empty() && selectorIndex >= 0 && selectorIndex < static_cast<int>(recentBooks.size())) {
       LOG_DBG("RBGA", "Selected recent book: %s", recentBooks[selectorIndex].path.c_str());
       onSelectBook(recentBooks[selectorIndex].path);
       return;
@@ -177,40 +188,38 @@ void RecentBooksGridActivity::loop() {
   }
 
   const int listSize = static_cast<int>(recentBooks.size());
-  constexpr int columns = 3;
-  constexpr int itemsPerPage = 9;
 
   buttonNavigator.onRelease({MappedInputManager::Button::Right}, [this, listSize] {
-    selectorIndex = moveHorizontalInGrid(static_cast<int>(selectorIndex), listSize, true);
+    selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, true);
     requestUpdate();
   });
   buttonNavigator.onRelease({MappedInputManager::Button::Left}, [this, listSize] {
-    selectorIndex = moveHorizontalInGrid(static_cast<int>(selectorIndex), listSize, false);
+    selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, false);
     requestUpdate();
   });
   buttonNavigator.onRelease({MappedInputManager::Button::Down}, [this, listSize] {
-    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, itemsPerPage, true);
+    selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, true);
     requestUpdate();
   });
   buttonNavigator.onRelease({MappedInputManager::Button::Up}, [this, listSize] {
-    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, itemsPerPage, false);
+    selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, false);
     requestUpdate();
   });
 
   buttonNavigator.onContinuous({MappedInputManager::Button::Right}, [this, listSize] {
-    selectorIndex = moveHorizontalInGrid(static_cast<int>(selectorIndex), listSize, true);
+    selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, true);
     requestUpdate();
   });
   buttonNavigator.onContinuous({MappedInputManager::Button::Left}, [this, listSize] {
-    selectorIndex = moveHorizontalInGrid(static_cast<int>(selectorIndex), listSize, false);
+    selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, false);
     requestUpdate();
   });
   buttonNavigator.onContinuous({MappedInputManager::Button::Down}, [this, listSize] {
-    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, itemsPerPage, true);
+    selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, true);
     requestUpdate();
   });
   buttonNavigator.onContinuous({MappedInputManager::Button::Up}, [this, listSize] {
-    selectorIndex = moveVerticalInGrid(static_cast<int>(selectorIndex), listSize, columns, itemsPerPage, false);
+    selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, false);
     requestUpdate();
   });
 }
@@ -227,24 +236,23 @@ void RecentBooksGridActivity::render(RenderLock&&) {
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   constexpr int titleStripHeight = 32;
   constexpr int titleGridGap = 16;
-  constexpr int columns = 3;
   constexpr int selectionPadding = 4;
   constexpr int selectionOutlineGap = 2;
   constexpr int selectionOuterInset = selectionPadding + selectionOutlineGap;
   const int rowSpacing = metrics.verticalSpacing + 4;
-  const int totalGridWidth = columns * COVER_WIDTH + (columns - 1) * metrics.verticalSpacing;
+  const int totalGridWidth = kGridColumns * COVER_WIDTH + (kGridColumns - 1) * metrics.verticalSpacing;
   const int startXOffset = (pageWidth - totalGridWidth) / 2;
 
   const int totalBooks = static_cast<int>(recentBooks.size());
   const int totalPages = (totalBooks + BOOKS_PER_PAGE - 1) / BOOKS_PER_PAGE;
-  const int currentPage = (totalBooks > 0) ? (static_cast<int>(selectorIndex) / BOOKS_PER_PAGE) : 0;
+  const int currentPage = (totalBooks > 0) ? (selectorIndex / BOOKS_PER_PAGE) : 0;
   const int pageStart = currentPage * BOOKS_PER_PAGE;
   const int pageCount = std::min(BOOKS_PER_PAGE, totalBooks - pageStart);
 
   if (recentBooks.empty()) {
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, tr(STR_NO_RECENT_BOOKS));
   } else {
-    if (selectorIndex < recentBooks.size()) {
+    if (selectorIndex >= 0 && selectorIndex < static_cast<int>(recentBooks.size())) {
       const int titleLh = renderer.getLineHeight(UI_10_FONT_ID);
       const int titleY = contentTop + (titleStripHeight - titleLh) / 2;
       const std::string truncTitle = renderer.truncatedText(UI_10_FONT_ID, recentBooks[selectorIndex].title.c_str(),
@@ -254,8 +262,8 @@ void RecentBooksGridActivity::render(RenderLock&&) {
 
     for (int i = 0; i < pageCount; ++i) {
       const int bookIdx = pageStart + i;
-      const int col = i % columns;
-      const int row = i / columns;
+      const int col = i % kGridColumns;
+      const int row = i / kGridColumns;
       const int x = startXOffset + col * (COVER_WIDTH + metrics.verticalSpacing);
       const int y = contentTop + titleStripHeight + titleGridGap + row * (COVER_HEIGHT + rowSpacing);
 
@@ -314,6 +322,8 @@ void RecentBooksGridActivity::render(RenderLock&&) {
     }
   }
 
+  // The four physical hint slots are already occupied; Up/Down still navigate
+  // the grid but are not rendered in this compact hint bar.
   const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_OPEN), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 

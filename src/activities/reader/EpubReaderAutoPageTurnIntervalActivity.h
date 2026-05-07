@@ -4,21 +4,22 @@
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
+class GfxRenderer;
+
 class EpubReaderAutoPageTurnIntervalActivity final : public Activity {
  public:
   explicit EpubReaderAutoPageTurnIntervalActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                                  const int initialSeconds)
+                                                  int initialSeconds)
       : Activity("EpubReaderAutoPageTurnInterval", renderer, mappedInput), seconds(initialSeconds) {}
 
   void onEnter() override;
-  void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
   bool isReaderActivity() const override { return true; }
   bool allowPowerAsConfirmInReaderMode() const override { return true; }
 
  private:
-  int seconds = 30;
+  int seconds;
   ButtonNavigator buttonNavigator;
 
   void adjustSeconds(int delta);

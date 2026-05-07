@@ -65,6 +65,10 @@ class GfxRenderer {
  public:
   explicit GfxRenderer(HalDisplay& halDisplay)
       : display(halDisplay), renderMode(BW), orientation(Portrait), fadingFix(false) {}
+  GfxRenderer(const GfxRenderer&) = delete;
+  GfxRenderer& operator=(const GfxRenderer&) = delete;
+  GfxRenderer(GfxRenderer&&) = delete;
+  GfxRenderer& operator=(GfxRenderer&&) = delete;
   ~GfxRenderer() {
     freeBwBufferChunks();
     freeBitmapScratchBuffers();

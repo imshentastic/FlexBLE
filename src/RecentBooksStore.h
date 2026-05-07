@@ -34,12 +34,15 @@ class RecentBooksStore {
   void addBook(const std::string& path, const std::string& title, const std::string& author,
                const std::string& coverBmpPath);
 
-  // Add a new book to the front, or refresh an existing entry in place without
-  // changing the current recent-books order.
+  // Add a new book to the front, or refresh an existing entry and promote it
+  // to the front.
   void addOrUpdateBook(const std::string& path, const std::string& title, const std::string& author,
                        const std::string& coverBmpPath);
 
-  void updateBook(const std::string& path, const std::string& title, const std::string& author,
+  // updateBook updates metadata for an existing book only and must not change
+  // recent-books ordering. Use addOrUpdateBook when the touched book should
+  // become most recent. Returns false if the book does not exist.
+  bool updateBook(const std::string& path, const std::string& title, const std::string& author,
                   const std::string& coverBmpPath);
 
   // Update the stored path for a book (e.g. after moving the file).

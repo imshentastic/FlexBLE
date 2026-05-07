@@ -71,7 +71,7 @@ void drawLyraBatteryIcon(const GfxRenderer& renderer, int x, int y, int battWidt
 
 }  // namespace
 
-const uint8_t* LyraTheme::iconForName(UIIcon icon, int size) {
+const uint8_t* LyraTheme::iconForName(UIIcon icon, uint32_t size) {
   if (size == 24) {
     switch (icon) {
       case UIIcon::Folder:
@@ -452,8 +452,8 @@ void LyraTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
 }
 
 void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
-                                    const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                    bool& bufferRestored, std::function<bool()> storeCoverBuffer,
+                                    int selectorIndex, bool& coverRendered, bool& coverBufferStored,
+                                    bool& bufferRestored, const std::function<bool()>& storeCoverBuffer,
                                     const BookReadingStats* stats, float progressPercent) const {
   const int tileWidth = rect.width - 2 * LyraMetrics::values.contentSidePadding;
   const int tileHeight = rect.height;

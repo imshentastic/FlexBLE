@@ -97,8 +97,6 @@ class EpubReaderActivity final : public Activity {
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
   void applyOrientation(uint8_t orientation);
   void executeLongPressMenuAction();
-  void setAutoPageTurnIntervalSeconds(uint16_t seconds);
-  uint16_t getAutoPageTurnIntervalSeconds() const;
   void pageTurn(bool isForwardTurn);
   float getCurrentBookProgressPercent() const;
   void initializeCompletionPromptTrigger();
@@ -121,6 +119,8 @@ class EpubReaderActivity final : public Activity {
   bool preventAutoSleep() override { return automaticPageTurnActive; }
   bool isReaderActivity() const override { return true; }
   bool canSnapshotForSleepOverlay() const override { return true; }
+  void setAutoPageTurnIntervalSeconds(uint16_t seconds);
+  uint16_t getAutoPageTurnIntervalSeconds() const;
 
   // Renders the last saved page to the frame buffer without flushing to display.
   // Used by SleepActivity to prepare the background for the overlay sleep mode.

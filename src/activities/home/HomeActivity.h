@@ -39,7 +39,7 @@ class HomeActivity final : public Activity {
   float cachedBookProgress[kMaxCachedBooks] = {};
   bool bookStatsCached = false;
 
-  uint8_t* carouselFrames[kCarouselFrameCount] = {nullptr, nullptr, nullptr};
+  uint8_t* carouselFrames[kCarouselFrameCount] = {};
   bool carouselFramesReady = false;
   bool carouselWarmupPending = false;
 

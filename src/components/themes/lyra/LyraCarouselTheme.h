@@ -58,23 +58,24 @@ class LyraCarouselTheme : public LyraTheme {
 
   static void setPreRenderIndex(int idx);
   void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
-                           const int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
-                           std::function<bool()> storeCoverBuffer, const BookReadingStats* stats = nullptr,
+                           int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
+                           const std::function<bool()>& storeCoverBuffer, const BookReadingStats* stats = nullptr,
                            float progressPercent = -1.0f) const override;
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<std::string(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;
-  void drawButtonMenuSelectionOverlay(GfxRenderer& renderer, int buttonCount, int selectedIndex,
+  void drawButtonMenuSelectionOverlay(const GfxRenderer& renderer, int buttonCount, int selectedIndex,
                                       const std::function<std::string(int index)>& buttonLabel,
                                       const std::function<UIIcon(int index)>& rowIcon) const;
   void drawCarouselBorder(GfxRenderer& renderer, Rect coverRect, const std::vector<RecentBook>& recentBooks,
                           int centerIdx, bool inCarouselRow) const override;
+  // LyraTheme has no virtual overlay hook; this is a carousel-only helper.
   void drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
                 const std::function<std::string(int index)>& rowTitle,
-                const std::function<std::string(int index)>& rowSubtitle = nullptr,
-                const std::function<UIIcon(int index)>& rowIcon = nullptr,
-                const std::function<std::string(int index)>& rowValue = nullptr, bool highlightValue = false,
-                const std::function<bool(int index)>& isHeader = nullptr) const override;
+                const std::function<std::string(int index)>& rowSubtitle = {},
+                const std::function<UIIcon(int index)>& rowIcon = {},
+                const std::function<std::string(int index)>& rowValue = {}, bool highlightValue = false,
+                const std::function<bool(int index)>& isHeader = {}) const override;
   void drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,
                   bool selected) const override;
 };

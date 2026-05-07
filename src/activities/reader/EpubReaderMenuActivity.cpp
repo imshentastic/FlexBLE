@@ -24,6 +24,8 @@ struct ReaderLayoutSettingsSnapshot {
   uint8_t forceParagraphIndents;
   uint8_t bionicReadingEnabled;
   uint8_t guideReadingEnabled;
+
+  bool operator==(const ReaderLayoutSettingsSnapshot&) const = default;
 };
 
 ReaderLayoutSettingsSnapshot captureReaderLayoutSettings() {
@@ -45,15 +47,7 @@ ReaderLayoutSettingsSnapshot captureReaderLayoutSettings() {
 }
 
 bool haveReaderLayoutSettingsChanged(const ReaderLayoutSettingsSnapshot& before) {
-  return before.fontFamily != SETTINGS.fontFamily || before.fontSize != SETTINGS.fontSize ||
-         before.lineSpacing != SETTINGS.lineSpacing || before.orientation != SETTINGS.orientation ||
-         before.screenMargin != SETTINGS.screenMargin || before.paragraphAlignment != SETTINGS.paragraphAlignment ||
-         before.embeddedStyle != SETTINGS.embeddedStyle || before.hyphenationEnabled != SETTINGS.hyphenationEnabled ||
-         before.imageRendering != SETTINGS.imageRendering ||
-         before.extraParagraphSpacing != SETTINGS.extraParagraphSpacing ||
-         before.forceParagraphIndents != SETTINGS.forceParagraphIndents ||
-         before.bionicReadingEnabled != SETTINGS.bionicReadingEnabled ||
-         before.guideReadingEnabled != SETTINGS.guideReadingEnabled;
+  return before != captureReaderLayoutSettings();
 }
 
 }  // namespace

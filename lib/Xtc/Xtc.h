@@ -64,11 +64,41 @@ class Xtc {
   std::string getCoverBmpPath() const;
   bool generateCoverBmp() const;
   // Thumbnail support (for Continue Reading card)
+  /** Returns the height-placeholder thumbnail cache path. */
   std::string getThumbBmpPath() const;
-  std::string getThumbBmpPath(int height) const;
-  std::string getThumbBmpPath(int width, int height) const;
-  bool generateThumbBmp(int height) const;
-  bool generateThumbBmp(int width, int height) const;
+  /**
+   * Returns a thumbnail cache path for a height-keyed thumbnail.
+   * @param height Target thumbnail height in pixels; width is derived from the original page aspect ratio.
+   * @note Prefer getThumbBmpPath(width, height) when the caller needs exact cache-key control.
+   */
+  std::string getThumbBmpPath(uint16_t height) const;
+  /**
+   * Returns a thumbnail cache path for a requested bounding box in pixels.
+   * @param width Target bounding width in pixels.
+   * @param height Target bounding height in pixels.
+   * @note Preferred overload for exact cache-key control. This function is const and does not throw.
+   */
+  std::string getThumbBmpPath(uint16_t width, uint16_t height) const;
+  /**
+   * Generates the default thumbnail in cache.
+   * @return true when the cached thumbnail exists or was written successfully; false on load/write/decode failure.
+   */
+  bool generateThumbBmp() const;
+  /**
+   * Generates a thumbnail in cache, preserving the original page aspect ratio.
+   * @param height Target thumbnail height in pixels.
+   * @return true when the cached thumbnail exists or was written successfully; false on load/write/decode failure.
+   * @note Prefer generateThumbBmp(width, height) when the caller needs exact cache-key control.
+   */
+  bool generateThumbBmp(uint16_t height) const;
+  /**
+   * Generates a thumbnail in cache that fits within the requested bounding box.
+   * @param width Target bounding width in pixels.
+   * @param height Target bounding height in pixels.
+   * @return true when the cached thumbnail exists or was written successfully; false on load/write/decode failure.
+   * @note Preferred overload for exact cache-key control. Existing files are reused.
+   */
+  bool generateThumbBmp(uint16_t width, uint16_t height) const;
 
   // Page access
   uint32_t getPageCount() const;

@@ -3,6 +3,8 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include <algorithm>
+
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -29,8 +31,6 @@ void EpubReaderAutoPageTurnIntervalActivity::onEnter() {
   requestUpdate();
 }
 
-void EpubReaderAutoPageTurnIntervalActivity::onExit() { Activity::onExit(); }
-
 void EpubReaderAutoPageTurnIntervalActivity::adjustSeconds(const int delta) {
   seconds = clampSeconds(seconds + delta);
   requestUpdate();
@@ -46,7 +46,7 @@ void EpubReaderAutoPageTurnIntervalActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    setResult(AutoPageTurnResult{seconds});
+    setResult(AutoPageTurnResult{static_cast<uint32_t>(seconds)});
     finish();
     return;
   }
@@ -66,9 +66,9 @@ void EpubReaderAutoPageTurnIntervalActivity::render(RenderLock&&) {
   renderer.drawCenteredText(UI_12_FONT_ID, 90, secondsText.c_str(), true, EpdFontFamily::BOLD);
 
   const int screenWidth = renderer.getScreenWidth();
-  constexpr int barWidth = 360;
+  const int barWidth = std::min(360, std::max(0, screenWidth - 40));
   constexpr int barHeight = 16;
-  const int barX = (screenWidth - barWidth) / 2;
+  const int barX = std::max(0, (screenWidth - barWidth) / 2);
   const int barY = 140;
 
   renderer.drawRect(barX, barY, barWidth, barHeight);
@@ -78,7 +78,7 @@ void EpubReaderAutoPageTurnIntervalActivity::render(RenderLock&&) {
     renderer.fillRect(barX + 2, barY + 2, fillWidth, barHeight - 4);
   }
 
-  const int knobX = barX + 2 + fillWidth - 2;
+  const int knobX = std::max(barX + 2, barX + 2 + fillWidth - 2);
   renderer.fillRect(knobX, barY - 4, 4, barHeight + 8, true);
 
   renderer.drawCenteredText(SMALL_FONT_ID, barY + 30, tr(STR_AUTO_TURN_STEP_HINT), true);

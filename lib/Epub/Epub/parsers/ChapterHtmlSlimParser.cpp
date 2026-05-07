@@ -886,7 +886,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                     if (displayHeight < 1) displayHeight = 1;
                     LOG_DBG("EHP", "Display size from CSS width: %dx%d", displayWidth, displayHeight);
                   } else {
-                    // BScale to fit viewport while preserving aspect ratio
+                    // Scale to fit viewport while preserving aspect ratio
                     int maxWidth = self->viewportWidth;
                     int maxHeight = self->viewportHeight;
                     float scaleX = (dims.width > maxWidth) ? (float)maxWidth / dims.width : 1.0f;

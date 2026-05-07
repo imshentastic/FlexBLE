@@ -437,7 +437,17 @@ bool CssParser::ensureRuleCapacity() {
   }
 
   const size_t nextCapacity = std::min(rulesBySelector_.capacity() + RULE_RESERVE_CHUNK, MAX_RULES);
-  const size_t reserveBytes = nextCapacity * sizeof(decltype(rulesBySelector_)::value_type);
+  size_t existingKeyCapacity = 0;
+  for (const auto& rule : rulesBySelector_) {
+    existingKeyCapacity += rule.first.capacity() + 1;
+  }
+  size_t averageKeyCapacity = MAX_SELECTOR_LENGTH / 2;
+  if (!rulesBySelector_.empty()) {
+    averageKeyCapacity = std::max<size_t>(1, existingKeyCapacity / rulesBySelector_.size());
+  }
+  const size_t extraSlots = nextCapacity - rulesBySelector_.size();
+  const size_t reserveBytes = nextCapacity * sizeof(decltype(rulesBySelector_)::value_type) + existingKeyCapacity +
+                              extraSlots * (averageKeyCapacity + 1);
   const uint32_t freeHeap = ESP.getFreeHeap();
   const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
   if (freeHeap <= reserveBytes + MIN_HEAP_AFTER_RULE_GROW || maxAllocHeap <= reserveBytes + MIN_HEAP_AFTER_RULE_GROW) {
@@ -564,7 +574,7 @@ bool CssParser::processRuleBlockWithStyle(const std::string& selectorGroup, cons
     if (it != rulesBySelector_.end()) {
       it->second.applyOver(style);
     } else {
-      rulesBySelector_.emplace_back(std::move(key), style);
+      rulesBySelector_.emplace_back(std::move(key), std::move(style));
     }
   }
   return true;
@@ -782,10 +792,14 @@ CssStyle CssParser::resolveStyle(const std::string& tagName, const std::string& 
   // 4. Apply class styles (medium priority)
   if (!classAttr.empty()) {
     const auto classes = splitWhitespace(classAttr);
+    std::string selectorKey;
+    selectorKey.reserve(tag.size() + MAX_SELECTOR_LENGTH + 2);
 
     for (const auto& cls : classes) {
-      const std::string classKey = "." + normalized(cls);
-      if (const auto* classStyle = findRule(classKey)) {
+      selectorKey.clear();
+      selectorKey.push_back('.');
+      selectorKey.append(normalized(cls));
+      if (const auto* classStyle = findRule(selectorKey)) {
         result.applyOver(*classStyle);
       }
     }
@@ -793,8 +807,11 @@ CssStyle CssParser::resolveStyle(const std::string& tagName, const std::string& 
     // TODO: Support combinations of classes (e.g. style on p.class1.class2)
     // 5. Apply element.class styles (highest priority)
     for (const auto& cls : classes) {
-      const std::string combinedKey = tag + "." + normalized(cls);
-      if (const auto* combinedStyle = findRule(combinedKey)) {
+      selectorKey.clear();
+      selectorKey.append(tag);
+      selectorKey.push_back('.');
+      selectorKey.append(normalized(cls));
+      if (const auto* combinedStyle = findRule(selectorKey)) {
         result.applyOver(*combinedStyle);
       }
     }

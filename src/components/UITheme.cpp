@@ -4,6 +4,7 @@
 #include <GfxRenderer.h>
 #include <Logging.h>
 
+#include <cstdint>
 #include <memory>
 
 #include "MappedInputManager.h"
@@ -13,10 +14,6 @@
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "components/themes/lyra/LyraTheme.h"
 #include "components/themes/roundedraff/RoundedRaffTheme.h"
-
-namespace {
-constexpr int SKIP_PAGE_MS = 700;
-}  // namespace
 
 UITheme UITheme::instance;
 
@@ -83,20 +80,18 @@ int UITheme::getNumberOfItemsPerPage(const GfxRenderer& renderer, bool hasHeader
   return availableHeight / rowHeight;
 }
 
-std::string UITheme::getCoverThumbPath(std::string coverBmpPath, int coverHeight) {
-  size_t pos = coverBmpPath.find("[HEIGHT]", 0);
-  if (pos != std::string::npos) {
-    coverBmpPath.replace(pos, 8, std::to_string(coverHeight));
-  }
-  return coverBmpPath;
+std::string UITheme::getCoverThumbPath(const std::string& coverBmpPath, int coverHeight) {
+  const int coverWidth = static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 5);
+  return getCoverThumbPath(coverBmpPath, coverWidth, coverHeight);
 }
 
-std::string UITheme::getCoverThumbPath(std::string coverBmpPath, int width, int height) {
-  size_t pos = coverBmpPath.find("[HEIGHT]", 0);
+std::string UITheme::getCoverThumbPath(const std::string& coverBmpPath, int width, int height) {
+  std::string thumbPath = coverBmpPath;
+  size_t pos = thumbPath.find("[HEIGHT]", 0);
   if (pos != std::string::npos) {
-    coverBmpPath.replace(pos, 8, std::to_string(width) + "x" + std::to_string(height));
+    thumbPath.replace(pos, 8, std::to_string(width) + "x" + std::to_string(height));
   }
-  return coverBmpPath;
+  return thumbPath;
 }
 
 UIIcon UITheme::getFileIcon(const std::string& filename) {

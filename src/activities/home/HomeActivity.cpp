@@ -12,6 +12,7 @@
 #include <Xtc.h>
 
 #include <algorithm>
+#include <cinttypes>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -112,8 +113,7 @@ void appendHashedFileStateToKey(std::string& key, const std::string& path) {
   file.close();
 
   char digest[48];
-  snprintf(digest, sizeof(digest), "%lu:%llu", static_cast<unsigned long>(totalBytes),
-           static_cast<unsigned long long>(hash));
+  snprintf(digest, sizeof(digest), "%zu:%" PRIu64, totalBytes, static_cast<uint64_t>(hash));
   key += digest;
   key += '\0';
 }
@@ -455,6 +455,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
 
   const bool isCarouselTheme =
       static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_CAROUSEL;
+  const size_t recentBookCount = recentBooks.size();
+  const int progressIncrement = 90 / static_cast<int>(std::max<size_t>(1, recentBookCount));
 
   int progress = 0;
   for (RecentBook& book : recentBooks) {
@@ -480,7 +482,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               showingLoading = true;
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
-            GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
+            GUI.fillPopupProgress(renderer, popupRect, 10 + progress * progressIncrement);
             if (!epub.load(true, true)) {
               LOG_ERR("HOME", "carousel: failed to load EPUB cache for thumb generation: %s", book.path.c_str());
               progress++;
@@ -508,7 +510,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
                 showingLoading = true;
                 popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
               }
-              GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
+              GUI.fillPopupProgress(renderer, popupRect, 10 + progress * progressIncrement);
               bool success = true;
               if (centerMissing)
                 success =
@@ -537,7 +539,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               showingLoading = true;
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
-            GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
+            GUI.fillPopupProgress(renderer, popupRect, 10 + progress * progressIncrement);
             if (!epub.load(true, true)) {
               LOG_ERR("HOME", "failed to load EPUB cache for thumb generation: %s", book.path.c_str());
               progress++;
@@ -559,7 +561,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
                 showingLoading = true;
                 popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
               }
-              GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
+              GUI.fillPopupProgress(renderer, popupRect, 10 + progress * progressIncrement);
               bool success = xtc.generateThumbBmp(coverHeight);
               if (!success) {
                 RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
@@ -679,10 +681,9 @@ void HomeActivity::updateHighlightedBookContext() {
   currentBookProgressPercent = -1.0f;
 
   const int idx = getHighlightedBookIndex();
-  bool usedCachedStats = false;
+  const bool useCachedStats = idx >= 0 && bookStatsCached && idx < kMaxCachedBooks;
   if (idx >= 0) {
-    if (bookStatsCached && idx < kMaxCachedBooks) {
-      usedCachedStats = true;
+    if (useCachedStats) {
       currentBookStats = cachedBookStats[idx];
       currentBookProgressPercent = cachedBookProgress[idx];
     } else {
@@ -693,7 +694,7 @@ void HomeActivity::updateHighlightedBookContext() {
 
   hasReadingStats = hasAnyBookStats(currentBookStats) || hasAnyGlobalStats(globalStats);
   LOG_DBG("HOME", "carousel: updateHighlightedBookContext idx=%d cached=%s took %lums", idx,
-          usedCachedStats ? "yes" : "no", millis() - start);
+          useCachedStats ? "yes" : "no", millis() - start);
 }
 
 void HomeActivity::onExit() {
@@ -879,17 +880,14 @@ bool HomeActivity::buildCarouselCacheFile(const std::string& cacheKey, uint64_t 
   const size_t bufferSize = renderer.getBufferSize();
   if (showProgressPopup) {
     progressFrameBuffer = static_cast<uint8_t*>(malloc(bufferSize));
-    if (progressFrameBuffer) {
-      memcpy(progressFrameBuffer, frameBuffer, bufferSize);
-    } else {
+    if (!progressFrameBuffer) {
       LOG_ERR("HOME", "carousel: failed to allocate progress overlay buffer");
       showProgressPopup = false;
+    } else {
+      popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+      GUI.fillPopupProgress(renderer, popupRect, 0);
+      memcpy(progressFrameBuffer, frameBuffer, bufferSize);
     }
-  }
-  if (showProgressPopup) {
-    popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-    GUI.fillPopupProgress(renderer, popupRect, 0);
-    memcpy(progressFrameBuffer, frameBuffer, bufferSize);
   }
   bool writeFailed = false;
   for (int i = 0; i < bookCount; ++i) {
@@ -1028,9 +1026,6 @@ bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
   }
 
   if (!allocateCarouselFrameSlots(targetFrameCount)) {
-    if (!diskCacheValid) {
-      return showedProgressPopup;
-    }
     return showedProgressPopup;
   }
 
@@ -1207,10 +1202,13 @@ void HomeActivity::render(RenderLock&&) {
                              recentBooks, centerIdx, inCarouselRow);
       if (!inCarouselRow) {
         const auto menuItems = buildHomeMenuItems(hasOpdsServers, hasReadingStats, hasBookmarks);
-        static_cast<const LyraCarouselTheme&>(GUI).drawButtonMenuSelectionOverlay(
-            renderer, static_cast<int>(menuItems.size()), selectorIndex - recentBooks.size(),
-            [&menuItems](int index) { return std::string(menuItems[index].label); },
-            [&menuItems](int index) { return menuItems[index].icon; });
+        if (static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) ==
+            CrossPointSettings::UI_THEME::LYRA_CAROUSEL) {
+          static_cast<const LyraCarouselTheme&>(GUI).drawButtonMenuSelectionOverlay(
+              renderer, static_cast<int>(menuItems.size()), selectorIndex - recentBooks.size(),
+              [&menuItems](int index) { return std::string(menuItems[index].label); },
+              [&menuItems](int index) { return menuItems[index].icon; });
+        }
       }
 
       renderer.displayBuffer();
@@ -1321,41 +1319,6 @@ void HomeActivity::updateSlidingWindowCache(int centerIdx, int bookCount) {
 
   const int prevIdx = (centerIdx + bookCount - 1) % bookCount;
   const int nextIdx = (centerIdx + 1) % bookCount;
-
-  auto directionForCenter = [&](int previousIdx, int currentIdx) {
-    if (previousIdx < 0 || previousIdx == currentIdx || bookCount <= 2) return 1;
-    const int forwardDist = (currentIdx + bookCount - previousIdx) % bookCount;
-    const int backwardDist = (previousIdx + bookCount - currentIdx) % bookCount;
-    return forwardDist <= backwardDist ? 1 : -1;
-  };
-
-  if (gCachedFrameCount == 2) {
-    const int direction = directionForCenter(gLastCarouselCenterIdx, centerIdx);
-    const int targetIdx = direction >= 0 ? nextIdx : prevIdx;
-    const int centerSlot = findFrameSlot(centerIdx);
-    const int targetSlot = findFrameSlot(targetIdx);
-
-    if (targetSlot < 0) {
-      int evictSlot = -1;
-      for (int i = 0; i < kCarouselFrameCount; ++i) {
-        if (!gCachedFrames[i]) continue;
-        if (i == centerSlot) continue;
-        evictSlot = i;
-        break;
-      }
-      if (evictSlot >= 0) {
-        if (!loadCarouselFrameFromDisk(gCacheKeyHash, bookCount, targetIdx, evictSlot)) {
-          renderCarouselFrame(targetIdx, evictSlot);
-        }
-        renderedCount++;
-      }
-    }
-
-    gLastCarouselCenterIdx = centerIdx;
-    LOG_DBG("HOME", "carousel: updateSlidingWindowCache center=%d rendered=%d took %lums", centerIdx, renderedCount,
-            millis() - start);
-    return;
-  }
 
   // Fill both adjacent slots. Called once for prev, once for next.
   // Prefers uninitialized slots (book index -1) over evicting valid frames.

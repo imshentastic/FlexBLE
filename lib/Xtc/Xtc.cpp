@@ -11,6 +11,8 @@
 #include <HalStorage.h>
 #include <Logging.h>
 
+#include <algorithm>
+
 bool Xtc::load() {
   LOG_DBG("XTC", "Loading XTC: %s", filepath.c_str());
 
@@ -261,14 +263,27 @@ bool Xtc::generateCoverBmp() const {
 }
 
 std::string Xtc::getThumbBmpPath() const { return cachePath + "/thumb_[HEIGHT].bmp"; }
-std::string Xtc::getThumbBmpPath(int height) const { return cachePath + "/thumb_" + std::to_string(height) + ".bmp"; }
-std::string Xtc::getThumbBmpPath(int width, int height) const {
+std::string Xtc::getThumbBmpPath(uint16_t height) const {
+  return cachePath + "/thumb_" + std::to_string(height) + ".bmp";
+}
+std::string Xtc::getThumbBmpPath(uint16_t width, uint16_t height) const {
   return cachePath + "/thumb_" + std::to_string(width) + "x" + std::to_string(height) + ".bmp";
 }
 
-bool Xtc::generateThumbBmp(int height) const { return generateThumbBmp(height * 0.6, height); }
+bool Xtc::generateThumbBmp() const {
+  const uint16_t height = getPageHeight();
+  return height > 0 && generateThumbBmp(height);
+}
 
-bool Xtc::generateThumbBmp(int width, int height) const {
+bool Xtc::generateThumbBmp(uint16_t height) const {
+  return generateThumbBmp(static_cast<uint16_t>(static_cast<int>(height * 0.6)), height);
+}
+
+bool Xtc::generateThumbBmp(uint16_t width, uint16_t height) const {
+  if (width == 0 || height == 0) {
+    LOG_ERR("XTC", "Cannot generate thumb BMP with invalid dimensions: %ux%u", width, height);
+    return false;
+  }
   if (Storage.exists(getThumbBmpPath(width, height).c_str())) return true;
 
   if (!loaded || !parser) {
@@ -289,12 +304,12 @@ bool Xtc::generateThumbBmp(int width, int height) const {
   }
 
   const uint8_t bitDepth = parser->getBitDepth();
-  const int THUMB_TARGET_WIDTH = width;
-  const int THUMB_TARGET_HEIGHT = height;
+  const uint16_t THUMB_TARGET_WIDTH = width;
+  const uint16_t THUMB_TARGET_HEIGHT = height;
 
   float scaleX = static_cast<float>(THUMB_TARGET_WIDTH) / pageInfo.width;
   float scaleY = static_cast<float>(THUMB_TARGET_HEIGHT) / pageInfo.height;
-  float scale = (scaleX > scaleY) ? scaleX : scaleY;
+  float scale = std::min(scaleX, scaleY);
 
   if (scale >= 1.0f) {
     if (generateCoverBmp()) {
@@ -416,10 +431,9 @@ bool Xtc::generateThumbBmp(int width, int height) const {
       const size_t byteIndex = dstX / 8;
       const size_t bitOffset = 7 - (dstX % 8);
       if (byteIndex < rowSize) {
-        if (oneBit)
-          rowBuffer[byteIndex] |= (1 << bitOffset);
-        else
+        if (!oneBit) {
           rowBuffer[byteIndex] &= ~(1 << bitOffset);
+        }
       }
     }
     thumbBmp.write(rowBuffer, rowSize);

@@ -272,6 +272,7 @@ bool CrossPointSettings::loadFromBinaryFile() {
     readAndValidate(inputFile, hideBatteryPercentage, HIDE_BATTERY_PERCENTAGE_COUNT);
     if (++settingsRead >= fileSettingsCount) break;
     serialization::readPod(inputFile, longPressChapterSkip);
+    longPressChapterSkip = longPressChapterSkip ? 1 : 0;
     if (++settingsRead >= fileSettingsCount) break;
     serialization::readPod(inputFile, hyphenationEnabled);
     if (++settingsRead >= fileSettingsCount) break;
@@ -291,7 +292,7 @@ bool CrossPointSettings::loadFromBinaryFile() {
     if (++settingsRead >= fileSettingsCount) break;
     readAndValidate(inputFile, sleepScreenCoverFilter, SLEEP_SCREEN_COVER_FILTER_COUNT);
     if (++settingsRead >= fileSettingsCount) break;
-    serialization::readPod(inputFile, uiTheme);
+    readAndValidate(inputFile, uiTheme, UI_THEME_COUNT);
     if (++settingsRead >= fileSettingsCount) break;
     readAndValidate(inputFile, frontButtonBack, FRONT_BUTTON_HARDWARE_COUNT);
     if (++settingsRead >= fileSettingsCount) break;

@@ -727,6 +727,8 @@ void GfxRenderer::drawIcon(const uint8_t bitmap[], const int x, const int y, con
 
 void GfxRenderer::drawIconInverted(const uint8_t bitmap[], const int x, const int y, const int width,
                                    const int height) const {
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
+
   // Portrait-mode coordinate transform (x↔y swap), matching drawIcon.
   // OR with ~srcByte sets framebuffer bits to 1 (white) wherever the icon
   // bitmap is 0 (black) — produces a white icon on a black background.
@@ -953,6 +955,10 @@ void GfxRenderer::drawPerspectiveBitmap(const Bitmap& bitmap, const int x, const
   const int srcW = bitmap.getWidth();
   const int srcH = bitmap.getHeight();
   if (srcW <= 0 || srcH <= 0) return;
+  if (hL > srcH || hR > srcH) {
+    LOG_ERR("GFX", "Perspective bitmap height exceeds source height (hL=%d hR=%d srcH=%d)", hL, hR, srcH);
+    return;
+  }
 
   const int hMax = std::max(hL, hR);
   const int screenW = getScreenWidth();
@@ -1035,7 +1041,7 @@ void GfxRenderer::fillPolygon(const int* xPoints, const int* yPoints, int numPoi
       j = i;
     }
 
-    // Sort nodes by X (simple bubble sort, numPoints is small)
+    // Sort nodes by X (simple O(n^2) in-place sort; numPoints is small)
     for (int i = 0; i < nodes - 1; i++) {
       for (int k = i + 1; k < nodes; k++) {
         if (nodeX[i] > nodeX[k]) {

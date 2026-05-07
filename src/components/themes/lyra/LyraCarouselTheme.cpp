@@ -6,6 +6,7 @@
 #include <I18n.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <string>
@@ -68,17 +69,19 @@ constexpr int kHighlightPad = 7;   // highlight padding around the selected icon
 // Row is anchored to the bottom of the screen, just above button hints
 constexpr int kButtonHintsH = LyraCarouselMetrics::values.buttonHintsHeight;
 
-int lastCarouselSelectorIndex = -1;
+std::atomic<int> lastCarouselSelectorIndex{-1};
 Rect lastCenterCoverRect{0, 0, 0, 0};
 Rect cachedCenterCoverRects[LyraCarouselMetrics::values.homeRecentBooksCount];
 
 Rect shrinkCenterCoverRect(const Rect& rect) {
-  return Rect{rect.x + kCenterCoverVisualInset, rect.y + kCenterCoverVisualInset,
-              rect.width - kCenterCoverVisualInset * 2, rect.height - kCenterCoverVisualInset * 2};
+  const int insetWidth = rect.width - kCenterCoverVisualInset * 2;
+  const int insetHeight = rect.height - kCenterCoverVisualInset * 2;
+  const int width = std::max(0, insetWidth);
+  const int height = std::max(0, insetHeight);
+  return Rect{rect.x + (rect.width - width) / 2, rect.y + (rect.height - height) / 2, width, height};
 }
 
-Rect computeCenterCoverSlotRect(const GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
-                                int centerIdx) {
+Rect computeCenterCoverSlotRect(const GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks) {
   if (recentBooks.empty()) {
     const int screenW = renderer.getScreenWidth();
     const int fallbackX = (screenW - kDisplayCenterW) / 2;
@@ -86,14 +89,8 @@ Rect computeCenterCoverSlotRect(const GfxRenderer& renderer, Rect rect, const st
     return Rect{fallbackX, fallbackY, kDisplayCenterW, kDisplayCenterH};
   }
 
-  centerIdx = std::clamp(centerIdx, 0, static_cast<int>(recentBooks.size()) - 1);
-
   const int screenW = renderer.getScreenWidth();
-  const int textMaxWidth = std::min(screenW - 40, kCenterCoverMaxW + 40);
-  const auto titleLines =
-      renderer.wrappedText(kTitleFontId, recentBooks[centerIdx].title.c_str(), textMaxWidth, 2, EpdFontFamily::BOLD);
   const int titleLineHeight = renderer.getLineHeight(kTitleFontId);
-  const int titleBlockHeight = titleLineHeight * static_cast<int>(titleLines.size());
   const int reservedTitleBlockHeight = titleLineHeight * 2;
   const int titleY = rect.y + kTitleTopClearance;
   const int centerTileY = std::max(rect.y + kCoverTopPad, titleY + reservedTitleBlockHeight + kTitleBottomGap);
@@ -115,7 +112,7 @@ void drawMenuBookmarkIcon(const GfxRenderer& renderer, int x, int y, bool select
   renderer.fillPolygon(polyX, polyY, 5, !selected);
 }
 
-void drawPerspectiveOutline(GfxRenderer& renderer, int x, int y, int width, int leftHeight, int rightHeight) {
+void drawPerspectiveOutline(const GfxRenderer& renderer, int x, int y, int width, int leftHeight, int rightHeight) {
   const int maxHeight = std::max(leftHeight, rightHeight);
   const int topLeft = (maxHeight - leftHeight) / 2;
   const int topRight = (maxHeight - rightHeight) / 2;
@@ -130,7 +127,7 @@ void drawPerspectiveOutline(GfxRenderer& renderer, int x, int y, int width, int 
   renderer.fillRect(x, y + maxHeight + 1, width, 2, false);
 }
 
-void fillPerspectiveSilhouette(GfxRenderer& renderer, int x, int y, int width, int leftHeight, int rightHeight) {
+void fillPerspectiveSilhouette(const GfxRenderer& renderer, int x, int y, int width, int leftHeight, int rightHeight) {
   const int maxHeight = std::max(leftHeight, rightHeight);
   renderer.fillRect(x, y, width, maxHeight, false);
   for (int dx = 0; dx < width; ++dx) {
@@ -146,7 +143,7 @@ void fillPerspectiveSilhouette(GfxRenderer& renderer, int x, int y, int width, i
 // Static helpers
 // ---------------------------------------------------------------------------
 void LyraCarouselTheme::setPreRenderIndex(int idx) {
-  lastCarouselSelectorIndex = idx;
+  lastCarouselSelectorIndex.store(idx, std::memory_order_relaxed);
   if (idx >= 0 && idx < LyraCarouselMetrics::values.homeRecentBooksCount) {
     const Rect cachedRect = cachedCenterCoverRects[idx];
     if (cachedRect.width > 0 && cachedRect.height > 0) lastCenterCoverRect = cachedRect;
@@ -157,7 +154,7 @@ void LyraCarouselTheme::drawCarouselBorder(GfxRenderer& renderer, Rect coverRect
                                            const std::vector<RecentBook>& recentBooks, int centerIdx,
                                            bool inCarouselRow) const {
   if (!inCarouselRow) return;
-  Rect borderRect = shrinkCenterCoverRect(computeCenterCoverSlotRect(renderer, coverRect, recentBooks, centerIdx));
+  Rect borderRect = shrinkCenterCoverRect(computeCenterCoverSlotRect(renderer, coverRect, recentBooks));
   renderer.drawRoundedRect(borderRect.x, borderRect.y, borderRect.width, borderRect.height, kSelectionLineW,
                            kCornerRadius, true);
 }
@@ -166,10 +163,11 @@ void LyraCarouselTheme::drawCarouselBorder(GfxRenderer& renderer, Rect coverRect
 // Carousel cover strip
 // ---------------------------------------------------------------------------
 void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
-                                            const std::vector<RecentBook>& recentBooks, const int selectorIndex,
+                                            const std::vector<RecentBook>& recentBooks, int selectorIndex,
                                             bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
-                                            std::function<bool()> storeCoverBuffer, const BookReadingStats* stats,
-                                            float progressPercent) const {
+                                            const std::function<bool()>& storeCoverBuffer,
+                                            const BookReadingStats* stats, float progressPercent) const {
+  // Reserved for future use: tells the carousel whether Home restored a cached frame buffer.
   (void)bufferRestored;
   if (recentBooks.empty()) {
     drawEmptyRecents(renderer, rect);
@@ -180,7 +178,8 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   // When navigating the icon row, keep showing the last carousel position —
   // falling back to 0 on first use (lastCarouselSelectorIndex == -1).
   const bool inCarouselRow = (selectorIndex < bookCount);
-  int centerIdx = inCarouselRow ? selectorIndex : (lastCarouselSelectorIndex >= 0 ? lastCarouselSelectorIndex : 0);
+  const int lastSelectorIndex = lastCarouselSelectorIndex.load(std::memory_order_relaxed);
+  int centerIdx = inCarouselRow ? selectorIndex : (lastSelectorIndex >= 0 ? lastSelectorIndex : 0);
 
   if (centerIdx >= bookCount) {
     centerIdx = bookCount - 1;
@@ -191,7 +190,7 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   // cppcheck-suppress knownConditionTrueFalse
   // Reachable as false when navigating the icon row with a previously-set
   // lastCarouselSelectorIndex; cppcheck only models the inCarouselRow=true path.
-  if (centerIdx != lastCarouselSelectorIndex) {
+  if (centerIdx != lastSelectorIndex) {
     coverRendered = false;
     coverBufferStored = false;
   }
@@ -206,7 +205,7 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   const int titleY = rect.y + kTitleTopClearance;
   const int centerTileY = std::max(rect.y + kCoverTopPad, titleY + reservedTitleBlockHeight + kTitleBottomGap);
   const int sideMaxHeight = std::max(kNearSideInnerH, kNearSideOuterH);
-  const Rect centerCoverSlotRect = computeCenterCoverSlotRect(renderer, rect, recentBooks, centerIdx);
+  const Rect centerCoverSlotRect = computeCenterCoverSlotRect(renderer, rect, recentBooks);
   const int centerDrawY = centerCoverSlotRect.y;
   const int sideTileY = centerDrawY + (kDisplayCenterH - sideMaxHeight) / 2;
 
@@ -318,7 +317,7 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
   };
 
   if (!coverRendered) {
-    lastCarouselSelectorIndex = centerIdx;
+    lastCarouselSelectorIndex.store(centerIdx, std::memory_order_relaxed);
 
     // Clear the entire cover tile to white so stale pixels from old positions
     // don't persist (drawBitmap only sets black pixels, never clears).
@@ -422,7 +421,7 @@ void LyraCarouselTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int but
                                        const std::function<std::string(int index)>& buttonLabel,
                                        const std::function<UIIcon(int index)>& rowIcon) const {
   if (buttonCount <= 0) return;
-  (void)rect;
+  // Rect is retained by the BaseTheme interface; this carousel menu anchors to the screen bottom.
 
   const int tileH = kMenuIconPad + kMenuIconSize + kMenuIconPad;
   const int tileW = renderer.getScreenWidth() / buttonCount;
@@ -473,7 +472,7 @@ void LyraCarouselTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int but
   }
 }
 
-void LyraCarouselTheme::drawButtonMenuSelectionOverlay(GfxRenderer& renderer, int buttonCount, int selectedIndex,
+void LyraCarouselTheme::drawButtonMenuSelectionOverlay(const GfxRenderer& renderer, int buttonCount, int selectedIndex,
                                                        const std::function<std::string(int index)>& buttonLabel,
                                                        const std::function<UIIcon(int index)>& rowIcon) const {
   if (buttonCount <= 0 || selectedIndex < 0 || selectedIndex >= buttonCount) return;
@@ -566,8 +565,8 @@ void LyraCarouselTheme::drawList(const GfxRenderer& renderer, Rect rect, int ite
       if (isHeaderRow(rowIndex + 1)) selectedY += sectionHeaderTopPadding;
     }
     renderer.fillRoundedRect(rect.x + LyraCarouselMetrics::values.contentSidePadding, selectedY,
-                             contentWidth - LyraCarouselMetrics::values.contentSidePadding * 2, rowHeight,
-                             kCornerRadius, Color::Black);
+                             contentWidth - LyraCarouselMetrics::values.contentSidePadding * 2, rowHeight, cornerRadius,
+                             Color::Black);
   }
 
   int textX = rect.x + LyraCarouselMetrics::values.contentSidePadding + hPad;

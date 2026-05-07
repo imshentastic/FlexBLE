@@ -9,6 +9,7 @@
 
 namespace ReaderUtils {
 
+constexpr unsigned long SKIP_HOLD_MS = 700;
 constexpr unsigned long GO_HOME_MS = 1000;
 
 inline GfxRenderer::Orientation toRendererOrientation(const uint8_t orientation) {
