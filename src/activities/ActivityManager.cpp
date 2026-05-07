@@ -251,7 +251,19 @@ void ActivityManager::popActivity() {
 
 bool ActivityManager::preventAutoSleep() const { return currentActivity && currentActivity->preventAutoSleep(); }
 
-bool ActivityManager::isReaderActivity() const { return currentActivity && currentActivity->isReaderActivity(); }
+bool ActivityManager::isReaderActivity() const {
+  if (currentActivity && currentActivity->isReaderActivity()) {
+    return true;
+  }
+
+  for (const auto& activity : stackActivities) {
+    if (activity && activity->isReaderActivity()) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 bool ActivityManager::canSnapshotForSleepOverlay() const {
   return currentActivity && currentActivity->canSnapshotForSleepOverlay();
