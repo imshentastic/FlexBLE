@@ -10,6 +10,7 @@
 #include <Logging.h>
 #include <esp_system.h>
 
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <limits>
@@ -19,6 +20,7 @@
 #include "BookStatsActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "EpubReaderAutoPageTurnIntervalActivity.h"
 #include "EpubReaderBookmarkListActivity.h"
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderFootnotesActivity.h"
@@ -39,8 +41,10 @@ namespace {
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
 constexpr unsigned long skipChapterMs = 700;
 constexpr unsigned long longPressMenuMs = 600;
-// seconds per page, ordered slowest to fastest; index 0 is unused (off state)
-constexpr std::array<int, 8> PAGE_TURN_INTERVALS_S = {0, 60, 45, 30, 20, 15, 10, 5};
+constexpr std::array<uint16_t, 7> PAGE_TURN_CYCLE_INTERVALS_S = {5, 10, 15, 20, 30, 45, 60};
+constexpr uint16_t DEFAULT_AUTO_PAGE_TURN_INTERVAL_S = 30;
+constexpr uint16_t MIN_AUTO_PAGE_TURN_INTERVAL_S = 5;
+constexpr uint16_t MAX_AUTO_PAGE_TURN_INTERVAL_S = 120;
 constexpr int MAX_PAGE_LOAD_RETRIES = 3;
 
 int clampPercent(int percent) {
@@ -51,6 +55,16 @@ int clampPercent(int percent) {
     return 100;
   }
   return percent;
+}
+
+uint16_t clampAutoPageTurnIntervalSeconds(const uint16_t seconds) {
+  if (seconds < MIN_AUTO_PAGE_TURN_INTERVAL_S) {
+    return MIN_AUTO_PAGE_TURN_INTERVAL_S;
+  }
+  if (seconds > MAX_AUTO_PAGE_TURN_INTERVAL_S) {
+    return MAX_AUTO_PAGE_TURN_INTERVAL_S;
+  }
+  return seconds;
 }
 
 }  // namespace
@@ -421,7 +435,6 @@ void EpubReaderActivity::loop() {
                              // Always apply orientation change even if the menu was cancelled
                              const auto& menu = std::get<MenuResult>(result.data);
                              applyOrientation(menu.orientation);
-                             toggleAutoPageTurn(menu.pageTurnOption);
                              if (menu.settingsChanged) {
                                RenderLock lock(*this);
                                if (section) {
@@ -818,6 +831,16 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::AUTO_PAGE_TURN:
+      startActivityForResult(
+          std::make_unique<EpubReaderAutoPageTurnIntervalActivity>(renderer, mappedInput,
+                                                                   getAutoPageTurnIntervalSeconds()),
+          [this](const ActivityResult& result) {
+            if (!result.isCancelled) {
+              setAutoPageTurnIntervalSeconds(static_cast<uint16_t>(std::get<AutoPageTurnResult>(result.data).seconds));
+            }
+            requestUpdate();
+          });
+      break;
     case EpubReaderMenuActivity::MenuAction::ROTATE_SCREEN:
     case EpubReaderMenuActivity::MenuAction::READER_OPTIONS:
       break;
@@ -893,13 +916,18 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
       onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::SCREENSHOT);
       break;
     case CrossPointSettings::LONG_MENU_CYCLE_PAGE_TURN:
-      // Cycle Off->5s->10s->15s->20s->30s->45s->60s->Off (indices: 0,7,6,5,4,3,2,1)
-      if (currentPageTurnOption == 0) {
-        currentPageTurnOption = static_cast<uint8_t>(PAGE_TURN_INTERVALS_S.size() - 1);
+      if (!automaticPageTurnActive) {
+        setAutoPageTurnIntervalSeconds(PAGE_TURN_CYCLE_INTERVALS_S.front());
       } else {
-        currentPageTurnOption--;
+        const uint16_t currentSeconds = getAutoPageTurnIntervalSeconds();
+        const auto it =
+            std::upper_bound(PAGE_TURN_CYCLE_INTERVALS_S.begin(), PAGE_TURN_CYCLE_INTERVALS_S.end(), currentSeconds);
+        if (it == PAGE_TURN_CYCLE_INTERVALS_S.end()) {
+          setAutoPageTurnIntervalSeconds(0);
+        } else {
+          setAutoPageTurnIntervalSeconds(*it);
+        }
       }
-      toggleAutoPageTurn(currentPageTurnOption);
       requestUpdate();
       break;
     case CrossPointSettings::LONG_MENU_FILE_TRANSFER:
@@ -1083,15 +1111,23 @@ void EpubReaderActivity::applyOrientation(const uint8_t orientation) {
   }
 }
 
-void EpubReaderActivity::toggleAutoPageTurn(const uint8_t selectedPageTurnOption) {
-  currentPageTurnOption = selectedPageTurnOption;
-  if (selectedPageTurnOption == 0 || selectedPageTurnOption >= PAGE_TURN_INTERVALS_S.size()) {
+uint16_t EpubReaderActivity::getAutoPageTurnIntervalSeconds() const {
+  const uint16_t seconds = static_cast<uint16_t>(pageTurnDuration / 1000UL);
+  if (seconds == 0) {
+    return DEFAULT_AUTO_PAGE_TURN_INTERVAL_S;
+  }
+  return clampAutoPageTurnIntervalSeconds(seconds);
+}
+
+void EpubReaderActivity::setAutoPageTurnIntervalSeconds(uint16_t seconds) {
+  if (seconds == 0) {
     automaticPageTurnActive = false;
     return;
   }
 
+  seconds = clampAutoPageTurnIntervalSeconds(seconds);
   lastPageTurnTime = millis();
-  pageTurnDuration = static_cast<unsigned long>(PAGE_TURN_INTERVALS_S[selectedPageTurnOption]) * 1000UL;
+  pageTurnDuration = static_cast<unsigned long>(seconds) * 1000UL;
   automaticPageTurnActive = true;
 
   const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();

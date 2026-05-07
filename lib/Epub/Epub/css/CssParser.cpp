@@ -506,12 +506,18 @@ void CssParser::processRuleBlockWithStyle(const std::string& selectorGroup, cons
       return;
     }
 
-    // Store or merge with existing
-    auto it = rulesBySelector_.find(key);
+    // Reserve on first insert to avoid repeated reallocations during CSS parsing.
+    if (rulesBySelector_.empty()) {
+      rulesBySelector_.reserve(MAX_RULES);
+    }
+    // Linear scan is acceptable here because this only runs while parsing CSS,
+    // and it avoids the fragmented heap pattern from unordered_map allocations.
+    auto it = std::find_if(rulesBySelector_.begin(), rulesBySelector_.end(),
+                           [&key](const std::pair<std::string, CssStyle>& p) { return p.first == key; });
     if (it != rulesBySelector_.end()) {
       it->second.applyOver(style);
     } else {
-      rulesBySelector_[key] = style;
+      rulesBySelector_.push_back({key, style});
     }
   }
 }
@@ -660,11 +666,27 @@ bool CssParser::loadFromStream(FsFile& source) {
     handleChar('/');
   }
 
+  std::sort(rulesBySelector_.begin(), rulesBySelector_.end(),
+            [](const std::pair<std::string, CssStyle>& a, const std::pair<std::string, CssStyle>& b) {
+              return a.first < b.first;
+            });
+
   LOG_DBG("CSS", "Parsed %zu rules from %zu bytes", rulesBySelector_.size(), totalRead);
   return true;
 }
 
 // Style resolution
+
+const CssStyle* CssParser::findRule(const std::string& key) const {
+  auto it = std::lower_bound(rulesBySelector_.begin(), rulesBySelector_.end(), key,
+                             [](const std::pair<std::string, CssStyle>& entry, const std::string& searchKey) {
+                               return entry.first < searchKey;
+                             });
+  if (it != rulesBySelector_.end() && it->first == key) {
+    return &it->second;
+  }
+  return nullptr;
+}
 
 CssStyle CssParser::resolveStyle(const std::string& tagName, const std::string& classAttr,
                                  const std::vector<CssAncestorEntry>& ancestors) const {
@@ -681,9 +703,8 @@ CssStyle CssParser::resolveStyle(const std::string& tagName, const std::string& 
   const std::string tag = normalized(tagName);
 
   // 1. Apply element-level style (lowest priority)
-  const auto tagIt = rulesBySelector_.find(tag);
-  if (tagIt != rulesBySelector_.end()) {
-    result.applyOver(tagIt->second);
+  if (const auto* tagStyle = findRule(tag)) {
+    result.applyOver(*tagStyle);
   }
 
   // 2. Apply two-part descendant rules — higher specificity than bare element, lower than class
@@ -706,22 +727,18 @@ CssStyle CssParser::resolveStyle(const std::string& tagName, const std::string& 
     const auto classes = splitWhitespace(classAttr);
 
     for (const auto& cls : classes) {
-      std::string classKey = "." + normalized(cls);
-
-      auto classIt = rulesBySelector_.find(classKey);
-      if (classIt != rulesBySelector_.end()) {
-        result.applyOver(classIt->second);
+      const std::string classKey = "." + normalized(cls);
+      if (const auto* classStyle = findRule(classKey)) {
+        result.applyOver(*classStyle);
       }
     }
 
     // TODO: Support combinations of classes (e.g. style on p.class1.class2)
     // 5. Apply element.class styles (highest priority)
     for (const auto& cls : classes) {
-      std::string combinedKey = tag + "." + normalized(cls);
-
-      auto combinedIt = rulesBySelector_.find(combinedKey);
-      if (combinedIt != rulesBySelector_.end()) {
-        result.applyOver(combinedIt->second);
+      const std::string combinedKey = tag + "." + normalized(cls);
+      if (const auto* combinedStyle = findRule(combinedKey)) {
+        result.applyOver(*combinedStyle);
       }
     }
   }
@@ -872,6 +889,8 @@ bool CssParser::loadFromCache() {
     return false;
   }
 
+  rulesBySelector_.reserve(ruleCount);
+
   auto hasRemainingBytes = [&file](const size_t neededBytes) -> bool {
     return static_cast<size_t>(file.available()) >= neededBytes;
   };
@@ -958,8 +977,13 @@ bool CssParser::loadFromCache() {
       rulesBySelector_.clear();
       return false;
     }
-    rulesBySelector_[selector] = style;
+    rulesBySelector_.emplace_back(std::move(selector), style);
   }
+
+  std::sort(rulesBySelector_.begin(), rulesBySelector_.end(),
+            [](const std::pair<std::string, CssStyle>& a, const std::pair<std::string, CssStyle>& b) {
+              return a.first < b.first;
+            });
 
   // Read descendant rules
   uint16_t descendantCount = 0;

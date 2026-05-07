@@ -3,7 +3,6 @@
 #include <HalStorage.h>
 
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -97,8 +96,11 @@ class CssParser {
    * Clear all loaded rules
    */
   void clear() {
-    rulesBySelector_.clear();
-    descendantRules_.clear();
+    // These buffers can grow large during chapter indexing. Swap with empty
+    // vectors so the capacity is released back to the heap, matching the old
+    // post-index cleanup behavior callers relied on.
+    decltype(rulesBySelector_){}.swap(rulesBySelector_);
+    decltype(descendantRules_){}.swap(descendantRules_);
   }
 
   /**
@@ -131,11 +133,14 @@ class CssParser {
     CssStyle style;
   };
 
-  // Storage: maps normalized selector -> style properties
-  std::unordered_map<std::string, CssStyle> rulesBySelector_;
+  // Storage: sorted vector of (selector, style) pairs.
+  // Kept sorted by selector so resolveStyle can use binary search.
+  std::vector<std::pair<std::string, CssStyle>> rulesBySelector_;
   std::vector<DescendantRule> descendantRules_;
 
   std::string cachePath;
+
+  const CssStyle* findRule(const std::string& key) const;
 
   // Internal parsing helpers
   void processRuleBlockWithStyle(const std::string& selectorGroup, const CssStyle& style);

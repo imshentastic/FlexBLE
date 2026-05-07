@@ -39,7 +39,6 @@ class EpubReaderActivity final : public Activity {
   bool pendingScreenshot = false;
   bool skipNextButtonCheck = false;  // Skip button processing for one frame after subactivity exit
   bool automaticPageTurnActive = false;
-  uint8_t currentPageTurnOption = 0;
   bool longPressMenuHandled = false;
   bool longPowerButtonHandled = false;
   bool sideButtonLongPressHandled = false;
@@ -98,7 +97,8 @@ class EpubReaderActivity final : public Activity {
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
   void applyOrientation(uint8_t orientation);
   void executeLongPressMenuAction();
-  void toggleAutoPageTurn(uint8_t selectedPageTurnOption);
+  void setAutoPageTurnIntervalSeconds(uint16_t seconds);
+  uint16_t getAutoPageTurnIntervalSeconds() const;
   void pageTurn(bool isForwardTurn);
   float getCurrentBookProgressPercent() const;
   void initializeCompletionPromptTrigger();

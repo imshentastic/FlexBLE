@@ -20,7 +20,6 @@ struct KeyboardResult {
 struct MenuResult {
   int action = -1;
   uint8_t orientation = 0;
-  uint8_t pageTurnOption = 0;
   bool settingsChanged = false;
 };
 
@@ -30,6 +29,10 @@ struct ChapterResult {
 
 struct PercentResult {
   int percent = 0;
+};
+
+struct AutoPageTurnResult {
+  int seconds = 0;
 };
 
 struct PageResult {
@@ -60,9 +63,9 @@ struct FileBrowserActionResult {
   int action = -1;
 };
 
-using ResultVariant =
-    std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, PageResult,
-                 SyncResult, NetworkModeResult, FootnoteResult, BookmarkResult, FileBrowserActionResult>;
+using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,
+                                   AutoPageTurnResult, PageResult, SyncResult, NetworkModeResult, FootnoteResult,
+                                   BookmarkResult, FileBrowserActionResult>;
 
 struct ActivityResult {
   bool isCancelled = false;
