@@ -141,9 +141,10 @@ class CssParser {
   std::string cachePath;
 
   const CssStyle* findRule(const std::string& key) const;
+  [[nodiscard]] bool ensureRuleCapacity();
 
   // Internal parsing helpers
-  void processRuleBlockWithStyle(const std::string& selectorGroup, const CssStyle& style);
+  [[nodiscard]] bool processRuleBlockWithStyle(const std::string& selectorGroup, const CssStyle& style);
   static bool selectorMatchesElement(const std::string& selector, const std::string& tag, const std::string& classAttr);
   static CssStyle parseDeclarations(const std::string& declBlock);
   static void parseDeclarationIntoStyle(const std::string& decl, CssStyle& style, std::string& propNameBuf,

@@ -52,6 +52,11 @@ constexpr size_t MIN_FREE_HEAP_FOR_CSS = 48 * 1024;
 // Prevents parsing of extremely long or malformed selectors
 constexpr size_t MAX_SELECTOR_LENGTH = 256;
 
+// Grow selector storage in small chunks. Reserving MAX_RULES up front can
+// require one large contiguous heap block and abort on ESP32-C3.
+constexpr size_t RULE_RESERVE_CHUNK = 32;
+constexpr uint32_t MIN_HEAP_AFTER_RULE_GROW = 16 * 1024;
+
 // Check if character is CSS whitespace
 bool isCssWhitespace(const char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f'; }
 
@@ -402,11 +407,33 @@ bool CssParser::selectorMatchesElement(const std::string& selector, const std::s
 
 // Rule processing
 
-void CssParser::processRuleBlockWithStyle(const std::string& selectorGroup, const CssStyle& style) {
+bool CssParser::ensureRuleCapacity() {
+  if (rulesBySelector_.size() < rulesBySelector_.capacity()) {
+    return true;
+  }
+  if (rulesBySelector_.capacity() >= MAX_RULES) {
+    return false;
+  }
+
+  const size_t nextCapacity = std::min(rulesBySelector_.capacity() + RULE_RESERVE_CHUNK, MAX_RULES);
+  const size_t reserveBytes = nextCapacity * sizeof(decltype(rulesBySelector_)::value_type);
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
+  if (freeHeap <= reserveBytes + MIN_HEAP_AFTER_RULE_GROW || maxAllocHeap <= reserveBytes + MIN_HEAP_AFTER_RULE_GROW) {
+    LOG_ERR("CSS", "Skipping remaining CSS rules: heap too low for rule table growth (free=%u, maxAlloc=%u, need=%zu)",
+            freeHeap, maxAllocHeap, reserveBytes);
+    return false;
+  }
+
+  rulesBySelector_.reserve(nextCapacity);
+  return true;
+}
+
+bool CssParser::processRuleBlockWithStyle(const std::string& selectorGroup, const CssStyle& style) {
   // Check if we've reached the rule limit before processing
   if (rulesBySelector_.size() >= MAX_RULES) {
     LOG_DBG("CSS", "Reached max rules limit (%zu), stopping CSS parsing", MAX_RULES);
-    return;
+    return true;
   }
 
   // Handle comma-separated selectors
@@ -503,12 +530,11 @@ void CssParser::processRuleBlockWithStyle(const std::string& selectorGroup, cons
     // Skip if this would exceed the rule limit
     if (rulesBySelector_.size() >= MAX_RULES) {
       LOG_DBG("CSS", "Reached max rules limit, stopping selector processing");
-      return;
+      return true;
     }
 
-    // Reserve on first insert to avoid repeated reallocations during CSS parsing.
-    if (rulesBySelector_.empty()) {
-      rulesBySelector_.reserve(MAX_RULES);
+    if (!ensureRuleCapacity()) {
+      return false;
     }
     // Linear scan is acceptable here because this only runs while parsing CSS,
     // and it avoids the fragmented heap pattern from unordered_map allocations.
@@ -517,9 +543,10 @@ void CssParser::processRuleBlockWithStyle(const std::string& selectorGroup, cons
     if (it != rulesBySelector_.end()) {
       it->second.applyOver(style);
     } else {
-      rulesBySelector_.push_back({key, style});
+      rulesBySelector_.emplace_back(std::move(key), style);
     }
   }
+  return true;
 }
 
 // Main parsing entry point
@@ -548,6 +575,7 @@ bool CssParser::loadFromStream(FsFile& source) {
 
   int bodyDepth = 0;
   bool skippingRule = false;
+  bool stopParsing = false;
   CssStyle currentStyle;
 
   auto handleChar = [&](const char c) {
@@ -597,7 +625,7 @@ bool CssParser::loadFromStream(FsFile& source) {
           parseDeclarationIntoStyle(declBuffer.str(), currentStyle, propNameBuf, propValueBuf);
         }
         if (!skippingRule) {
-          processRuleBlockWithStyle(selector.str(), currentStyle);
+          stopParsing = !processRuleBlockWithStyle(selector.str(), currentStyle);
         }
         selector.clear();
         declBuffer.clear();
@@ -622,13 +650,13 @@ bool CssParser::loadFromStream(FsFile& source) {
   };
 
   char buffer[READ_BUFFER_SIZE];
-  while (source.available()) {
+  while (!stopParsing && source.available()) {
     int bytesRead = source.read(buffer, sizeof(buffer));
     if (bytesRead <= 0) break;
 
     totalRead += static_cast<size_t>(bytesRead);
 
-    for (int i = 0; i < bytesRead; ++i) {
+    for (int i = 0; i < bytesRead && !stopParsing; ++i) {
       const char c = buffer[i];
 
       if (inComment) {
@@ -662,8 +690,12 @@ bool CssParser::loadFromStream(FsFile& source) {
     }
   }
 
-  if (maybeSlash) {
+  if (!stopParsing && maybeSlash) {
     handleChar('/');
+  }
+
+  if (stopParsing) {
+    return false;
   }
 
   std::sort(rulesBySelector_.begin(), rulesBySelector_.end(),
@@ -889,8 +921,6 @@ bool CssParser::loadFromCache() {
     return false;
   }
 
-  rulesBySelector_.reserve(ruleCount);
-
   auto hasRemainingBytes = [&file](const size_t neededBytes) -> bool {
     return static_cast<size_t>(file.available()) >= neededBytes;
   };
@@ -977,7 +1007,11 @@ bool CssParser::loadFromCache() {
       rulesBySelector_.clear();
       return false;
     }
-    rulesBySelector_.emplace_back(std::move(selector), style);
+    if (!ensureRuleCapacity()) {
+      rulesBySelector_.clear();
+      return false;
+    }
+    rulesBySelector_.emplace_back(std::move(selector), std::move(style));
   }
 
   std::sort(rulesBySelector_.begin(), rulesBySelector_.end(),

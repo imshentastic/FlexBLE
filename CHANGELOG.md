@@ -15,6 +15,7 @@
 - Reject invalid serialized string lengths before allocation so corrupted cache data cannot trigger oversized string resizes during reads
 - Relax the EPUB low-memory image fallback so inline images are no longer suppressed solely because the heap is fragmented while overall free memory is still above the safety threshold
 - Reduce CSS-parser heap fragmentation during EPUB indexing so image-heavy chapters are less likely to crash while pre-indexing the next section
+- Avoid an EPUB CSS-cache rebuild crash after clearing a book cache by growing the CSS rule table in guarded chunks instead of reserving the full rule limit at once
 
 ## [v1.2.9.1] - 2026-05-03
 

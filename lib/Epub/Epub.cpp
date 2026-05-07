@@ -274,6 +274,7 @@ void Epub::parseCssFiles() const {
   }
 
   // No cache yet - parse CSS files
+  bool parsedAllCss = true;
   for (const auto& cssPath : cssFiles) {
     LOG_DBG("EBP", "Parsing CSS file: %s", cssPath.c_str());
 
@@ -318,10 +319,21 @@ void Epub::parseCssFiles() const {
       Storage.remove(tmpCssPath.c_str());
       continue;
     }
-    cssParser->loadFromStream(tempCssFile);
+    if (!cssParser->loadFromStream(tempCssFile)) {
+      LOG_ERR("EBP", "CSS parsing stopped due to low memory: %s", cssPath.c_str());
+      parsedAllCss = false;
+    }
     // Explicitly close() file before calling Storage.remove()
     tempCssFile.close();
     Storage.remove(tmpCssPath.c_str());
+    if (!parsedAllCss) {
+      break;
+    }
+  }
+
+  if (!parsedAllCss) {
+    cssParser->clear();
+    return;
   }
 
   // Save to cache for next time
