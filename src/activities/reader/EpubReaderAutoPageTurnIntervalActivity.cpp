@@ -60,7 +60,7 @@ void EpubReaderAutoPageTurnIntervalActivity::loop() {
 void EpubReaderAutoPageTurnIntervalActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
-  renderer.drawCenteredText(UI_12_FONT_ID, 15, tr(STR_AUTO_TURN_PAGES_PER_MIN), true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(UI_12_FONT_ID, 15, tr(STR_AUTO_TURN_INTERVAL_SECONDS), true, EpdFontFamily::BOLD);
 
   const std::string secondsText = std::to_string(seconds);
   renderer.drawCenteredText(UI_12_FONT_ID, 90, secondsText.c_str(), true, EpdFontFamily::BOLD);
