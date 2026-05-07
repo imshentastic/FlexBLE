@@ -3,9 +3,9 @@
 #include <Logging.h>
 
 bool ImageToFramebufferDecoder::validateImageDimensions(int width, int height, const std::string& format) {
-  if (width * height > MAX_SOURCE_PIXELS) {
-    LOG_ERR("IMG", "Image too large (%dx%d = %d pixels %s), max supported: %d pixels", width, height, width * height,
-            format.c_str(), MAX_SOURCE_PIXELS);
+  if (width <= 0 || height <= 0 || width > MAX_SOURCE_WIDTH || height > MAX_SOURCE_HEIGHT) {
+    LOG_ERR("IMG", "Image too large or invalid (%dx%d %s), max supported: %dx%d", width, height, format.c_str(),
+            MAX_SOURCE_WIDTH, MAX_SOURCE_HEIGHT);
     return false;
   }
   return true;

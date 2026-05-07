@@ -8,6 +8,56 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
+namespace {
+
+struct ReaderLayoutSettingsSnapshot {
+  uint8_t fontFamily;
+  uint8_t fontSize;
+  uint8_t lineSpacing;
+  uint8_t orientation;
+  uint8_t screenMargin;
+  uint8_t paragraphAlignment;
+  uint8_t embeddedStyle;
+  uint8_t hyphenationEnabled;
+  uint8_t imageRendering;
+  uint8_t extraParagraphSpacing;
+  uint8_t forceParagraphIndents;
+  uint8_t bionicReadingEnabled;
+  uint8_t guideReadingEnabled;
+};
+
+ReaderLayoutSettingsSnapshot captureReaderLayoutSettings() {
+  return {
+      SETTINGS.fontFamily,
+      SETTINGS.fontSize,
+      SETTINGS.lineSpacing,
+      SETTINGS.orientation,
+      SETTINGS.screenMargin,
+      SETTINGS.paragraphAlignment,
+      SETTINGS.embeddedStyle,
+      SETTINGS.hyphenationEnabled,
+      SETTINGS.imageRendering,
+      SETTINGS.extraParagraphSpacing,
+      SETTINGS.forceParagraphIndents,
+      SETTINGS.bionicReadingEnabled,
+      SETTINGS.guideReadingEnabled,
+  };
+}
+
+bool haveReaderLayoutSettingsChanged(const ReaderLayoutSettingsSnapshot& before) {
+  return before.fontFamily != SETTINGS.fontFamily || before.fontSize != SETTINGS.fontSize ||
+         before.lineSpacing != SETTINGS.lineSpacing || before.orientation != SETTINGS.orientation ||
+         before.screenMargin != SETTINGS.screenMargin || before.paragraphAlignment != SETTINGS.paragraphAlignment ||
+         before.embeddedStyle != SETTINGS.embeddedStyle || before.hyphenationEnabled != SETTINGS.hyphenationEnabled ||
+         before.imageRendering != SETTINGS.imageRendering ||
+         before.extraParagraphSpacing != SETTINGS.extraParagraphSpacing ||
+         before.forceParagraphIndents != SETTINGS.forceParagraphIndents ||
+         before.bionicReadingEnabled != SETTINGS.bionicReadingEnabled ||
+         before.guideReadingEnabled != SETTINGS.guideReadingEnabled;
+}
+
+}  // namespace
+
 EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                const std::string& title, const int currentPage, const int totalPages,
                                                const int bookProgressPercent, const uint8_t currentOrientation,
@@ -83,9 +133,10 @@ void EpubReaderMenuActivity::loop() {
     }
 
     if (selectedAction == MenuAction::READER_OPTIONS) {
+      const auto before = captureReaderLayoutSettings();
       startActivityForResult(std::make_unique<ReaderOptionsActivity>(renderer, mappedInput),
-                             [this](const ActivityResult&) {
-                               settingsChanged = true;
+                             [this, before](const ActivityResult&) {
+                               settingsChanged = settingsChanged || haveReaderLayoutSettingsChanged(before);
                                pendingOrientation = SETTINGS.orientation;  // sync in case orientation changed
                                requestUpdate();
                              });

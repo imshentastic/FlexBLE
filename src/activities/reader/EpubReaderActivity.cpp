@@ -1444,7 +1444,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   // Font prewarm: scan pass accumulates text, then prewarm, then real render
   const uint32_t heapBefore = esp_get_free_heap_size();
   auto scope = fcm->createPrewarmScope();
-  page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);  // scan pass
+  page->renderText(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);  // scan pass
   scope.endScanAndPrewarm();
   const uint32_t heapAfter = esp_get_free_heap_size();
   fcm->logStats("prewarm");
