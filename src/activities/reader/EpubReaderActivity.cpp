@@ -37,7 +37,6 @@
 
 namespace {
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
-constexpr unsigned long skipChapterMs = 700;
 constexpr unsigned long longPressMenuMs = 600;
 // seconds per page, ordered slowest to fastest; index 0 is unused (off state)
 constexpr std::array<int, 8> PAGE_TURN_INTERVALS_S = {0, 60, 45, 30, 20, 15, 10, 5};
@@ -465,7 +464,7 @@ void EpubReaderActivity::loop() {
       return;
     }
 
-    const bool longPressReady = mappedInput.getHeldTime() > skipChapterMs;
+    const bool longPressReady = mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS;
     const bool topLongPressed =
         longPressReady && (mappedInput.isPressed(MappedInputManager::Button::Up) || topReleased);
     const bool bottomLongPressed =
@@ -520,10 +519,11 @@ void EpubReaderActivity::loop() {
     return;
   }
 
+  const bool longPress = !fromTilt && mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS;
   const bool skipChapter =
-      !fromTilt && mappedInput.getHeldTime() > skipChapterMs &&
+      longPress &&
       (fromSideBtn ? SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_CHAPTER_SKIP
-                   : static_cast<bool>(SETTINGS.longPressChapterSkip));
+                   : SETTINGS.longPressButtonBehavior == CrossPointSettings::CHAPTER_SKIP);
 
   // Don't skip chapter after screenshot
   if (gpio.wasReleased(HalGPIO::BTN_POWER) && gpio.wasReleased(HalGPIO::BTN_DOWN)) {
@@ -531,7 +531,6 @@ void EpubReaderActivity::loop() {
   }
 
   if (skipChapter) {
-    lastPageTurnTime = millis();
     // We don't want to delete the section mid-render, so grab the semaphore
     {
       RenderLock lock(*this);
@@ -539,6 +538,15 @@ void EpubReaderActivity::loop() {
       currentSpineIndex = nextTriggered ? currentSpineIndex + 1 : currentSpineIndex - 1;
       section.reset();
     }
+    requestUpdate();
+    return;
+  }
+
+  if (longPress && !fromSideBtn && SETTINGS.longPressButtonBehavior == CrossPointSettings::ORIENTATION_CHANGE) {
+    const uint8_t newOrientation =
+        nextTriggered ? (SETTINGS.orientation - 1 + SETTINGS.ORIENTATION_COUNT) % SETTINGS.ORIENTATION_COUNT
+                      : (SETTINGS.orientation + 1) % SETTINGS.ORIENTATION_COUNT;
+    applyOrientation(newOrientation);
     requestUpdate();
     return;
   }

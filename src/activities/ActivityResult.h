@@ -60,9 +60,13 @@ struct FileBrowserActionResult {
   int action = -1;
 };
 
-using ResultVariant =
-    std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, PageResult,
-                 SyncResult, NetworkModeResult, FootnoteResult, BookmarkResult, FileBrowserActionResult>;
+struct FilePathResult {
+  std::string path;
+};
+
+using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,
+                                   PageResult, SyncResult, NetworkModeResult, FootnoteResult, BookmarkResult,
+                                   FileBrowserActionResult, FilePathResult>;
 
 struct ActivityResult {
   bool isCancelled = false;

@@ -9,6 +9,10 @@
 #include "util/ButtonNavigator.h"
 
 class FileBrowserActivity final : public Activity {
+ public:
+  // Books = standard reader browser; PickFirmware = filter to .bin only and return path via ActivityResult.
+  enum class Mode { Books, PickFirmware };
+
  private:
   // Deletion
   void clearFileMetadata(const std::string& fullPath);
@@ -24,6 +28,11 @@ class FileBrowserActivity final : public Activity {
 
   bool lockLongPressBack = false;
   bool longPressConfirmHandled = false;
+  // True when this activity was entered while Confirm was already held; we must swallow the next
+  // release so we don't immediately auto-open the first entry.
+  bool lockNextConfirmRelease = false;
+
+  Mode mode = Mode::Books;
 
   // Files state
   std::string basepath = "/";
@@ -34,8 +43,11 @@ class FileBrowserActivity final : public Activity {
   size_t findEntry(const std::string& name) const;
 
  public:
-  explicit FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialPath = "/")
-      : Activity("FileBrowser", renderer, mappedInput), basepath(initialPath.empty() ? "/" : std::move(initialPath)) {}
+  explicit FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialPath = "/",
+                               Mode mode = Mode::Books)
+      : Activity("FileBrowser", renderer, mappedInput),
+        mode(mode),
+        basepath(initialPath.empty() ? "/" : std::move(initialPath)) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;

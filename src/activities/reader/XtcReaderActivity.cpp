@@ -10,21 +10,16 @@
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
-#include <HalTiltSensor.h>
 #include <I18n.h>
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
+#include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "XtcReaderChapterSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-
-namespace {
-constexpr unsigned long skipPageMs = 700;
-constexpr unsigned long goHomeMs = 1000;
-}  // namespace
 
 void XtcReaderActivity::onEnter() {
   Activity::onEnter();
@@ -75,19 +70,20 @@ void XtcReaderActivity::loop() {
   }
 
   // Long press BACK (1s+) goes to file selection
-  if (mappedInput.isPressed(MappedInputManager::Button::Back) && mappedInput.getHeldTime() >= goHomeMs) {
+  if (mappedInput.isPressed(MappedInputManager::Button::Back) && mappedInput.getHeldTime() >= ReaderUtils::GO_HOME_MS) {
     activityManager.goToFileBrowser(xtc ? xtc->getPath() : "");
     return;
   }
 
   // Short press BACK goes directly to home
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back) && mappedInput.getHeldTime() < goHomeMs) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) &&
+      mappedInput.getHeldTime() < ReaderUtils::GO_HOME_MS) {
     onGoHome();
     return;
   }
 
   // Front buttons fire on press when long-press chapter skip is disabled (faster response).
-  const bool frontUsePress = !SETTINGS.longPressChapterSkip;
+  const bool frontUsePress = SETTINGS.longPressButtonBehavior == CrossPointSettings::OFF;
   // Side buttons fire on press only when long-press action is OFF.
   const bool sideUsePress = SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_OFF;
 
@@ -140,9 +136,9 @@ void XtcReaderActivity::loop() {
   }
 
   const bool skipPages =
-      !fromTilt && !powerPageTurn && mappedInput.getHeldTime() > skipPageMs &&
+      !fromTilt && !powerPageTurn && mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS &&
       (fromSideBtn ? SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_CHAPTER_SKIP
-                   : static_cast<bool>(SETTINGS.longPressChapterSkip));
+                   : SETTINGS.longPressButtonBehavior == CrossPointSettings::CHAPTER_SKIP);
   const int skipAmount = skipPages ? 10 : 1;
 
   if (prevTriggered) {
@@ -269,14 +265,7 @@ void XtcReaderActivity::renderPage() {
       }
     }
 
-    // Display BW with conditional refresh based on pagesUntilFullRefresh
-    if (pagesUntilFullRefresh <= 1) {
-      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-      pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
-    } else {
-      renderer.displayBuffer();
-      pagesUntilFullRefresh--;
-    }
+    ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
 
     // Pass 2: LSB buffer - mark DARK gray only (XTH value 1)
     // In LUT: 0 bit = apply gray effect, 1 bit = untouched
@@ -348,14 +337,7 @@ void XtcReaderActivity::renderPage() {
 
   // XTC pages already have status bar pre-rendered, no need to add our own
 
-  // Display with appropriate refresh
-  if (pagesUntilFullRefresh <= 1) {
-    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-    pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
-  } else {
-    renderer.displayBuffer();
-    pagesUntilFullRefresh--;
-  }
+  ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
 
   LOG_DBG("XTR", "Rendered page %lu/%lu (%u-bit)", currentPage + 1, xtc->getPageCount(), bitDepth);
 }

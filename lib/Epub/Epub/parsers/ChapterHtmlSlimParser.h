@@ -73,6 +73,7 @@ class ChapterHtmlSlimParser {
     bool hasStrikethrough = false, strikethrough = false;
   };
   std::vector<StyleStackEntry> inlineStyleStack;
+  std::vector<BlockStyle> blockStyleStack;  // accumulated block styles from open ancestor elements
   CssStyle currentCssStyle;
   bool effectiveBold = false;
   bool effectiveItalic = false;

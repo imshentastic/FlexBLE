@@ -28,8 +28,7 @@
 namespace {
 // Folders/files to hide from the web interface file browser
 // Note: Items starting with "." are automatically hidden
-const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
-constexpr size_t HIDDEN_ITEMS_COUNT = sizeof(HIDDEN_ITEMS) / sizeof(HIDDEN_ITEMS[0]);
+constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
 constexpr uint16_t UDP_PORTS[] = {54982, 48123, 39001, 44044, 59678};
 constexpr uint16_t LOCAL_UDP_PORT = 8134;
 
@@ -93,8 +92,8 @@ bool isProtectedPath(const String& path) {
 
     if (segment.startsWith(".")) return true;
 
-    for (size_t i = 0; i < HIDDEN_ITEMS_COUNT; i++) {
-      if (segment.equals(HIDDEN_ITEMS[i])) return true;
+    for (const auto* item : HIDDEN_ITEMS) {
+      if (segment.equals(item)) return true;
     }
 
     start = end + 1;
@@ -140,6 +139,9 @@ void CrossPointWebServer::begin() {
   // Disable WiFi sleep to improve responsiveness and prevent 'unreachable' errors.
   // This is critical for reliable web server operation on ESP32.
   WiFi.setSleep(false);
+  // Default varies by ESP32 core version. The activity's loss-recovery loop
+  // relies on driver retries during transient disconnects.
+  WiFi.setAutoReconnect(true);
 
   // Note: WebServer class doesn't have setNoDelay() in the standard ESP32 library.
   // We rely on disabling WiFi sleep for responsiveness.
@@ -414,8 +416,8 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
 
     // Check against explicitly hidden items list
     if (!shouldHide) {
-      for (size_t i = 0; i < HIDDEN_ITEMS_COUNT; i++) {
-        if (fileName.equals(HIDDEN_ITEMS[i])) {
+      for (const auto* item : HIDDEN_ITEMS) {
+        if (fileName.equals(item)) {
           shouldHide = true;
           break;
         }

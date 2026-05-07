@@ -19,7 +19,7 @@ namespace {
 constexpr size_t CHUNK_SIZE = 8 * 1024;  // 8KB chunk for reading
 // Cache file magic and version
 constexpr uint32_t CACHE_MAGIC = 0x54585449;  // "TXTI"
-constexpr uint8_t CACHE_VERSION = 2;          // Increment when cache format changes
+constexpr uint8_t CACHE_VERSION = 3;          // Increment when cache format changes
 constexpr uint32_t MAX_CACHE_PAGES = 65535;   // Sanity cap to prevent unbounded reserve()
 
 // Parses and word-wraps lines from a file chunk into outLines.
@@ -39,7 +39,12 @@ size_t parseAndWrapLines(const uint8_t* buffer, size_t chunkSize, size_t fileOff
     std::string line(reinterpret_cast<const char*>(buffer + pos), displayLen);
     size_t lineBytePos = 0;
 
-    while (!line.empty() && static_cast<int>(outLines.size()) < linesPerPage) {
+    do {
+      if (line.empty()) {
+        outLines.emplace_back();
+        break;
+      }
+
       if (renderer.getTextWidth(fontId, line.c_str()) <= vw) {
         outLines.push_back(line);
         lineBytePos = displayLen;
@@ -65,7 +70,7 @@ size_t parseAndWrapLines(const uint8_t* buffer, size_t chunkSize, size_t fileOff
       if (breakPos < line.length() && line[breakPos] == ' ') skipChars++;
       lineBytePos += skipChars;
       line = line.substr(skipChars);
-    }
+    } while (!line.empty() && static_cast<int>(outLines.size()) < linesPerPage);
 
     if (line.empty()) {
       pos = lineEnd + 1;

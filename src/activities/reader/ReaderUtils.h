@@ -10,6 +10,7 @@
 namespace ReaderUtils {
 
 constexpr unsigned long GO_HOME_MS = 1000;
+constexpr unsigned long SKIP_HOLD_MS = 700;
 
 inline GfxRenderer::Orientation toRendererOrientation(const uint8_t orientation) {
   switch (orientation) {
@@ -38,8 +39,8 @@ struct PageTurnResult {
 };
 
 inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
-  // Front buttons fire on press when long-press chapter skip is disabled (faster response).
-  const bool frontUsePress = !SETTINGS.longPressChapterSkip;
+  // Front buttons fire on press only when no long-press reader behavior is active.
+  const bool frontUsePress = SETTINGS.longPressButtonBehavior == CrossPointSettings::OFF;
   // Side buttons fire on press only when long-press action is OFF (nothing to detect).
   const bool sideUsePress = SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_OFF;
 
