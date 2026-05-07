@@ -422,6 +422,10 @@ void HomeActivity::loadRecentBooks(int maxBooks) {
       break;
     }
 
+    if (!Storage.exists(book.path.c_str())) {
+      continue;
+    }
+
     recentBooks.push_back(book);
   }
 }
