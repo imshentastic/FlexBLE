@@ -109,6 +109,18 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 32
+
+Invalidates cached EPUB section files after image rendering and image-cache behavior changes, so old rendered page data is rebuilt instead of reusing stale `ImageBlock` cache references. No binary layout fields changed from version 31.
+
+### Version 31
+
+Invalidates cached EPUB section files after section-cache write hardening and parser/layout compatibility changes from the upstream merge. No binary layout fields changed from version 30.
+
+### Version 30
+
+Added `PageHorizontalRule` page elements (tag `4`) for rendered EPUB `<hr>` separators. Horizontal rules store their x/y position, width, and thickness. This invalidates cached section layouts so horizontal rules are serialized as first-class page elements instead of being ignored.
+
 ### Version 29
 
 Added `PageTableFragment` page elements (tag `3`) for paginated simple-table layout. Table fragments store their fragment width, column count, cell padding, line height, per-row heights/header-divider flags, and per-cell serialized `TextBlock` lines. This invalidates cached section layouts so simple EPUB tables can render as buffered multi-column grids instead of flattened cell paragraphs.
@@ -145,7 +157,7 @@ import std.string;
 import std.core;
 
 // === Configuration ===
-#define EXPECTED_VERSION 29
+#define EXPECTED_VERSION 32
 #define MAX_STRING_LENGTH 65535
 #define MAX_WORD_STRING_LENGTH 4096
 #define FOOTNOTE_NUMBER_LEN 32
@@ -286,6 +298,8 @@ struct PageElement {
         PageImage pageImage [[inline]];
     } else if (pageElementType == 3) {
         PageTableFragment pageTableFragment [[inline]];
+    } else if (pageElementType == 4) {
+        PageHorizontalRule pageHorizontalRule [[inline]];
     } else {
         std::error(std::format("Unknown page element type: {}", pageElementType));
     }
