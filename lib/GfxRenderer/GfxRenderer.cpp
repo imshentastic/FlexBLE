@@ -955,10 +955,6 @@ void GfxRenderer::drawPerspectiveBitmap(const Bitmap& bitmap, const int x, const
   const int srcW = bitmap.getWidth();
   const int srcH = bitmap.getHeight();
   if (srcW <= 0 || srcH <= 0) return;
-  if (hL > srcH || hR > srcH) {
-    LOG_ERR("GFX", "Perspective bitmap height exceeds source height (hL=%d hR=%d srcH=%d)", hL, hR, srcH);
-    return;
-  }
 
   const int hMax = std::max(hL, hR);
   const int screenW = getScreenWidth();
@@ -983,21 +979,25 @@ void GfxRenderer::drawPerspectiveBitmap(const Bitmap& bitmap, const int x, const
       const int colH = (w == 1) ? hL : (hL + (hR - hL) * dx / (w - 1));
       if (colH <= 0) continue;
       const int colTop = (hMax - colH) / 2;
-      const int dy = (srcRowIndex * colH) / srcH;
       const int screenX = x + dx;
-      const int screenY = y + colTop + dy;
       if (screenX < 0 || screenX >= screenW) continue;
-      if (screenY < 0 || screenY >= screenH) continue;
 
       const int srcX = (dx * srcW) / w;
       const uint8_t val = (outputRow[srcX / 4] >> (6 - ((srcX * 2) % 8))) & 0x3;
 
-      if (renderMode == BW && val < 3) {
-        drawPixel(screenX, screenY);
-      } else if (renderMode == GRAYSCALE_MSB && (val == 1 || val == 2)) {
-        drawPixel(screenX, screenY, false);
-      } else if (renderMode == GRAYSCALE_LSB && val == 1) {
-        drawPixel(screenX, screenY, false);
+      const int dstYStart = (srcRowIndex * colH) / srcH;
+      const int dstYEnd = ((srcRowIndex + 1) * colH) / srcH;
+      for (int dy = dstYStart; dy < dstYEnd; ++dy) {
+        const int screenY = y + colTop + dy;
+        if (screenY < 0 || screenY >= screenH) continue;
+
+        if (renderMode == BW && val < 3) {
+          drawPixel(screenX, screenY);
+        } else if (renderMode == GRAYSCALE_MSB && (val == 1 || val == 2)) {
+          drawPixel(screenX, screenY, false);
+        } else if (renderMode == GRAYSCALE_LSB && val == 1) {
+          drawPixel(screenX, screenY, false);
+        }
       }
     }
   }
