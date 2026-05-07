@@ -12,6 +12,27 @@
 #include "Epub/parsers/TocNavParser.h"
 #include "Epub/parsers/TocNcxParser.h"
 
+namespace {
+constexpr int kDefaultThumbHeight = 180;
+
+bool nonEmptyFileExists(const std::string& path) {
+  if (!Storage.exists(path.c_str())) {
+    return false;
+  }
+
+  FsFile file;
+  if (!Storage.openFileForRead("EBP", path, file)) {
+    return false;
+  }
+  const bool nonEmpty = file.size() > 0;
+  file.close();
+  if (!nonEmpty) {
+    Storage.remove(path.c_str());
+  }
+  return nonEmpty;
+}
+}  // namespace
+
 bool Epub::findContentOpfFile(std::string* contentOpfFile) const {
   const auto containerPath = "META-INF/container.xml";
   size_t containerSize;
@@ -340,9 +361,9 @@ void Epub::parseCssFiles() const {
   if (!cssParser->saveToCache()) {
     LOG_ERR("EBP", "Failed to save CSS rules to cache");
   }
-  cssParser->clear();
 
   LOG_DBG("EBP", "Loaded %zu CSS style rules from %zu files", cssParser->ruleCount(), cssFiles.size());
+  cssParser->clear();
 }
 
 // load in the meta data for the epub file
@@ -632,8 +653,12 @@ std::string Epub::getThumbBmpPath(int width, int height) const {
 }
 
 bool Epub::generateThumbBmp(int height) const {
+  if (height <= 0) {
+    height = kDefaultThumbHeight;
+  }
+
   // Already generated, return true
-  if (Storage.exists(getThumbBmpPath(height).c_str())) {
+  if (nonEmptyFileExists(getThumbBmpPath(height))) {
     return true;
   }
 
@@ -721,14 +746,19 @@ bool Epub::generateThumbBmp(int height) const {
     LOG_ERR("EBP", "Cover image is not a supported format, skipping thumbnail");
   }
 
-  // Write an empty bmp file to avoid generation attempts in the future
-  FsFile thumbBmp;
-  Storage.openFileForWrite("EBP", getThumbBmpPath(height), thumbBmp);
   return false;
 }
 
 bool Epub::generateThumbBmp(int width, int height) const {
-  if (Storage.exists(getThumbBmpPath(width, height).c_str())) return true;
+  if (height <= 0) {
+    LOG_ERR("EBP", "Cannot generate thumb BMP with invalid dimensions: %dx%d", width, height);
+    return false;
+  }
+  if (width <= 0) {
+    width = static_cast<int>((static_cast<int64_t>(height) * 3 + 2) / 5);
+  }
+
+  if (nonEmptyFileExists(getThumbBmpPath(width, height))) return true;
 
   if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
     LOG_ERR("EBP", "Cannot generate thumb BMP, cache not loaded");
@@ -780,10 +810,6 @@ bool Epub::generateThumbBmp(int width, int height) const {
     LOG_ERR("EBP", "Cover image is not a supported format, skipping thumbnail");
   }
 
-  // Write empty sentinel to avoid repeated generation attempts
-  FsFile thumbBmp;
-  Storage.openFileForWrite("EBP", getThumbBmpPath(width, height), thumbBmp);
-  thumbBmp.close();
   return false;
 }
 

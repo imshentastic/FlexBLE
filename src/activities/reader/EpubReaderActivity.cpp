@@ -41,7 +41,7 @@ namespace {
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
 constexpr unsigned long skipChapterMs = 700;
 constexpr unsigned long longPressMenuMs = 600;
-constexpr std::array<uint16_t, 7> PAGE_TURN_CYCLE_INTERVALS_S = {5, 10, 15, 20, 30, 45, 60};
+constexpr std::array<uint16_t, 9> PAGE_TURN_CYCLE_INTERVALS_S = {5, 10, 15, 20, 30, 45, 60, 90, 120};
 constexpr uint16_t DEFAULT_AUTO_PAGE_TURN_INTERVAL_S = 30;
 constexpr uint16_t MIN_AUTO_PAGE_TURN_INTERVAL_S = 5;
 constexpr uint16_t MAX_AUTO_PAGE_TURN_INTERVAL_S = 120;

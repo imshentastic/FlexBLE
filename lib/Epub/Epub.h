@@ -57,6 +57,7 @@ class Epub {
   std::string getThumbBmpPath(int height) const;
   std::string getThumbBmpPath(int width, int height) const;
   bool generateThumbBmp(int height) const;
+  // width <= 0 derives the default 3:5 thumbnail aspect from height; height <= 0 is invalid.
   bool generateThumbBmp(int width, int height) const;
   uint8_t* readItemContentsToBytes(const std::string& itemHref, size_t* size = nullptr,
                                    bool trailingNullByte = false) const;
