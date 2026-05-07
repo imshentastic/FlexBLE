@@ -210,7 +210,7 @@ int pngDrawCallback(PNGDRAW* pDraw) {
 
   for (int dstX = 0; dstX < dstWidth; dstX++) {
     int outX = outXBase + dstX;
-    if (outX < screenWidth) {
+    if (outX >= 0 && outX < screenWidth) {
       uint8_t gray = ctx->grayLineBuffer[srcX];
 
       uint8_t ditheredGray;

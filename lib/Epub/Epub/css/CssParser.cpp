@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <iterator>
 #include <string_view>
 
 namespace {
@@ -59,6 +60,26 @@ constexpr uint32_t MIN_HEAP_AFTER_RULE_GROW = 16 * 1024;
 
 // Check if character is CSS whitespace
 bool isCssWhitespace(const char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f'; }
+
+size_t mergeDuplicateRules(std::vector<std::pair<std::string, CssStyle>>& rules) {
+  if (rules.empty()) return 0;
+
+  const size_t originalSize = rules.size();
+  auto writeIt = rules.begin();
+  for (auto readIt = std::next(rules.begin()); readIt != rules.end(); ++readIt) {
+    if (writeIt->first == readIt->first) {
+      writeIt->second.applyOver(readIt->second);
+      continue;
+    }
+    ++writeIt;
+    if (writeIt != readIt) {
+      *writeIt = std::move(*readIt);
+    }
+  }
+
+  rules.erase(std::next(writeIt), rules.end());
+  return originalSize - rules.size();
+}
 
 std::string_view stripTrailingImportant(std::string_view value) {
   constexpr std::string_view IMPORTANT = "!important";
@@ -432,8 +453,8 @@ bool CssParser::ensureRuleCapacity() {
 bool CssParser::processRuleBlockWithStyle(const std::string& selectorGroup, const CssStyle& style) {
   // Check if we've reached the rule limit before processing
   if (rulesBySelector_.size() >= MAX_RULES) {
-    LOG_DBG("CSS", "Reached max rules limit (%zu), stopping CSS parsing", MAX_RULES);
-    return true;
+    LOG_ERR("CSS", "Reached max rules limit (%zu), treating CSS parse as incomplete", MAX_RULES);
+    return false;
   }
 
   // Handle comma-separated selectors
@@ -529,8 +550,8 @@ bool CssParser::processRuleBlockWithStyle(const std::string& selectorGroup, cons
 
     // Skip if this would exceed the rule limit
     if (rulesBySelector_.size() >= MAX_RULES) {
-      LOG_DBG("CSS", "Reached max rules limit, stopping selector processing");
-      return true;
+      LOG_ERR("CSS", "Reached max rules limit, treating CSS parse as incomplete");
+      return false;
     }
 
     if (!ensureRuleCapacity()) {
@@ -702,6 +723,10 @@ bool CssParser::loadFromStream(FsFile& source) {
             [](const std::pair<std::string, CssStyle>& a, const std::pair<std::string, CssStyle>& b) {
               return a.first < b.first;
             });
+  const size_t duplicateCount = mergeDuplicateRules(rulesBySelector_);
+  if (duplicateCount > 0) {
+    LOG_DBG("CSS", "Merged %zu duplicate CSS selector rules after parse", duplicateCount);
+  }
 
   LOG_DBG("CSS", "Parsed %zu rules from %zu bytes", rulesBySelector_.size(), totalRead);
   return true;
@@ -1018,6 +1043,10 @@ bool CssParser::loadFromCache() {
             [](const std::pair<std::string, CssStyle>& a, const std::pair<std::string, CssStyle>& b) {
               return a.first < b.first;
             });
+  const size_t duplicateCount = mergeDuplicateRules(rulesBySelector_);
+  if (duplicateCount > 0) {
+    LOG_DBG("CSS", "Merged %zu duplicate CSS selector rules from cache", duplicateCount);
+  }
 
   // Read descendant rules
   uint16_t descendantCount = 0;
@@ -1058,6 +1087,6 @@ bool CssParser::loadFromCache() {
     }
   }
 
-  LOG_DBG("CSS", "Loaded %u rules + %u descendant rules from cache", ruleCount, descendantCount);
+  LOG_DBG("CSS", "Loaded %zu rules + %u descendant rules from cache", rulesBySelector_.size(), descendantCount);
   return true;
 }
