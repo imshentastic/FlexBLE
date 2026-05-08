@@ -108,7 +108,7 @@ bool isWordCharacter(uint32_t cp) {
 }  // namespace
 
 void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle, const bool underline,
-                         const bool attachToPrevious) {
+                         const bool attachToPrevious, const bool backgroundBlack) {
   if (word.empty()) return;
 
   EpdFontFamily::Style baseStyle = fontStyle;
@@ -123,6 +123,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
     wordContinues.push_back(false);
     wordIsBionicSuffix.push_back(false);
     wordIsGuideDot.push_back(true);
+    wordBackgroundBlack.push_back(false);
   }
 
   // Already-bold text should stay fully bold; bionic splitting would make its suffix regular later.
@@ -132,6 +133,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
     wordContinues.push_back(attachToPrevious);
     wordIsBionicSuffix.push_back(false);
     wordIsGuideDot.push_back(false);
+    wordBackgroundBlack.push_back(backgroundBlack);
     return;
   }
 
@@ -159,6 +161,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
     wordContinues.reserve(newCapacity);
     wordIsBionicSuffix.reserve(newCapacity);
     wordIsGuideDot.reserve(newCapacity);
+    wordBackgroundBlack.reserve(newCapacity);
   }
 
   // Lambda helper to process and push individual sub-segments of the string
@@ -171,6 +174,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
       wordContinues.push_back(attach);
       wordIsBionicSuffix.push_back(false);
       wordIsGuideDot.push_back(false);
+      wordBackgroundBlack.push_back(backgroundBlack);
     } else {
       size_t charCount = 0;
       const unsigned char* countPtr = reinterpret_cast<const unsigned char*>(segment.data());
@@ -193,6 +197,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
         wordContinues.push_back(attach);
         wordIsBionicSuffix.push_back(false);
         wordIsGuideDot.push_back(false);
+        wordBackgroundBlack.push_back(backgroundBlack);
       } else {
         countPtr = reinterpret_cast<const unsigned char*>(segment.data());
         for (size_t i = 0; i < targetBoldChars; ++i) {
@@ -206,6 +211,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
         wordContinues.push_back(attach);
         wordIsBionicSuffix.push_back(false);
         wordIsGuideDot.push_back(false);
+        wordBackgroundBlack.push_back(backgroundBlack);
 
         // Regular suffix - marked so extractLine can merge it back into one TextBlock entry
         words.emplace_back(segment.substr(splitByteOffset));
@@ -213,6 +219,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
         wordContinues.push_back(true);
         wordIsBionicSuffix.push_back(true);
         wordIsGuideDot.push_back(false);
+        wordBackgroundBlack.push_back(backgroundBlack);
       }
     }
   };
@@ -288,6 +295,7 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
     wordContinues.erase(wordContinues.begin(), wordContinues.begin() + consumed);
     wordIsBionicSuffix.erase(wordIsBionicSuffix.begin(), wordIsBionicSuffix.begin() + consumed);
     wordIsGuideDot.erase(wordIsGuideDot.begin(), wordIsGuideDot.begin() + consumed);
+    wordBackgroundBlack.erase(wordBackgroundBlack.begin(), wordBackgroundBlack.begin() + consumed);
   }
 }
 
@@ -583,6 +591,7 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
   // Insert the remainder word (with matching style and continuation flag) directly after the prefix.
   words.insert(words.begin() + wordIndex + 1, remainder);
   wordStyles.insert(wordStyles.begin() + wordIndex + 1, style);
+  wordBackgroundBlack.insert(wordBackgroundBlack.begin() + wordIndex + 1, wordBackgroundBlack[wordIndex]);
   // The hyphen remainder is neither a bionic suffix nor a guide dot - it starts fresh on the next line.
   wordIsBionicSuffix.insert(wordIsBionicSuffix.begin() + wordIndex + 1, false);
   wordIsGuideDot.insert(wordIsGuideDot.begin() + wordIndex + 1, false);
@@ -713,6 +722,8 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   std::vector<std::string> lineWords(std::make_move_iterator(words.begin() + lastBreakAt),
                                      std::make_move_iterator(words.begin() + lineBreak));
   std::vector<EpdFontFamily::Style> lineWordStyles(wordStyles.begin() + lastBreakAt, wordStyles.begin() + lineBreak);
+  std::vector<uint8_t> lineWordBackgroundBlack(wordBackgroundBlack.begin() + lastBreakAt,
+                                               wordBackgroundBlack.begin() + lineBreak);
 
   for (auto& word : lineWords) {
     if (containsSoftHyphen(word)) {
@@ -729,12 +740,14 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   std::vector<uint8_t> outBoundaries;
   std::vector<uint16_t> outSuffixX;
   std::vector<uint16_t> outGuideDotXOffset;
+  std::vector<uint8_t> outBackgroundBlack;
   outWords.reserve(lineWordCount);
   outXPos.reserve(lineWordCount);
   outStyles.reserve(lineWordCount);
   outBoundaries.reserve(lineWordCount);
   outSuffixX.reserve(lineWordCount);
   outGuideDotXOffset.reserve(lineWordCount);
+  outBackgroundBlack.reserve(lineWordCount);
 
   for (size_t i = 0; i < lineWordCount; i++) {
     if (wordIsBionicSuffix[lastBreakAt + i] && !outWords.empty()) {
@@ -764,10 +777,11 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
       outBoundaries.push_back(boundary);
       outSuffixX.push_back(suffixX);
       outGuideDotXOffset.push_back(0);  // filled in later if a guide dot follows
+      outBackgroundBlack.push_back(lineWordBackgroundBlack[i]);
     }
   }
 
   processLine(std::make_shared<TextBlock>(std::move(outWords), std::move(outXPos), std::move(outStyles),
                                           std::move(outBoundaries), std::move(outSuffixX),
-                                          std::move(outGuideDotXOffset), blockStyle));
+                                          std::move(outGuideDotXOffset), std::move(outBackgroundBlack), blockStyle));
 }

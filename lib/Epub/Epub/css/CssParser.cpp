@@ -106,6 +106,57 @@ std::string_view stripTrailingImportant(std::string_view value) {
   return value;
 }
 
+bool tryInterpretBackgroundBlack(std::string_view value, bool& out) {
+  value = stripTrailingImportant(value);
+  while (!value.empty() && isCssWhitespace(value.front())) {
+    value.remove_prefix(1);
+  }
+
+  if (value.empty()) {
+    return false;
+  }
+
+  bool sawExplicitNonBlack = false;
+  size_t tokenStart = 0;
+  for (size_t i = 0; i <= value.size(); ++i) {
+    if (i == value.size() || isCssWhitespace(value[i])) {
+      if (i > tokenStart) {
+        const std::string_view token = value.substr(tokenStart, i - tokenStart);
+        if (token == "black" || token == "#000" || token == "#000000") {
+          out = true;
+          return true;
+        }
+        if (token == "white" || token == "#fff" || token == "#ffffff" || token == "transparent" || token == "none") {
+          sawExplicitNonBlack = true;
+        }
+      }
+      tokenStart = i + 1;
+    }
+  }
+
+  std::string compact;
+  compact.reserve(value.size());
+  for (const char c : value) {
+    if (!isCssWhitespace(c)) {
+      compact.push_back(c);
+    }
+  }
+
+  if (compact == "rgb(0,0,0)" || compact == "rgba(0,0,0,1)" || compact == "rgba(0,0,0,1.0)" ||
+      compact.find("rgb(0,0,0)") != std::string::npos || compact.find("rgba(0,0,0,1)") != std::string::npos ||
+      compact.find("rgba(0,0,0,1.0)") != std::string::npos) {
+    out = true;
+    return true;
+  }
+
+  if (sawExplicitNonBlack || compact == "transparent" || compact == "none") {
+    out = false;
+    return true;
+  }
+
+  return false;
+}
+
 }  // anonymous namespace
 
 // String utilities implementation
@@ -378,6 +429,12 @@ void CssParser::parseDeclarationIntoStyle(const std::string& decl, CssStyle& sty
     const std::string_view displayValue = stripTrailingImportant(propValueBuf);
     style.display = (displayValue == "none") ? CssDisplay::None : CssDisplay::Block;
     style.defined.display = 1;
+  } else if (propNameBuf == "background" || propNameBuf == "background-color") {
+    bool backgroundBlack = false;
+    if (tryInterpretBackgroundBlack(propValueBuf, backgroundBlack)) {
+      style.backgroundBlack = backgroundBlack;
+      style.defined.backgroundBlack = 1;
+    }
   }
 }
 
@@ -885,7 +942,8 @@ bool CssParser::saveToCache() const {
     writeLength(style.imageHeight);
     writeLength(style.imageWidth);
     file.write(static_cast<uint8_t>(style.display));
-    uint16_t definedBits = 0;
+    file.write(static_cast<uint8_t>(style.backgroundBlack ? 1 : 0));
+    uint32_t definedBits = 0;
     if (style.defined.textAlign) definedBits |= 1 << 0;
     if (style.defined.fontStyle) definedBits |= 1 << 1;
     if (style.defined.fontWeight) definedBits |= 1 << 2;
@@ -902,6 +960,7 @@ bool CssParser::saveToCache() const {
     if (style.defined.imageHeight) definedBits |= 1 << 13;
     if (style.defined.imageWidth) definedBits |= 1 << 14;
     if (style.defined.display) definedBits |= 1 << 15;
+    if (style.defined.backgroundBlack) definedBits |= 1 << 16;
     file.write(reinterpret_cast<const uint8_t*>(&definedBits), sizeof(definedBits));
   };
 
@@ -981,7 +1040,7 @@ bool CssParser::loadFromCache() {
   constexpr size_t CSS_LENGTH_FIELD_COUNT = 11;
   constexpr size_t CSS_LENGTH_BYTES = sizeof(float) + sizeof(uint8_t);
   constexpr size_t CSS_FIXED_STYLE_BYTES =
-      4 * sizeof(uint8_t) + (CSS_LENGTH_FIELD_COUNT * CSS_LENGTH_BYTES) + sizeof(uint8_t) + sizeof(uint16_t);
+      4 * sizeof(uint8_t) + (CSS_LENGTH_FIELD_COUNT * CSS_LENGTH_BYTES) + 2 * sizeof(uint8_t) + sizeof(uint32_t);
 
   auto readLength = [&file](CssLength& len) -> bool {
     if (file.read(&len.value, sizeof(len.value)) != sizeof(len.value)) return false;
@@ -1010,7 +1069,10 @@ bool CssParser::loadFromCache() {
     uint8_t displayVal;
     if (file.read(&displayVal, 1) != 1) return false;
     style.display = static_cast<CssDisplay>(displayVal);
-    uint16_t definedBits = 0;
+    uint8_t backgroundBlackVal = 0;
+    if (file.read(&backgroundBlackVal, 1) != 1) return false;
+    style.backgroundBlack = backgroundBlackVal != 0;
+    uint32_t definedBits = 0;
     if (file.read(&definedBits, sizeof(definedBits)) != sizeof(definedBits)) return false;
     style.defined.textAlign = (definedBits & 1 << 0) != 0;
     style.defined.fontStyle = (definedBits & 1 << 1) != 0;
@@ -1028,6 +1090,7 @@ bool CssParser::loadFromCache() {
     style.defined.imageHeight = (definedBits & 1 << 13) != 0;
     style.defined.imageWidth = (definedBits & 1 << 14) != 0;
     style.defined.display = (definedBits & 1 << 15) != 0;
+    style.defined.backgroundBlack = (definedBits & 1 << 16) != 0;
     return true;
   };
 

@@ -71,6 +71,7 @@ class ChapterHtmlSlimParser {
     bool hasItalic = false, italic = false;
     bool hasUnderline = false, underline = false;
     bool hasStrikethrough = false, strikethrough = false;
+    bool hasBackgroundBlack = false, backgroundBlack = false;
   };
   std::vector<StyleStackEntry> inlineStyleStack;
   std::vector<BlockStyle> blockStyleStack;  // accumulated block styles from open ancestor elements
@@ -79,6 +80,7 @@ class ChapterHtmlSlimParser {
   bool effectiveItalic = false;
   bool effectiveUnderline = false;
   bool effectiveStrikethrough = false;
+  bool effectiveBackgroundBlack = false;
 
   struct BufferedTableCell {
     std::unique_ptr<ParsedText> text;

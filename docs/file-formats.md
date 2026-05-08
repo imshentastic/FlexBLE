@@ -109,6 +109,10 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 33
+
+Adds one per-word `backgroundBlack` byte to serialized `TextBlock` records so EPUB text runs with simple black CSS backgrounds can repaint correctly from section cache.
+
 ### Version 32
 
 Invalidates cached EPUB section files after image rendering and image-cache behavior changes, so old rendered page data is rebuilt instead of reusing stale `ImageBlock` cache references. No binary layout fields changed from version 31.

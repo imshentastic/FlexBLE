@@ -81,6 +81,7 @@ void ChapterHtmlSlimParser::updateEffectiveInlineStyle() {
       currentCssStyle.hasTextDecoration() && currentCssStyle.textDecoration == CssTextDecoration::Underline;
   effectiveStrikethrough =
       currentCssStyle.hasTextDecoration() && currentCssStyle.textDecoration == CssTextDecoration::LineThrough;
+  effectiveBackgroundBlack = currentCssStyle.hasBackgroundBlack() && currentCssStyle.backgroundBlack;
 
   // Apply inline style stack in order
   for (const auto& entry : inlineStyleStack) {
@@ -95,6 +96,9 @@ void ChapterHtmlSlimParser::updateEffectiveInlineStyle() {
     }
     if (entry.hasStrikethrough) {
       effectiveStrikethrough = entry.strikethrough;
+    }
+    if (entry.hasBackgroundBlack) {
+      effectiveBackgroundBlack = entry.backgroundBlack;
     }
   }
 }
@@ -124,7 +128,7 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
 
   // flush the buffer
   partWordBuffer[partWordBufferIndex] = '\0';
-  currentTextBlock->addWord(partWordBuffer, fontStyle, false, nextWordContinues);
+  currentTextBlock->addWord(partWordBuffer, fontStyle, false, nextWordContinues, effectiveBackgroundBlack);
   partWordBufferIndex = 0;
   nextWordContinues = false;
 }
@@ -641,6 +645,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       headerStyle.depth = self->depth;
       headerStyle.hasBold = true;
       headerStyle.bold = true;
+      if (cssStyle.hasBackgroundBlack()) {
+        headerStyle.hasBackgroundBlack = true;
+        headerStyle.backgroundBlack = cssStyle.backgroundBlack;
+      }
       self->inlineStyleStack.push_back(headerStyle);
       self->updateEffectiveInlineStyle();
     }
@@ -1055,6 +1063,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       entry.depth = self->depth;
       entry.hasUnderline = true;
       entry.underline = true;
+      if (cssStyle.hasBackgroundBlack()) {
+        entry.hasBackgroundBlack = true;
+        entry.backgroundBlack = cssStyle.backgroundBlack;
+      }
       self->inlineStyleStack.push_back(entry);
       self->updateEffectiveInlineStyle();
 
@@ -1186,7 +1198,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->updateEffectiveInlineStyle();
 
       if (strcmp(name, "li") == 0) {
-        self->currentTextBlock->addWord("\xe2\x80\xa2", EpdFontFamily::REGULAR);
+        self->currentTextBlock->addWord("\xe2\x80\xa2", EpdFontFamily::REGULAR, false, false,
+                                        self->effectiveBackgroundBlack);
         self->pendingListMarkerDepth = self->depth;
       }
     }
@@ -1210,6 +1223,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       entry.hasItalic = true;
       entry.italic = cssStyle.fontStyle == CssFontStyle::Italic;
     }
+    if (cssStyle.hasBackgroundBlack()) {
+      entry.hasBackgroundBlack = true;
+      entry.backgroundBlack = cssStyle.backgroundBlack;
+    }
     self->inlineStyleStack.push_back(entry);
     self->updateEffectiveInlineStyle();
   } else if (matches(name, STRIKETHROUGH_TAGS, std::size(STRIKETHROUGH_TAGS))) {
@@ -1231,6 +1248,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     if (cssStyle.hasFontStyle()) {
       entry.hasItalic = true;
       entry.italic = cssStyle.fontStyle == CssFontStyle::Italic;
+    }
+    if (cssStyle.hasBackgroundBlack()) {
+      entry.hasBackgroundBlack = true;
+      entry.backgroundBlack = cssStyle.backgroundBlack;
     }
     self->inlineStyleStack.push_back(entry);
     self->updateEffectiveInlineStyle();
@@ -1256,6 +1277,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       entry.hasStrikethrough = true;
       entry.strikethrough = cssStyle.textDecoration == CssTextDecoration::LineThrough;
     }
+    if (cssStyle.hasBackgroundBlack()) {
+      entry.hasBackgroundBlack = true;
+      entry.backgroundBlack = cssStyle.backgroundBlack;
+    }
     self->inlineStyleStack.push_back(entry);
     self->updateEffectiveInlineStyle();
   } else if (matches(name, ITALIC_TAGS, std::size(ITALIC_TAGS))) {
@@ -1280,10 +1305,15 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       entry.hasStrikethrough = true;
       entry.strikethrough = cssStyle.textDecoration == CssTextDecoration::LineThrough;
     }
+    if (cssStyle.hasBackgroundBlack()) {
+      entry.hasBackgroundBlack = true;
+      entry.backgroundBlack = cssStyle.backgroundBlack;
+    }
     self->inlineStyleStack.push_back(entry);
     self->updateEffectiveInlineStyle();
   } else if (strcmp(name, "span") == 0 || !isHeaderOrBlock(name)) {
-    if (cssStyle.hasFontWeight() || cssStyle.hasFontStyle() || cssStyle.hasTextDecoration()) {
+    if (cssStyle.hasFontWeight() || cssStyle.hasFontStyle() || cssStyle.hasTextDecoration() ||
+        cssStyle.hasBackgroundBlack()) {
       // Flush buffer before style change so preceding text gets current style
       if (self->partWordBufferIndex > 0) {
         self->flushPartWordBuffer();
@@ -1304,6 +1334,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         entry.underline = cssStyle.textDecoration == CssTextDecoration::Underline;
         entry.hasStrikethrough = true;
         entry.strikethrough = cssStyle.textDecoration == CssTextDecoration::LineThrough;
+      }
+      if (cssStyle.hasBackgroundBlack()) {
+        entry.hasBackgroundBlack = true;
+        entry.backgroundBlack = cssStyle.backgroundBlack;
       }
       self->inlineStyleStack.push_back(entry);
       self->updateEffectiveInlineStyle();
