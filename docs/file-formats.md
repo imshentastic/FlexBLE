@@ -161,7 +161,7 @@ import std.string;
 import std.core;
 
 // === Configuration ===
-#define EXPECTED_VERSION 32
+#define EXPECTED_VERSION 33
 #define MAX_STRING_LENGTH 65535
 #define MAX_WORD_STRING_LENGTH 4096
 #define FOOTNOTE_NUMBER_LEN 32
@@ -226,6 +226,7 @@ struct TextBlock {
   u8 wordBionicBoundary[wordCount];
   u16 wordBionicSuffixX[wordCount];
   u16 wordGuideDotXOffset[wordCount];
+  u8 wordBackgroundBlack[wordCount];
   BlockStyle blockStyle;
   bool textAlignDefined;
   s16 marginTop;
