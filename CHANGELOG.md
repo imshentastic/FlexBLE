@@ -27,6 +27,7 @@
 - Keep EPUB CSS selector lookups valid while loading stylesheets by maintaining sorted rule storage as rules are inserted
 - Avoid rebuilding the current EPUB section when changes to Reader Options affect only render-quality settings.
 - Skip image decoding during the font prewarm scan.
+- Keep prewarmed regular, bold, italic, and bold-italic font glyphs cached together so mixed-style EPUB pages are less likely to fall back to large font-group allocations.
 - Clear cached EPUB metadata for books inside deleted folders so stale `/.crosspoint/epub_*` directories are not left behind
 
 ## [v1.2.9.1] - 2026-05-03
