@@ -3,6 +3,8 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include <array>
+
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -10,23 +12,7 @@
 
 namespace {
 
-struct ReaderLayoutSettingsSnapshot {
-  uint8_t fontFamily;
-  uint8_t fontSize;
-  uint8_t lineSpacing;
-  uint8_t orientation;
-  uint8_t screenMargin;
-  uint8_t paragraphAlignment;
-  uint8_t embeddedStyle;
-  uint8_t hyphenationEnabled;
-  uint8_t imageRendering;
-  uint8_t extraParagraphSpacing;
-  uint8_t forceParagraphIndents;
-  uint8_t bionicReadingEnabled;
-  uint8_t guideReadingEnabled;
-
-  bool operator==(const ReaderLayoutSettingsSnapshot&) const = default;
-};
+using ReaderLayoutSettingsSnapshot = std::array<uint8_t, 13>;
 
 ReaderLayoutSettingsSnapshot captureReaderLayoutSettings() {
   return {
