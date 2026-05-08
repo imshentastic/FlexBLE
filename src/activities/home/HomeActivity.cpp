@@ -349,7 +349,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   const int progressIncrement = 90 / static_cast<int>(std::max<size_t>(1, recentBookCount));
 
   int progress = 0;
-  for (RecentBook& book : recentBooks) {
+  for (size_t bookIdx = 0; bookIdx < recentBooks.size(); ++bookIdx) {
+    RecentBook& book = recentBooks[bookIdx];
     if (!Storage.exists(book.path.c_str())) {
       progress++;
       continue;
@@ -388,8 +389,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             if (!success) {
               updateRecentBookCoverPath(book, "");
               book.coverBmpPath = "";
-            } else if (static_cast<size_t>(progress) < bookUpdated.size()) {
-              bookUpdated[progress] = true;
+            } else {
+              bookUpdated[bookIdx] = true;
             }
             coverRendered = false;
             requestUpdate();
@@ -411,8 +412,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               if (!success) {
                 updateRecentBookCoverPath(book, "");
                 book.coverBmpPath = "";
-              } else if (static_cast<size_t>(progress) < bookUpdated.size()) {
-                bookUpdated[progress] = true;
+              } else {
+                bookUpdated[bookIdx] = true;
               }
               coverRendered = false;
               requestUpdate();
@@ -439,8 +440,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             if (!success) {
               updateRecentBookCoverPath(book, "");
               book.coverBmpPath = "";
-            } else if (static_cast<size_t>(progress) < bookUpdated.size()) {
-              bookUpdated[progress] = true;  // non-carousel path reuses same tracking
+            } else {
+              bookUpdated[bookIdx] = true;  // non-carousel path reuses same tracking
             }
             coverRendered = false;
             requestUpdate();
@@ -456,8 +457,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               if (!success) {
                 updateRecentBookCoverPath(book, "");
                 book.coverBmpPath = "";
-              } else if (static_cast<size_t>(progress) < bookUpdated.size()) {
-                bookUpdated[progress] = true;
+              } else {
+                bookUpdated[bookIdx] = true;
               }
               coverRendered = false;
               requestUpdate();
