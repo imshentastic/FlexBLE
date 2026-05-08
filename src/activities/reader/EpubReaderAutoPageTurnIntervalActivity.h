@@ -9,8 +9,10 @@ class GfxRenderer;
 class EpubReaderAutoPageTurnIntervalActivity final : public Activity {
  public:
   explicit EpubReaderAutoPageTurnIntervalActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                                  int initialSeconds)
-      : Activity("EpubReaderAutoPageTurnInterval", renderer, mappedInput), seconds(initialSeconds) {}
+                                                  int initialSeconds, bool ignoreInitialConfirmRelease = false)
+      : Activity("EpubReaderAutoPageTurnInterval", renderer, mappedInput),
+        seconds(initialSeconds),
+        ignoreConfirmRelease(ignoreInitialConfirmRelease) {}
 
   void onEnter() override;
   void loop() override;
@@ -21,6 +23,7 @@ class EpubReaderAutoPageTurnIntervalActivity final : public Activity {
  private:
   int seconds;
   ButtonNavigator buttonNavigator;
+  bool ignoreConfirmRelease = false;
 
   void adjustSeconds(int delta);
 };

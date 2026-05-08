@@ -11,7 +11,6 @@
 #include <esp_system.h>
 
 #include <algorithm>
-#include <array>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -40,7 +39,6 @@
 namespace {
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
 constexpr unsigned long longPressMenuMs = 600;
-constexpr std::array<uint16_t, 9> PAGE_TURN_CYCLE_INTERVALS_S = {5, 10, 15, 20, 30, 45, 60, 90, 120};
 constexpr uint16_t DEFAULT_AUTO_PAGE_TURN_INTERVAL_S = 30;
 constexpr uint16_t MIN_AUTO_PAGE_TURN_INTERVAL_S = 5;
 constexpr uint16_t MAX_AUTO_PAGE_TURN_INTERVAL_S = 120;
@@ -833,15 +831,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::AUTO_PAGE_TURN:
-      startActivityForResult(
-          std::make_unique<EpubReaderAutoPageTurnIntervalActivity>(renderer, mappedInput,
-                                                                   getAutoPageTurnIntervalSeconds()),
-          [this](const ActivityResult& result) {
-            if (!result.isCancelled) {
-              setAutoPageTurnIntervalSeconds(static_cast<uint16_t>(std::get<AutoPageTurnResult>(result.data).seconds));
-            }
-            requestUpdate();
-          });
+      openAutoPageTurnIntervalPicker();
       break;
     case EpubReaderMenuActivity::MenuAction::ROTATE_SCREEN:
     case EpubReaderMenuActivity::MenuAction::READER_OPTIONS:
@@ -870,6 +860,18 @@ void EpubReaderActivity::openFileTransfer() {
   }
 
   activityManager.goToFileTransfer(epub ? epub->getPath() : std::string{});
+}
+
+void EpubReaderActivity::openAutoPageTurnIntervalPicker(const bool ignoreInitialConfirmRelease) {
+  startActivityForResult(
+      std::make_unique<EpubReaderAutoPageTurnIntervalActivity>(renderer, mappedInput, getAutoPageTurnIntervalSeconds(),
+                                                               ignoreInitialConfirmRelease),
+      [this](const ActivityResult& result) {
+        if (!result.isCancelled) {
+          setAutoPageTurnIntervalSeconds(static_cast<uint16_t>(std::get<AutoPageTurnResult>(result.data).seconds));
+        }
+        requestUpdate();
+      });
 }
 
 void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS_MENU_ACTION action) {
@@ -918,19 +920,7 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
       onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::SCREENSHOT);
       break;
     case CrossPointSettings::LONG_MENU_CYCLE_PAGE_TURN:
-      if (!automaticPageTurnActive) {
-        setAutoPageTurnIntervalSeconds(PAGE_TURN_CYCLE_INTERVALS_S.front());
-      } else {
-        const uint16_t currentSeconds = getAutoPageTurnIntervalSeconds();
-        const auto it =
-            std::upper_bound(PAGE_TURN_CYCLE_INTERVALS_S.begin(), PAGE_TURN_CYCLE_INTERVALS_S.end(), currentSeconds);
-        if (it == PAGE_TURN_CYCLE_INTERVALS_S.end()) {
-          setAutoPageTurnIntervalSeconds(0);
-        } else {
-          setAutoPageTurnIntervalSeconds(*it);
-        }
-      }
-      requestUpdate();
+      openAutoPageTurnIntervalPicker(/*ignoreInitialConfirmRelease=*/true);
       break;
     case CrossPointSettings::LONG_MENU_FILE_TRANSFER:
       openFileTransfer();
