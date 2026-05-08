@@ -8,9 +8,16 @@
 #include <esp_task_wdt.h>
 
 #include <algorithm>
+#include <cstring>
 
 namespace {
 constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
+constexpr size_t HIDDEN_ITEM_COUNT = sizeof(HIDDEN_ITEMS) / sizeof(HIDDEN_ITEMS[0]);
+
+bool isHiddenItem(const char* name) {
+  return std::any_of(HIDDEN_ITEMS, HIDDEN_ITEMS + HIDDEN_ITEM_COUNT,
+                     [name](const char* item) { return strcmp(name, item) == 0; });
+}
 
 // RFC 1123 date format helper: "Sun, 06 Nov 1994 08:49:37 GMT"
 // ESP32 doesn't have real-time clock set by default, so we use a fixed epoch date

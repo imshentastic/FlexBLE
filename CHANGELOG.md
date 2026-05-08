@@ -7,28 +7,17 @@
 - Add a `Recent Books View` setting so the dedicated Recent Books screen can switch between the classic list and a 3x3 cover grid
 - Add real EPUB `<hr>` rendering so horizontal rules now display as visible separators instead of being ignored
 - Add a per-session auto page turn interval picker so EPUB readers can choose any value from 5 to 120 seconds instead of only the old preset list
-- Add abilty to render block redactions, black-square ornaments, Greek category letters, and turned-comma punctuation in reader fonts (PR #104)
+- Add ability to render block redactions, black-square ornaments, Greek category letters, and turned-comma punctuation in reader fonts (PR #104)
+- Add long-press action on the "Home/Back" button within the file-browser to toggle hidden files and folders
 
 ### Fixed
 - Keep EPUB list bullets attached to the first paragraph in `<li><p>...</p></li>` list items
-- Report EPUB CSS parse failure context before discarding incomplete rule sets
-- Generate exact EPUB thumbnail dimensions even when a legacy height-only thumbnail cache file already exists
-- Keep thumbnail cache path placeholder handling explicit for concrete paths, dimension templates, and legacy height-only templates
-- Keep EPUB/XTC thumbnail cache paths, Recent Books cover updates, and carousel snapshot reads consistent when thumbnail dimensions or cache files change
-- Serialize `GfxRenderer` bitmap scratch-buffer access so concurrent image draws cannot reuse the same temporary rows at the same time
-- Harden JPEG image scaling, EPUB thumbnail caching, and large CSS rule handling against crashes, stale cache files, and long-session allocation failures
-- Serialize SD-card and display access on the shared SPI bus to prevent task-ownership crashes during state saves, sleep transitions, and other concurrent render/storage activity
-- Guard SPI bus lock acquisition so a failed recursive mutex take no longer marks the lock as held and triggers a mismatched release
-- Harden EPUB section-cache writes and promotion so truncated SD writes fail fast, temp caches are synced before rename, and invalid page-cache files are less likely to persist across reloads
-- Reject invalid serialized string lengths before allocation so corrupted cache data cannot trigger oversized string resizes during reads
-- Relax the EPUB low-memory image fallback so inline images are no longer suppressed solely because the heap is fragmented while overall free memory is still above the safety threshold
-- Reduce CSS-parser heap fragmentation during EPUB indexing so image-heavy chapters are less likely to crash while pre-indexing the next section
-- Avoid an EPUB CSS-cache rebuild crash after clearing a book cache by growing the CSS rule table in guarded chunks instead of reserving the full rule limit at once
-- Keep EPUB CSS selector lookups valid while loading stylesheets by maintaining sorted rule storage as rules are inserted
-- Avoid rebuilding the current EPUB section when changes to Reader Options affect only render-quality settings.
-- Skip image decoding during the font prewarm scan.
-- Keep prewarmed regular, bold, italic, and bold-italic font glyphs cached together so mixed-style EPUB pages are less likely to fall back to large font-group allocations.
-- Clear cached EPUB metadata for books inside deleted folders so stale `/.crosspoint/epub_*` directories are not left behind
+- Keep EPUB and XTC thumbnail caches, Recent Books covers, carousel snapshots, and deleted-folder metadata in sync when cache files change or are removed
+- Harden EPUB image scaling, low-memory image fallback, and thumbnail generation so image-heavy books are less likely to crash or reuse stale dimensions
+- Make EPUB CSS loading more resilient by reducing parser heap fragmentation, growing rule storage in guarded chunks, keeping selector lookups sorted, and logging parse-failure context
+- Harden EPUB section and page-cache reads/writes so truncated SD writes, invalid serialized strings, and bad temp-cache promotion fail safely
+- Prevent concurrent render/storage crashes by serializing `GfxRenderer` scratch-buffer access, shared SPI bus access, and failed SPI lock cleanup
+- Make reader prewarm lighter by skipping image decoding, keeping mixed-style font glyphs cached together, and avoiding section rebuilds for render-quality-only option changes
 
 ## [v1.2.9.1] - 2026-05-03
 
