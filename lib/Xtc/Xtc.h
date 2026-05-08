@@ -68,7 +68,9 @@ class Xtc {
   std::string getThumbBmpPath() const;
   /**
    * Returns a thumbnail cache path for a height-keyed thumbnail.
-   * @param height Target thumbnail height in pixels; width is derived from the original page aspect ratio.
+   * @param height Target thumbnail height in pixels; width uses the same 3:5 cache-key ratio as
+   * generateThumbBmp(height).
+   * @return The generated width-height cache path, or an existing legacy height-only path.
    * @note Prefer getThumbBmpPath(width, height) when the caller needs exact cache-key control.
    */
   std::string getThumbBmpPath(uint16_t height) const;

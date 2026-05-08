@@ -264,7 +264,18 @@ bool Xtc::generateCoverBmp() const {
 
 std::string Xtc::getThumbBmpPath() const { return cachePath + "/thumb_[HEIGHT].bmp"; }
 std::string Xtc::getThumbBmpPath(uint16_t height) const {
-  return cachePath + "/thumb_" + std::to_string(height) + ".bmp";
+  const uint16_t width = static_cast<uint16_t>(height * 0.6);
+  const std::string newPath = getThumbBmpPath(width, height);
+  if (Storage.exists(newPath.c_str())) {
+    return newPath;
+  }
+
+  const std::string legacyPath = cachePath + "/thumb_" + std::to_string(height) + ".bmp";
+  if (Storage.exists(legacyPath.c_str())) {
+    return legacyPath;
+  }
+
+  return newPath;
 }
 std::string Xtc::getThumbBmpPath(uint16_t width, uint16_t height) const {
   return cachePath + "/thumb_" + std::to_string(width) + "x" + std::to_string(height) + ".bmp";
