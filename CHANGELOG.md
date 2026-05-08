@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [v1.2.10]
 
 ### Added
 - Add Lyra Carousel theme
