@@ -12,7 +12,7 @@
 - Add a simulator-only `S` key shortcut for testing sleep and wake behavior
 
 ### Fixed
-- Render simple black CSS backgrounds behind EPUB inline text, including NBSP redaction bars that previously appeared as only trailing punctuation
+- Render simple black CSS backgrounds behind EPUB inline text, including `nbsp;` redaction bars that previously were removed completely
 - Preserve whitespace-only XHTML text nodes during browser EPUB optimization so redaction spans keep their intended width
 - Keep EPUB list bullets attached to the first paragraph in `<li><p>...</p></li>` list items
 - Keep EPUB and XTC thumbnail caches, Recent Books covers, carousel snapshots, and deleted-folder metadata in sync when cache files change or are removed

@@ -23,6 +23,8 @@ Welcome to the **CrossInk** firmware. This guide outlines the hardware controls,
       - [3.6.5 OPDS Servers (Multiple Libraries)](#365-opds-servers-multiple-libraries)
       - [3.6.6 Web Settings (WiFi + OPDS)](#366-web-settings-wifi--opds)
       - [3.6.7 KOReader Sync Quick Setup](#367-koreader-sync-quick-setup)
+      - [3.6.6 Web Settings (WiFi + OPDS)](#366-web-settings-wifi--opds)
+      - [3.6.7 KOReader Sync Quick Setup](#367-koreader-sync-quick-setup)
     - [3.7 Sleep Screen](#37-sleep-screen)
   - [4. Reading Mode](#4-reading-mode)
     - [Page Turning](#page-turning)
