@@ -658,6 +658,14 @@ void loop() {
     screenshotComboActive = false;
   }
 
+#ifdef SIMULATOR
+  if (gpio.consumeSimulatorSleepRequest()) {
+    enterDeepSleep();
+    lastActivityTime = millis();
+    return;
+  }
+#endif
+
   const unsigned long sleepTimeoutMs = SETTINGS.getSleepTimeoutMs();
   if (millis() - lastActivityTime >= sleepTimeoutMs) {
     LOG_DBG("SLP", "Auto-sleep triggered after %lu ms of inactivity", sleepTimeoutMs);

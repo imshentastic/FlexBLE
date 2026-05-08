@@ -9,6 +9,7 @@
 - Add a per-session auto page turn interval picker so EPUB readers can choose any value from 5 to 120 seconds instead of only the old preset list
 - Add ability to render block redactions, black-square ornaments, Greek category letters, and turned-comma punctuation in reader fonts (PR #104)
 - Add long-press action on the "Home/Back" button within the file-browser to toggle hidden files and folders
+- Add a simulator-only `S` key shortcut for testing sleep and wake behavior
 
 ### Fixed
 - Keep EPUB list bullets attached to the first paragraph in `<li><p>...</p></li>` list items
