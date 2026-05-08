@@ -26,14 +26,14 @@ constexpr size_t IMAGE_EXTRACT_CHUNK_SIZE = 1024;
 constexpr size_t MIN_FREE_HEAP_FOR_IMAGE_EXTRACT = 48 * 1024;
 constexpr size_t MIN_MAX_ALLOC_FOR_IMAGE_EXTRACT = 36 * 1024;
 
-constexpr const char* HEADER_TAGS[] = {"h1", "h2", "h3", "h4", "h5", "h6"};
-constexpr const char* BLOCK_TAGS[] = {"p", "li", "div", "br", "blockquote"};
-constexpr const char* BOLD_TAGS[] = {"b", "strong"};
-constexpr const char* ITALIC_TAGS[] = {"i", "em"};
-constexpr const char* UNDERLINE_TAGS[] = {"u", "ins"};
-constexpr const char* STRIKETHROUGH_TAGS[] = {"s", "strike", "del"};
-constexpr const char* IMAGE_TAGS[] = {"img"};
-constexpr const char* SKIP_TAGS[] = {"head"};
+static constexpr const char* const HEADER_TAGS[] = {"h1", "h2", "h3", "h4", "h5", "h6"};
+static constexpr const char* const BLOCK_TAGS[] = {"p", "li", "div", "br", "blockquote"};
+static constexpr const char* const BOLD_TAGS[] = {"b", "strong"};
+static constexpr const char* const ITALIC_TAGS[] = {"i", "em"};
+static constexpr const char* const UNDERLINE_TAGS[] = {"u", "ins"};
+static constexpr const char* const STRIKETHROUGH_TAGS[] = {"s", "strike", "del"};
+static constexpr const char* const IMAGE_TAGS[] = {"img"};
+static constexpr const char* const SKIP_TAGS[] = {"head"};
 
 bool isWhitespace(const char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t'; }
 
@@ -355,7 +355,6 @@ void ChapterHtmlSlimParser::emitBufferedTableAsFragments(BufferedTable& table) {
               viewportHeight);
       return false;
     }
-
     for (size_t colIndex = 0; colIndex < row.cells.size(); colIndex++) {
       const auto& sourceCell = row.cells[colIndex];
       auto& destCell = prepared.fragmentRow.cells[colIndex];

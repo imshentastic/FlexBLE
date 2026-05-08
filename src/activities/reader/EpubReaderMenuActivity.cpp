@@ -8,6 +8,50 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
+namespace {
+
+struct ReaderLayoutSettingsSnapshot {
+  uint8_t fontFamily;
+  uint8_t fontSize;
+  uint8_t lineSpacing;
+  uint8_t orientation;
+  uint8_t screenMargin;
+  uint8_t paragraphAlignment;
+  uint8_t embeddedStyle;
+  uint8_t hyphenationEnabled;
+  uint8_t imageRendering;
+  uint8_t extraParagraphSpacing;
+  uint8_t forceParagraphIndents;
+  uint8_t bionicReadingEnabled;
+  uint8_t guideReadingEnabled;
+
+  bool operator==(const ReaderLayoutSettingsSnapshot&) const = default;
+};
+
+ReaderLayoutSettingsSnapshot captureReaderLayoutSettings() {
+  return {
+      SETTINGS.fontFamily,
+      SETTINGS.fontSize,
+      SETTINGS.lineSpacing,
+      SETTINGS.orientation,
+      SETTINGS.screenMargin,
+      SETTINGS.paragraphAlignment,
+      SETTINGS.embeddedStyle,
+      SETTINGS.hyphenationEnabled,
+      SETTINGS.imageRendering,
+      SETTINGS.extraParagraphSpacing,
+      SETTINGS.forceParagraphIndents,
+      SETTINGS.bionicReadingEnabled,
+      SETTINGS.guideReadingEnabled,
+  };
+}
+
+bool haveReaderLayoutSettingsChanged(const ReaderLayoutSettingsSnapshot& before) {
+  return before != captureReaderLayoutSettings();
+}
+
+}  // namespace
+
 EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                const std::string& title, const int currentPage, const int totalPages,
                                                const int bookProgressPercent, const uint8_t currentOrientation,
@@ -35,7 +79,7 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
   }
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
-  items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN});
+  items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_INTERVAL_SECONDS});
   items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
   items.push_back(
       {MenuAction::BOOKMARK_TOGGLE, isCurrentPageBookmarked ? StrId::STR_REMOVE_BOOKMARK : StrId::STR_ADD_BOOKMARK});
@@ -82,30 +126,24 @@ void EpubReaderMenuActivity::loop() {
       return;
     }
 
-    if (selectedAction == MenuAction::AUTO_PAGE_TURN) {
-      selectedPageTurnOption = (selectedPageTurnOption + 1) % pageTurnLabels.size();
-      requestUpdate();
-      return;
-    }
-
     if (selectedAction == MenuAction::READER_OPTIONS) {
+      const auto before = captureReaderLayoutSettings();
       startActivityForResult(std::make_unique<ReaderOptionsActivity>(renderer, mappedInput),
-                             [this](const ActivityResult&) {
-                               settingsChanged = true;
+                             [this, before](const ActivityResult&) {
+                               settingsChanged = settingsChanged || haveReaderLayoutSettingsChanged(before);
                                pendingOrientation = SETTINGS.orientation;  // sync in case orientation changed
                                requestUpdate();
                              });
       return;
     }
 
-    setResult(
-        MenuResult{static_cast<int>(selectedAction), pendingOrientation, selectedPageTurnOption, settingsChanged});
+    setResult(MenuResult{static_cast<int>(selectedAction), pendingOrientation, settingsChanged});
     finish();
     return;
   } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     ActivityResult result;
     result.isCancelled = true;
-    result.data = MenuResult{-1, pendingOrientation, selectedPageTurnOption, settingsChanged};
+    result.data = MenuResult{-1, pendingOrientation, settingsChanged};
     setResult(std::move(result));
     finish();
     return;
@@ -165,13 +203,6 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
     if (menuItems[i].action == MenuAction::ROTATE_SCREEN) {
       // Render current orientation value on the right edge of the content area.
       const char* value = I18N.get(orientationLabels[pendingOrientation]);
-      const auto width = renderer.getTextWidth(UI_10_FONT_ID, value);
-      renderer.drawText(UI_10_FONT_ID, contentX + contentWidth - 20 - width, displayY, value, !isSelected);
-    }
-
-    if (menuItems[i].action == MenuAction::AUTO_PAGE_TURN) {
-      // Render current page turn value on the right edge of the content area.
-      const auto value = pageTurnLabels[selectedPageTurnOption];
       const auto width = renderer.getTextWidth(UI_10_FONT_ID, value);
       renderer.drawText(UI_10_FONT_ID, contentX + contentWidth - 20 - width, displayY, value, !isSelected);
     }

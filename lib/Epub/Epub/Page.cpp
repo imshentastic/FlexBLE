@@ -7,6 +7,12 @@
 namespace {
 
 constexpr uint16_t MAX_PAGE_ELEMENTS = 1024;
+constexpr uint8_t MAX_TABLE_ROWS_PER_FRAGMENT = 64;
+constexpr uint8_t MAX_TABLE_CELLS_PER_ROW = 8;
+constexpr uint8_t MAX_TABLE_LINES_PER_CELL = 64;
+static_assert(TableFragmentCell::MAX_SERIALIZED_LINES == MAX_TABLE_LINES_PER_CELL);
+static_assert(TableFragmentRow::MAX_SERIALIZED_CELLS == MAX_TABLE_CELLS_PER_ROW);
+static_assert(PageTableFragment::MAX_SERIALIZED_ROWS == MAX_TABLE_ROWS_PER_FRAGMENT);
 
 template <typename Predicate>
 void renderFilteredPageElements(const std::vector<std::shared_ptr<PageElement>>& elements, GfxRenderer& renderer,
@@ -133,7 +139,7 @@ std::unique_ptr<PageHorizontalRule> PageHorizontalRule::deserialize(FsFile& file
 }
 
 bool TableFragmentCell::serialize(FsFile& file) const {
-  if (lines.size() > MAX_SERIALIZED_LINES) {
+  if (lines.size() > MAX_TABLE_LINES_PER_CELL) {
     LOG_ERR("PTB", "Serialization failed: cell line count %u exceeds maximum", static_cast<uint32_t>(lines.size()));
     return false;
   }
@@ -158,7 +164,7 @@ bool TableFragmentCell::deserialize(FsFile& file, TableFragmentCell& outCell) {
     LOG_ERR("PTB", "Deserialization failed: truncated table cell metadata");
     return false;
   }
-  if (lineCount > MAX_SERIALIZED_LINES) {
+  if (lineCount > MAX_TABLE_LINES_PER_CELL) {
     LOG_ERR("PTB", "Deserialization failed: cell line count %u exceeds maximum", lineCount);
     return false;
   }
@@ -177,7 +183,7 @@ bool TableFragmentCell::deserialize(FsFile& file, TableFragmentCell& outCell) {
 }
 
 bool TableFragmentRow::serialize(FsFile& file) const {
-  if (cells.size() > MAX_SERIALIZED_CELLS) {
+  if (cells.size() > MAX_TABLE_CELLS_PER_ROW) {
     LOG_ERR("PTB", "Serialization failed: row cell count %u exceeds maximum", static_cast<uint32_t>(cells.size()));
     return false;
   }
@@ -202,7 +208,7 @@ bool TableFragmentRow::deserialize(FsFile& file, TableFragmentRow& outRow) {
     LOG_ERR("PTB", "Deserialization failed: truncated table row metadata");
     return false;
   }
-  if (cellCount > MAX_SERIALIZED_CELLS) {
+  if (cellCount > MAX_TABLE_CELLS_PER_ROW) {
     LOG_ERR("PTB", "Deserialization failed: row cell count %u exceeds maximum", cellCount);
     return false;
   }
@@ -272,7 +278,7 @@ void PageTableFragment::render(GfxRenderer& renderer, const int fontId, const in
 }
 
 bool PageTableFragment::serialize(FsFile& file) {
-  if (rows.size() > MAX_SERIALIZED_ROWS) {
+  if (rows.size() > MAX_TABLE_ROWS_PER_FRAGMENT) {
     LOG_ERR("PTB", "Serialization failed: fragment row count %u exceeds maximum", static_cast<uint32_t>(rows.size()));
     return false;
   }
@@ -308,8 +314,8 @@ std::unique_ptr<PageTableFragment> PageTableFragment::deserialize(FsFile& file) 
     return nullptr;
   }
 
-  if (rowCount == 0 || rowCount > MAX_SERIALIZED_ROWS || columnCount == 0 ||
-      columnCount > TableFragmentRow::MAX_SERIALIZED_CELLS || width < 2 || lineHeight == 0) {
+  if (rowCount == 0 || rowCount > MAX_TABLE_ROWS_PER_FRAGMENT || columnCount == 0 ||
+      columnCount > MAX_TABLE_CELLS_PER_ROW || width < 2 || lineHeight == 0) {
     LOG_ERR("PTB", "Deserialization failed: invalid fragment metadata (rows=%u cols=%u width=%u lineHeight=%u)",
             rowCount, columnCount, width, lineHeight);
     return nullptr;

@@ -15,7 +15,7 @@ constexpr uint8_t RECENT_BOOKS_FILE_VERSION = 3;
 constexpr char RECENT_BOOKS_FILE_BIN[] = "/.crosspoint/recent.bin";
 constexpr char RECENT_BOOKS_FILE_JSON[] = "/.crosspoint/recent.json";
 constexpr char RECENT_BOOKS_FILE_BAK[] = "/.crosspoint/recent.bin.bak";
-constexpr int MAX_RECENT_BOOKS = 10;
+constexpr int MAX_RECENT_BOOKS = 18;
 }  // namespace
 
 RecentBooksStore RecentBooksStore::instance;
@@ -40,17 +40,36 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
   saveToFile();
 }
 
-void RecentBooksStore::updateBook(const std::string& path, const std::string& title, const std::string& author,
+void RecentBooksStore::addOrUpdateBook(const std::string& path, const std::string& title, const std::string& author,
+                                       const std::string& coverBmpPath) {
+  if (updateBook(path, title, author, coverBmpPath)) {
+    auto it =
+        std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
+    if (it != recentBooks.end() && it != recentBooks.begin()) {
+      RecentBook book = std::move(*it);
+      recentBooks.erase(it);
+      recentBooks.insert(recentBooks.begin(), std::move(book));
+      saveToFile();
+    }
+    return;
+  }
+
+  addBook(path, title, author, coverBmpPath);
+}
+
+bool RecentBooksStore::updateBook(const std::string& path, const std::string& title, const std::string& author,
                                   const std::string& coverBmpPath) {
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
-  if (it != recentBooks.end()) {
-    RecentBook& book = *it;
-    book.title = title;
-    book.author = author;
-    book.coverBmpPath = coverBmpPath;
-    saveToFile();
+  if (it == recentBooks.end()) {
+    return false;
   }
+  RecentBook& book = *it;
+  book.title = title;
+  book.author = author;
+  book.coverBmpPath = coverBmpPath;
+  saveToFile();
+  return true;
 }
 
 void RecentBooksStore::updatePath(const std::string& oldPath, const std::string& newPath,

@@ -42,6 +42,10 @@ class GfxRenderer {
   uint32_t frameBufferSize = HalDisplay::BUFFER_SIZE;
   std::vector<uint8_t*> bwBufferChunks;
   std::map<int, EpdFontFamily> fontMap;
+  mutable uint8_t* bitmapScratchOutputRow_ = nullptr;
+  mutable size_t bitmapScratchOutputRowSize_ = 0;
+  mutable uint8_t* bitmapScratchRowBytes_ = nullptr;
+  mutable size_t bitmapScratchRowBytesSize_ = 0;
 
   // Mutable because drawText() is const but needs to delegate scan-mode
   // recording to the (non-const) FontCacheManager. Same pragmatic compromise
@@ -51,6 +55,8 @@ class GfxRenderer {
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, int* y, bool pixelState,
                   EpdFontFamily::Style style) const;
   void freeBwBufferChunks();
+  void freeBitmapScratchBuffers();
+  bool ensureBitmapScratchBuffers(size_t outputRowSize, size_t rowBytesSize) const;
   template <Color color>
   void drawPixelDither(int x, int y) const;
   template <Color color>
@@ -59,7 +65,14 @@ class GfxRenderer {
  public:
   explicit GfxRenderer(HalDisplay& halDisplay)
       : display(halDisplay), renderMode(BW), orientation(Portrait), fadingFix(false) {}
-  ~GfxRenderer() { freeBwBufferChunks(); }
+  GfxRenderer(const GfxRenderer&) = delete;
+  GfxRenderer& operator=(const GfxRenderer&) = delete;
+  GfxRenderer(GfxRenderer&&) = delete;
+  GfxRenderer& operator=(GfxRenderer&&) = delete;
+  ~GfxRenderer() {
+    freeBwBufferChunks();
+    freeBitmapScratchBuffers();
+  }
 
   static constexpr int VIEWABLE_MARGIN_TOP = 9;
   static constexpr int VIEWABLE_MARGIN_RIGHT = 3;
@@ -113,9 +126,13 @@ class GfxRenderer {
                        bool roundBottomLeft, bool roundBottomRight, Color color) const;
   void drawImage(const uint8_t bitmap[], int x, int y, int width, int height) const;
   void drawIcon(const uint8_t bitmap[], int x, int y, int width, int height) const;
+  void drawIconInverted(const uint8_t bitmap[], int x, int y, int width, int height) const;
   void drawBitmap(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight, float cropX = 0,
                   float cropY = 0) const;
   void drawBitmap1Bit(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight) const;
+  // Trapezoidal blit used by Flow/iPod-style carousels. Fits the bitmap into a
+  // bounding box of width `w` and height `max(hL, hR)` whose top-left is (x, y).
+  void drawPerspectiveBitmap(const Bitmap& bitmap, int x, int y, int w, int hL, int hR) const;
   void fillPolygon(const int* xPoints, const int* yPoints, int numPoints, bool state = true) const;
 
   // Text

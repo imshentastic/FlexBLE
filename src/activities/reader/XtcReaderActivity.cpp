@@ -19,6 +19,7 @@
 #include "RecentBooksStore.h"
 #include "XtcReaderChapterSelectionActivity.h"
 #include "components/UITheme.h"
+#include "components/themes/lyra/LyraCarouselTheme.h"
 #include "fontIds.h"
 
 void XtcReaderActivity::onEnter() {
@@ -52,6 +53,15 @@ void XtcReaderActivity::onExit() {
 
   APP_STATE.readerActivityLoadCount = 0;
   APP_STATE.saveToFile();
+
+  // Generate carousel thumbnails while XTC is still loaded so the home screen
+  // can display the cover on the very first render without a loading popup.
+  if (xtc &&
+      static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_CAROUSEL) {
+    xtc->generateThumbBmp(LyraCarouselTheme::kCenterCoverW, LyraCarouselTheme::kCenterCoverH);
+    xtc->generateThumbBmp(LyraCarouselTheme::kSideCoverW, LyraCarouselTheme::kSideCoverH);
+  }
+
   xtc.reset();
 }
 
@@ -265,6 +275,7 @@ void XtcReaderActivity::renderPage() {
       }
     }
 
+    // Display BW with conditional refresh based on pagesUntilFullRefresh
     ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
 
     // Pass 2: LSB buffer - mark DARK gray only (XTH value 1)
@@ -337,6 +348,7 @@ void XtcReaderActivity::renderPage() {
 
   // XTC pages already have status bar pre-rendered, no need to add our own
 
+  // Display with appropriate refresh
   ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
 
   LOG_DBG("XTR", "Rendered page %lu/%lu (%u-bit)", currentPage + 1, xtc->getPageCount(), bitDepth);

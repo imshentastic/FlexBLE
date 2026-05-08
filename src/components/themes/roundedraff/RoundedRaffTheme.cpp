@@ -126,8 +126,8 @@ void RoundedRaffTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const 
 }
 
 void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
-                                           const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                           bool& bufferRestored, std::function<bool()> storeCoverBuffer,
+                                           int selectorIndex, bool& coverRendered, bool& coverBufferStored,
+                                           bool& bufferRestored, const std::function<bool()>& storeCoverBuffer,
                                            const BookReadingStats* stats, float progressPercent) const {
   (void)stats;
   (void)progressPercent;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "components/themes/BaseTheme.h"
 
 class GfxRenderer;
@@ -67,11 +69,15 @@ class LyraTheme : public BaseTheme {
                       const std::function<std::string(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;
   void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
-                           const int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
-                           std::function<bool()> storeCoverBuffer, const BookReadingStats* stats = nullptr,
+                           int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
+                           const std::function<bool()>& storeCoverBuffer, const BookReadingStats* stats = nullptr,
                            float progressPercent = -1.0f) const override;
   void drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) const;
   Rect drawPopup(const GfxRenderer& renderer, const char* message) const override;
   void fillPopupProgress(const GfxRenderer& renderer, const Rect& layout, const int progress) const override;
   bool showsFileIcons() const override { return true; }
+
+ protected:
+  // Returns nullptr when the icon or requested bitmap size is not available.
+  static const uint8_t* iconForName(UIIcon icon, uint32_t size);
 };

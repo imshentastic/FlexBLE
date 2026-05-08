@@ -45,7 +45,9 @@ constexpr int listIconSize = 24;
 constexpr int mainMenuColumns = 2;
 int coverWidth = 0;
 
-const uint8_t* iconForName(UIIcon icon, int size) {
+}  // namespace
+
+const uint8_t* LyraTheme::iconForName(UIIcon icon, uint32_t size) {
   if (size == 24) {
     switch (icon) {
       case UIIcon::Folder:
@@ -87,7 +89,6 @@ const uint8_t* iconForName(UIIcon icon, int size) {
   }
   return nullptr;
 }
-}  // namespace
 
 void LyraTheme::fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t percentage) const {
   const bool charging = gpio.isUsbConnected();
@@ -416,8 +417,8 @@ void LyraTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
 }
 
 void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
-                                    const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                    bool& bufferRestored, std::function<bool()> storeCoverBuffer,
+                                    int selectorIndex, bool& coverRendered, bool& coverBufferStored,
+                                    bool& bufferRestored, const std::function<bool()>& storeCoverBuffer,
                                     const BookReadingStats* stats, float progressPercent) const {
   const int tileWidth = rect.width - 2 * LyraMetrics::values.contentSidePadding;
   const int tileHeight = rect.height;

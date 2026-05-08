@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <iterator>
 #include <string_view>
 
 namespace {
@@ -52,8 +53,33 @@ constexpr size_t MIN_FREE_HEAP_FOR_CSS = 48 * 1024;
 // Prevents parsing of extremely long or malformed selectors
 constexpr size_t MAX_SELECTOR_LENGTH = 256;
 
+// Grow selector storage in small chunks. Reserving MAX_RULES up front can
+// require one large contiguous heap block and abort on ESP32-C3.
+constexpr size_t RULE_RESERVE_CHUNK = 32;
+constexpr uint32_t MIN_HEAP_AFTER_RULE_GROW = 16 * 1024;
+
 // Check if character is CSS whitespace
 bool isCssWhitespace(const char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f'; }
+
+size_t mergeDuplicateRules(std::vector<std::pair<std::string, CssStyle>>& rules) {
+  if (rules.empty()) return 0;
+
+  const size_t originalSize = rules.size();
+  auto writeIt = rules.begin();
+  for (auto readIt = std::next(rules.begin()); readIt != rules.end(); ++readIt) {
+    if (writeIt->first == readIt->first) {
+      writeIt->second.applyOver(readIt->second);
+      continue;
+    }
+    ++writeIt;
+    if (writeIt != readIt) {
+      *writeIt = std::move(*readIt);
+    }
+  }
+
+  rules.erase(std::next(writeIt), rules.end());
+  return originalSize - rules.size();
+}
 
 std::string_view stripTrailingImportant(std::string_view value) {
   constexpr std::string_view IMPORTANT = "!important";
@@ -402,11 +428,43 @@ bool CssParser::selectorMatchesElement(const std::string& selector, const std::s
 
 // Rule processing
 
-void CssParser::processRuleBlockWithStyle(const std::string& selectorGroup, const CssStyle& style) {
+bool CssParser::ensureRuleCapacity() {
+  if (rulesBySelector_.size() < rulesBySelector_.capacity()) {
+    return true;
+  }
+  if (rulesBySelector_.capacity() >= MAX_RULES) {
+    return false;
+  }
+
+  const size_t nextCapacity = std::min(rulesBySelector_.capacity() + RULE_RESERVE_CHUNK, MAX_RULES);
+  size_t existingKeyCapacity = 0;
+  for (const auto& rule : rulesBySelector_) {
+    existingKeyCapacity += rule.first.capacity() + 1;
+  }
+  size_t averageKeyCapacity = MAX_SELECTOR_LENGTH / 2;
+  if (!rulesBySelector_.empty()) {
+    averageKeyCapacity = std::max<size_t>(1, existingKeyCapacity / rulesBySelector_.size());
+  }
+  const size_t extraSlots = nextCapacity - rulesBySelector_.size();
+  const size_t reserveBytes = nextCapacity * sizeof(decltype(rulesBySelector_)::value_type) + existingKeyCapacity +
+                              extraSlots * (averageKeyCapacity + 1);
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
+  if (freeHeap <= reserveBytes + MIN_HEAP_AFTER_RULE_GROW || maxAllocHeap <= reserveBytes + MIN_HEAP_AFTER_RULE_GROW) {
+    LOG_ERR("CSS", "Skipping remaining CSS rules: heap too low for rule table growth (free=%u, maxAlloc=%u, need=%zu)",
+            freeHeap, maxAllocHeap, reserveBytes);
+    return false;
+  }
+
+  rulesBySelector_.reserve(nextCapacity);
+  return true;
+}
+
+bool CssParser::processRuleBlockWithStyle(const std::string& selectorGroup, const CssStyle& style) {
   // Check if we've reached the rule limit before processing
   if (rulesBySelector_.size() >= MAX_RULES) {
-    LOG_DBG("CSS", "Reached max rules limit (%zu), stopping CSS parsing", MAX_RULES);
-    return;
+    LOG_ERR("CSS", "Reached max rules limit (%zu), treating CSS parse as incomplete", MAX_RULES);
+    return false;
   }
 
   // Handle comma-separated selectors
@@ -502,18 +560,24 @@ void CssParser::processRuleBlockWithStyle(const std::string& selectorGroup, cons
 
     // Skip if this would exceed the rule limit
     if (rulesBySelector_.size() >= MAX_RULES) {
-      LOG_DBG("CSS", "Reached max rules limit, stopping selector processing");
-      return;
+      LOG_ERR("CSS", "Reached max rules limit, treating CSS parse as incomplete");
+      return false;
     }
 
-    // Store or merge with existing
-    auto it = rulesBySelector_.find(key);
+    if (!ensureRuleCapacity()) {
+      return false;
+    }
+    // Linear scan is acceptable here because this only runs while parsing CSS,
+    // and it avoids the fragmented heap pattern from unordered_map allocations.
+    auto it = std::find_if(rulesBySelector_.begin(), rulesBySelector_.end(),
+                           [&key](const std::pair<std::string, CssStyle>& p) { return p.first == key; });
     if (it != rulesBySelector_.end()) {
       it->second.applyOver(style);
     } else {
-      rulesBySelector_[key] = style;
+      rulesBySelector_.emplace_back(std::move(key), std::move(style));
     }
   }
+  return true;
 }
 
 // Main parsing entry point
@@ -542,6 +606,7 @@ bool CssParser::loadFromStream(FsFile& source) {
 
   int bodyDepth = 0;
   bool skippingRule = false;
+  bool stopParsing = false;
   CssStyle currentStyle;
 
   auto handleChar = [&](const char c) {
@@ -591,7 +656,7 @@ bool CssParser::loadFromStream(FsFile& source) {
           parseDeclarationIntoStyle(declBuffer.str(), currentStyle, propNameBuf, propValueBuf);
         }
         if (!skippingRule) {
-          processRuleBlockWithStyle(selector.str(), currentStyle);
+          stopParsing = !processRuleBlockWithStyle(selector.str(), currentStyle);
         }
         selector.clear();
         declBuffer.clear();
@@ -616,13 +681,13 @@ bool CssParser::loadFromStream(FsFile& source) {
   };
 
   char buffer[READ_BUFFER_SIZE];
-  while (source.available()) {
+  while (!stopParsing && source.available()) {
     int bytesRead = source.read(buffer, sizeof(buffer));
     if (bytesRead <= 0) break;
 
     totalRead += static_cast<size_t>(bytesRead);
 
-    for (int i = 0; i < bytesRead; ++i) {
+    for (int i = 0; i < bytesRead && !stopParsing; ++i) {
       const char c = buffer[i];
 
       if (inComment) {
@@ -656,8 +721,21 @@ bool CssParser::loadFromStream(FsFile& source) {
     }
   }
 
-  if (maybeSlash) {
+  if (!stopParsing && maybeSlash) {
     handleChar('/');
+  }
+
+  if (stopParsing) {
+    return false;
+  }
+
+  std::sort(rulesBySelector_.begin(), rulesBySelector_.end(),
+            [](const std::pair<std::string, CssStyle>& a, const std::pair<std::string, CssStyle>& b) {
+              return a.first < b.first;
+            });
+  const size_t duplicateCount = mergeDuplicateRules(rulesBySelector_);
+  if (duplicateCount > 0) {
+    LOG_DBG("CSS", "Merged %zu duplicate CSS selector rules after parse", duplicateCount);
   }
 
   LOG_DBG("CSS", "Parsed %zu rules from %zu bytes", rulesBySelector_.size(), totalRead);
@@ -665,6 +743,17 @@ bool CssParser::loadFromStream(FsFile& source) {
 }
 
 // Style resolution
+
+const CssStyle* CssParser::findRule(const std::string& key) const {
+  auto it = std::lower_bound(rulesBySelector_.begin(), rulesBySelector_.end(), key,
+                             [](const std::pair<std::string, CssStyle>& entry, const std::string& searchKey) {
+                               return entry.first < searchKey;
+                             });
+  if (it != rulesBySelector_.end() && it->first == key) {
+    return &it->second;
+  }
+  return nullptr;
+}
 
 CssStyle CssParser::resolveStyle(const std::string& tagName, const std::string& classAttr,
                                  const std::vector<CssAncestorEntry>& ancestors) const {
@@ -681,9 +770,8 @@ CssStyle CssParser::resolveStyle(const std::string& tagName, const std::string& 
   const std::string tag = normalized(tagName);
 
   // 1. Apply element-level style (lowest priority)
-  const auto tagIt = rulesBySelector_.find(tag);
-  if (tagIt != rulesBySelector_.end()) {
-    result.applyOver(tagIt->second);
+  if (const auto* tagStyle = findRule(tag)) {
+    result.applyOver(*tagStyle);
   }
 
   // 2. Apply two-part descendant rules — higher specificity than bare element, lower than class
@@ -704,24 +792,27 @@ CssStyle CssParser::resolveStyle(const std::string& tagName, const std::string& 
   // 4. Apply class styles (medium priority)
   if (!classAttr.empty()) {
     const auto classes = splitWhitespace(classAttr);
+    std::string selectorKey;
+    selectorKey.reserve(tag.size() + MAX_SELECTOR_LENGTH + 2);
 
     for (const auto& cls : classes) {
-      std::string classKey = "." + normalized(cls);
-
-      auto classIt = rulesBySelector_.find(classKey);
-      if (classIt != rulesBySelector_.end()) {
-        result.applyOver(classIt->second);
+      selectorKey.clear();
+      selectorKey.push_back('.');
+      selectorKey.append(normalized(cls));
+      if (const auto* classStyle = findRule(selectorKey)) {
+        result.applyOver(*classStyle);
       }
     }
 
     // TODO: Support combinations of classes (e.g. style on p.class1.class2)
     // 5. Apply element.class styles (highest priority)
     for (const auto& cls : classes) {
-      std::string combinedKey = tag + "." + normalized(cls);
-
-      auto combinedIt = rulesBySelector_.find(combinedKey);
-      if (combinedIt != rulesBySelector_.end()) {
-        result.applyOver(combinedIt->second);
+      selectorKey.clear();
+      selectorKey.append(tag);
+      selectorKey.push_back('.');
+      selectorKey.append(normalized(cls));
+      if (const auto* combinedStyle = findRule(selectorKey)) {
+        result.applyOver(*combinedStyle);
       }
     }
   }
@@ -958,7 +1049,20 @@ bool CssParser::loadFromCache() {
       rulesBySelector_.clear();
       return false;
     }
-    rulesBySelector_[selector] = style;
+    if (!ensureRuleCapacity()) {
+      rulesBySelector_.clear();
+      return false;
+    }
+    rulesBySelector_.emplace_back(std::move(selector), std::move(style));
+  }
+
+  std::sort(rulesBySelector_.begin(), rulesBySelector_.end(),
+            [](const std::pair<std::string, CssStyle>& a, const std::pair<std::string, CssStyle>& b) {
+              return a.first < b.first;
+            });
+  const size_t duplicateCount = mergeDuplicateRules(rulesBySelector_);
+  if (duplicateCount > 0) {
+    LOG_DBG("CSS", "Merged %zu duplicate CSS selector rules from cache", duplicateCount);
   }
 
   // Read descendant rules
@@ -1000,6 +1104,6 @@ bool CssParser::loadFromCache() {
     }
   }
 
-  LOG_DBG("CSS", "Loaded %u rules + %u descendant rules from cache", ruleCount, descendantCount);
+  LOG_DBG("CSS", "Loaded %zu rules + %u descendant rules from cache", rulesBySelector_.size(), descendantCount);
   return true;
 }

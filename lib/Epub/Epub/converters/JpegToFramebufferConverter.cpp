@@ -199,7 +199,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
   // === Bilinear interpolation (upscale: fineScale > 1.0) ===
   // Smooths block boundaries that would otherwise create visible banding
   // on progressive JPEG DC-only decode (1/8 resolution upscaled to target).
-  if (fineScaleFPX > FP_ONE && fineScaleFPY > FP_ONE) {
+  if (fineScaleFPX > FP_ONE || fineScaleFPY > FP_ONE) {
     // Pre-compute safe X range where lx0 and lx0+1 are both in [0, validW-1].
     // Only the left/right edge pixels (typically 0-2 and 1-8 respectively) need clamping.
     int safeXStart = (int)(((int64_t)blockX * fineScaleFPX + FP_MASK) >> FP_SHIFT);
@@ -462,14 +462,22 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
   ctx.scaledSrcHeight = (srcHeight + jpegScaleDenom - 1) / jpegScaleDenom;
   ctx.dstWidth = destWidth;
   ctx.dstHeight = destHeight;
+  if (destWidth <= 0 || destHeight <= 0 || ctx.scaledSrcWidth <= 0 || ctx.scaledSrcHeight <= 0) {
+    LOG_ERR("JPG", "Invalid scaled JPEG dimensions: src=%dx%d scaled=%dx%d dst=%dx%d", srcWidth, srcHeight,
+            ctx.scaledSrcWidth, ctx.scaledSrcHeight, destWidth, destHeight);
+    jpeg->close();
+    delete jpeg;
+    return false;
+  }
+
   ctx.fineScaleFPX = (int32_t)((int64_t)destWidth * FP_ONE / ctx.scaledSrcWidth);
-  ctx.invScaleFPX = (int32_t)((int64_t)ctx.scaledSrcWidth * FP_ONE / destWidth);
   ctx.fineScaleFPY = (int32_t)((int64_t)destHeight * FP_ONE / ctx.scaledSrcHeight);
+  ctx.invScaleFPX = (int32_t)((int64_t)ctx.scaledSrcWidth * FP_ONE / destWidth);
   ctx.invScaleFPY = (int32_t)((int64_t)ctx.scaledSrcHeight * FP_ONE / destHeight);
 
-  LOG_DBG("JPG", "JPEG %dx%d -> %dx%d (scale %.2f, jpegScale 1/%d, fineScale %.2f)%s", srcWidth, srcHeight, destWidth,
-          destHeight, targetScale, jpegScaleDenom, (float)destWidth / ctx.scaledSrcWidth,
-          isProgressive ? " [progressive]" : "");
+  LOG_DBG("JPG", "JPEG %dx%d -> %dx%d (scale %.2f, jpegScale 1/%d, fineScale %.2fx%.2f)%s", srcWidth, srcHeight,
+          destWidth, destHeight, targetScale, jpegScaleDenom, (float)destWidth / ctx.scaledSrcWidth,
+          (float)destHeight / ctx.scaledSrcHeight, isProgressive ? " [progressive]" : "");
 
   // Set pixel type to 8-bit grayscale (must be after open())
   jpeg->setPixelType(EIGHT_BIT_GRAYSCALE);
