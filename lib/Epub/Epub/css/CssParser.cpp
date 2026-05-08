@@ -462,6 +462,30 @@ bool CssParser::ensureRuleCapacity() {
   return true;
 }
 
+bool CssParser::upsertRule(std::string key, const CssStyle& style) {
+  const auto it = std::lower_bound(rulesBySelector_.begin(), rulesBySelector_.end(), key,
+                                   [](const std::pair<std::string, CssStyle>& entry, const std::string& searchKey) {
+                                     return entry.first < searchKey;
+                                   });
+  if (it != rulesBySelector_.end() && it->first == key) {
+    it->second.applyOver(style);
+    return true;
+  }
+
+  if (rulesBySelector_.size() >= MAX_RULES) {
+    LOG_ERR("CSS", "Reached max rules limit, treating CSS parse as incomplete");
+    return false;
+  }
+
+  const size_t insertIndex = std::distance(rulesBySelector_.begin(), it);
+  if (!ensureRuleCapacity()) {
+    return false;
+  }
+
+  rulesBySelector_.insert(rulesBySelector_.begin() + insertIndex, {std::move(key), style});
+  return true;
+}
+
 bool CssParser::processRuleBlockWithStyle(const std::string& selectorGroup, const CssStyle& style) {
   // Check if we've reached the rule limit before processing
   if (rulesBySelector_.size() >= MAX_RULES) {
@@ -560,24 +584,7 @@ bool CssParser::processRuleBlockWithStyle(const std::string& selectorGroup, cons
       continue;
     }
 
-    // Skip if this would exceed the rule limit
-    if (rulesBySelector_.size() >= MAX_RULES) {
-      LOG_ERR("CSS", "Reached max rules limit, treating CSS parse as incomplete");
-      return false;
-    }
-
-    if (!ensureRuleCapacity()) {
-      return false;
-    }
-    // Linear scan is acceptable here because this only runs while parsing CSS,
-    // and it avoids the fragmented heap pattern from unordered_map allocations.
-    auto it = std::find_if(rulesBySelector_.begin(), rulesBySelector_.end(),
-                           [&key](const std::pair<std::string, CssStyle>& p) { return p.first == key; });
-    if (it != rulesBySelector_.end()) {
-      it->second.applyOver(style);
-    } else {
-      rulesBySelector_.emplace_back(std::move(key), style);
-    }
+    if (!upsertRule(std::move(key), style)) return false;
   }
   return true;
 }
@@ -1051,11 +1058,10 @@ bool CssParser::loadFromCache() {
       rulesBySelector_.clear();
       return false;
     }
-    if (!ensureRuleCapacity()) {
+    if (!upsertRule(std::move(selector), style)) {
       rulesBySelector_.clear();
       return false;
     }
-    rulesBySelector_.emplace_back(std::move(selector), std::move(style));
   }
 
   std::sort(rulesBySelector_.begin(), rulesBySelector_.end(),

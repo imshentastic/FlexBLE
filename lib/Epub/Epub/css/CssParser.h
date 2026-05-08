@@ -134,7 +134,7 @@ class CssParser {
   };
 
   // Storage: sorted vector of (selector, style) pairs.
-  // Kept sorted by selector so resolveStyle can use binary search.
+  // Kept sorted on insert so resolveStyle can safely use binary search.
   std::vector<std::pair<std::string, CssStyle>> rulesBySelector_;
   std::vector<DescendantRule> descendantRules_;
 
@@ -142,6 +142,7 @@ class CssParser {
 
   const CssStyle* findRule(const std::string& key) const;
   [[nodiscard]] bool ensureRuleCapacity();
+  [[nodiscard]] bool upsertRule(std::string key, const CssStyle& style);
 
   // Internal parsing helpers
   [[nodiscard]] bool processRuleBlockWithStyle(const std::string& selectorGroup, const CssStyle& style);
