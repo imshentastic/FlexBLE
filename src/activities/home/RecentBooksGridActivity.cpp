@@ -10,8 +10,11 @@
 #include <Xtc.h>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 
 #include "MappedInputManager.h"
+#include "RecentBookProgress.h"
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
@@ -20,6 +23,41 @@
 namespace {
 constexpr int kCoverCornerRadius = 2;
 constexpr int kGridColumns = 3;
+
+void drawInlineProgressCircle(const GfxRenderer& renderer, const int x, const int y, const int size,
+                              const float progressPercent) {
+  const int radius = size / 2;
+  if (radius <= 2) return;
+
+  const int centerX = x + radius;
+  const int centerY = y + radius;
+  const int outerRadius = radius;
+  const int innerRadius = std::max(1, radius - std::max(2, size / 4));
+  const int outerRadiusSq = outerRadius * outerRadius;
+  const int innerRadiusSq = innerRadius * innerRadius;
+  const float sweepRadians = std::clamp(progressPercent, 0.0f, 100.0f) * 0.06283185f;
+
+  for (int dy = -outerRadius; dy <= outerRadius; ++dy) {
+    for (int dx = -outerRadius; dx <= outerRadius; ++dx) {
+      const int distanceSq = dx * dx + dy * dy;
+      if (distanceSq > outerRadiusSq || distanceSq < innerRadiusSq) {
+        continue;
+      }
+
+      const int px = centerX + dx;
+      const int py = centerY + dy;
+      renderer.fillRectDither(px, py, 1, 1, Color::LightGray);
+
+      float angle = std::atan2(static_cast<float>(dx), static_cast<float>(-dy));
+      if (angle < 0.0f) {
+        angle += 6.2831853f;
+      }
+      if (angle <= sweepRadians) {
+        renderer.drawPixel(px, py, true);
+      }
+    }
+  }
+}
 
 int moveHorizontalInGrid(const int currentIndex, const int totalItems, const bool moveRight) {
   if (totalItems <= 0) return 0;
@@ -83,6 +121,8 @@ int moveVerticalInGrid(const int currentIndex, const int totalItems, const int c
 
 void RecentBooksGridActivity::loadRecentBooks() {
   recentBooks.clear();
+  recentBookProgress.clear();
+  recentBookProgressLoaded.clear();
   const auto& books = RECENT_BOOKS.getBooks();
   recentBooks.reserve(std::min(books.size(), static_cast<size_t>(MAX_GRID_BOOKS)));
 
@@ -91,6 +131,20 @@ void RecentBooksGridActivity::loadRecentBooks() {
     if (!Storage.exists(book.path.c_str())) continue;
     recentBooks.push_back(book);
   }
+
+  recentBookProgress.assign(recentBooks.size(), -1.0f);
+  recentBookProgressLoaded.assign(recentBooks.size(), false);
+}
+
+void RecentBooksGridActivity::ensureProgressLoaded(const int index) {
+  if (index < 0 || index >= static_cast<int>(recentBooks.size())) return;
+  if (index >= static_cast<int>(recentBookProgress.size()) ||
+      index >= static_cast<int>(recentBookProgressLoaded.size()) || recentBookProgressLoaded[index]) {
+    return;
+  }
+
+  recentBookProgress[index] = RecentBookProgress::loadPercent(recentBooks[index]);
+  recentBookProgressLoaded[index] = true;
 }
 
 void RecentBooksGridActivity::loadPageCovers(int pageStart) {
@@ -165,12 +219,15 @@ void RecentBooksGridActivity::onEnter() {
   loadRecentBooks();
   selectorIndex = 0;
   loadedPageStart = -1;
+  ensureProgressLoaded(selectorIndex);
   requestUpdate();
 }
 
 void RecentBooksGridActivity::onExit() {
   Activity::onExit();
   recentBooks.clear();
+  recentBookProgress.clear();
+  recentBookProgressLoaded.clear();
 }
 
 void RecentBooksGridActivity::loop() {
@@ -191,35 +248,43 @@ void RecentBooksGridActivity::loop() {
 
   buttonNavigator.onRelease({MappedInputManager::Button::Right}, [this, listSize] {
     selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, true);
+    ensureProgressLoaded(selectorIndex);
     requestUpdate();
   });
   buttonNavigator.onRelease({MappedInputManager::Button::Left}, [this, listSize] {
     selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, false);
+    ensureProgressLoaded(selectorIndex);
     requestUpdate();
   });
   buttonNavigator.onRelease({MappedInputManager::Button::Down}, [this, listSize] {
     selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, true);
+    ensureProgressLoaded(selectorIndex);
     requestUpdate();
   });
   buttonNavigator.onRelease({MappedInputManager::Button::Up}, [this, listSize] {
     selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, false);
+    ensureProgressLoaded(selectorIndex);
     requestUpdate();
   });
 
   buttonNavigator.onContinuous({MappedInputManager::Button::Right}, [this, listSize] {
     selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, true);
+    ensureProgressLoaded(selectorIndex);
     requestUpdate();
   });
   buttonNavigator.onContinuous({MappedInputManager::Button::Left}, [this, listSize] {
     selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, false);
+    ensureProgressLoaded(selectorIndex);
     requestUpdate();
   });
   buttonNavigator.onContinuous({MappedInputManager::Button::Down}, [this, listSize] {
     selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, true);
+    ensureProgressLoaded(selectorIndex);
     requestUpdate();
   });
   buttonNavigator.onContinuous({MappedInputManager::Button::Up}, [this, listSize] {
     selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, false);
+    ensureProgressLoaded(selectorIndex);
     requestUpdate();
   });
 }
@@ -255,9 +320,40 @@ void RecentBooksGridActivity::render(RenderLock&&) {
     if (selectorIndex >= 0 && selectorIndex < static_cast<int>(recentBooks.size())) {
       const int titleLh = renderer.getLineHeight(UI_10_FONT_ID);
       const int titleY = contentTop + (titleStripHeight - titleLh) / 2;
+      char progressLabel[8];
+      progressLabel[0] = '\0';
+      const bool hasProgress = selectorIndex < static_cast<int>(recentBookProgress.size()) &&
+                               selectorIndex < static_cast<int>(recentBookProgressLoaded.size()) &&
+                               recentBookProgressLoaded[selectorIndex] &&
+                               RecentBookProgress::hasPercent(recentBookProgress[selectorIndex]);
+      if (hasProgress) {
+        RecentBookProgress::formatPercent(recentBookProgress[selectorIndex], progressLabel, sizeof(progressLabel));
+      }
+
+      const int progressIconSize = hasProgress ? std::max(8, titleLh - 2) : 0;
+      const char* progressSeparator = "  |   ";
+      const int separatorWidth =
+          hasProgress ? renderer.getTextWidth(UI_10_FONT_ID, progressSeparator, EpdFontFamily::REGULAR) : 0;
+      const int progressWidth =
+          hasProgress ? renderer.getTextWidth(UI_10_FONT_ID, progressLabel, EpdFontFamily::REGULAR) : 0;
+      const int progressIconGap = hasProgress ? renderer.getTextWidth(UI_10_FONT_ID, "  ", EpdFontFamily::REGULAR) : 0;
+      const int progressSuffixWidth =
+          hasProgress ? separatorWidth + progressWidth + progressIconGap + progressIconSize : 0;
+      const int titleMaxWidth = std::max(0, totalGridWidth - progressSuffixWidth);
       const std::string truncTitle = renderer.truncatedText(UI_10_FONT_ID, recentBooks[selectorIndex].title.c_str(),
-                                                            totalGridWidth, EpdFontFamily::REGULAR);
+                                                            titleMaxWidth, EpdFontFamily::REGULAR);
       renderer.drawText(UI_10_FONT_ID, startXOffset, titleY, truncTitle.c_str(), true, EpdFontFamily::REGULAR);
+      if (hasProgress) {
+        const int titleWidth = renderer.getTextWidth(UI_10_FONT_ID, truncTitle.c_str(), EpdFontFamily::REGULAR);
+        int progressX = startXOffset + titleWidth;
+        progressX = std::min(progressX, startXOffset + totalGridWidth - progressSuffixWidth);
+        renderer.drawText(UI_10_FONT_ID, progressX, titleY, progressSeparator, true, EpdFontFamily::REGULAR);
+        progressX += separatorWidth;
+        renderer.drawText(UI_10_FONT_ID, progressX, titleY, progressLabel, true, EpdFontFamily::REGULAR);
+        const int iconX = progressX + progressWidth + progressIconGap;
+        const int iconY = titleY + (titleLh - progressIconSize) / 2;
+        drawInlineProgressCircle(renderer, iconX, iconY, progressIconSize, recentBookProgress[selectorIndex]);
+      }
     }
 
     for (int i = 0; i < pageCount; ++i) {

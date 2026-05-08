@@ -644,31 +644,7 @@ void LyraCarouselTheme::drawList(const GfxRenderer& renderer, Rect rect, int ite
   }
 }
 
-// ---------------------------------------------------------------------------
-// Tab bar — solid black background + solid black active tab, inverted text
-// ---------------------------------------------------------------------------
 void LyraCarouselTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,
                                    bool selected) const {
-  constexpr int hPad = 8;
-  int currentX = rect.x + LyraCarouselMetrics::values.contentSidePadding;
-
-  for (const auto& tab : tabs) {
-    const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, tab.label, EpdFontFamily::REGULAR);
-
-    if (tab.selected) {
-      if (selected) {
-        renderer.fillRoundedRect(currentX, rect.y + 1, textWidth + 2 * hPad, rect.height - 4, kCornerRadius,
-                                 Color::Black);
-      } else {
-        renderer.drawRoundedRect(currentX, rect.y, textWidth + 2 * hPad, rect.height - 3, 1, kCornerRadius, true);
-      }
-    }
-
-    renderer.drawText(UI_10_FONT_ID, currentX + hPad, rect.y + 6, tab.label, !(tab.selected && selected),
-                      EpdFontFamily::REGULAR);
-
-    currentX += textWidth + LyraCarouselMetrics::values.tabSpacing + 2 * hPad;
-  }
-
-  renderer.drawLine(rect.x, rect.y + rect.height - 1, rect.x + rect.width - 1, rect.y + rect.height - 1, true);
+  LyraTheme::drawTabBar(renderer, rect, tabs, selected);
 }

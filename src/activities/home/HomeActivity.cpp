@@ -7,7 +7,6 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Serialization.h>
-#include <Txt.h>
 #include <Utf8.h>
 #include <Xtc.h>
 
@@ -27,14 +26,13 @@
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
+#include "RecentBookProgress.h"
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "fontIds.h"
 
 namespace {
-constexpr uint32_t TXT_CACHE_MAGIC = 0x54585449;  // "TXTI"
-constexpr uint8_t TXT_CACHE_VERSION = 2;
 constexpr uint32_t CAROUSEL_CACHE_MAGIC = 0x43434152;  // "CCAR"
 constexpr uint16_t CAROUSEL_CACHE_VERSION = 1;
 constexpr char CAROUSEL_CACHE_PATH[] = "/.crosspoint/home_carousel_cache.bin";
@@ -78,8 +76,6 @@ uint64_t fnvHash64(const std::string& s) {
   }
   return hash;
 }
-
-float clampProgressPercent(const float progress) { return std::clamp(progress, 0.0f, 100.0f); }
 
 bool hasAnyBookStats(const BookReadingStats& stats) {
   return stats.sessionCount > 0 || stats.totalReadingSeconds > 0 || stats.totalPagesTurned > 0 || stats.isCompleted;
@@ -129,128 +125,6 @@ std::string getRecentBookCachePath(const RecentBook& book) {
     return "/.crosspoint/txt_" + std::to_string(std::hash<std::string>{}(book.path));
   }
   return "";
-}
-
-float loadEpubProgressPercent(const RecentBook& book) {
-  Epub epub(book.path, "/.crosspoint");
-  if (!epub.load(false, true)) {
-    return -1.0f;
-  }
-
-  FsFile file;
-  if (!Storage.openFileForRead("HOME", epub.getCachePath() + "/progress.bin", file)) {
-    return -1.0f;
-  }
-
-  uint8_t data[6];
-  const int bytesRead = file.read(data, sizeof(data));
-  file.close();
-  if (bytesRead != 6) {
-    return -1.0f;
-  }
-
-  const int spineIndex = data[0] | (data[1] << 8);
-  const int currentPage = data[2] | (data[3] << 8);
-  const int pageCount = data[4] | (data[5] << 8);
-  if (pageCount <= 0) {
-    return 0.0f;
-  }
-
-  const float chapterProgress = static_cast<float>(currentPage + 1) / static_cast<float>(pageCount);
-  return clampProgressPercent(epub.calculateProgress(spineIndex, chapterProgress) * 100.0f);
-}
-
-float loadXtcProgressPercent(const RecentBook& book) {
-  Xtc xtc(book.path, "/.crosspoint");
-  if (!xtc.load()) {
-    return -1.0f;
-  }
-
-  FsFile file;
-  if (!Storage.openFileForRead("HOME", xtc.getCachePath() + "/progress.bin", file)) {
-    return -1.0f;
-  }
-
-  uint8_t data[4];
-  const int bytesRead = file.read(data, sizeof(data));
-  file.close();
-  if (bytesRead != 4) {
-    return -1.0f;
-  }
-
-  const uint32_t currentPage = static_cast<uint32_t>(data[0]) | (static_cast<uint32_t>(data[1]) << 8) |
-                               (static_cast<uint32_t>(data[2]) << 16) | (static_cast<uint32_t>(data[3]) << 24);
-  return clampProgressPercent(static_cast<float>(xtc.calculateProgress(currentPage)));
-}
-
-float loadTxtProgressPercent(const RecentBook& book) {
-  Txt txt(book.path, "/.crosspoint");
-  if (!txt.load()) {
-    return -1.0f;
-  }
-
-  FsFile progressFile;
-  if (!Storage.openFileForRead("HOME", txt.getCachePath() + "/progress.bin", progressFile)) {
-    return -1.0f;
-  }
-
-  uint8_t progressData[4];
-  const int progressBytes = progressFile.read(progressData, sizeof(progressData));
-  progressFile.close();
-  if (progressBytes != 4) {
-    return -1.0f;
-  }
-
-  const uint32_t currentPage = static_cast<uint32_t>(progressData[0]) | (static_cast<uint32_t>(progressData[1]) << 8);
-
-  FsFile indexFile;
-  if (!Storage.openFileForRead("HOME", txt.getCachePath() + "/index.bin", indexFile)) {
-    return -1.0f;
-  }
-
-  uint32_t magic = 0;
-  serialization::readPod(indexFile, magic);
-  uint8_t version = 0;
-  serialization::readPod(indexFile, version);
-  uint32_t fileSize = 0;
-  serialization::readPod(indexFile, fileSize);
-  int32_t cachedWidth = 0;
-  serialization::readPod(indexFile, cachedWidth);
-  int32_t cachedLines = 0;
-  serialization::readPod(indexFile, cachedLines);
-  int32_t fontId = 0;
-  serialization::readPod(indexFile, fontId);
-  int32_t margin = 0;
-  serialization::readPod(indexFile, margin);
-  uint8_t alignment = 0;
-  serialization::readPod(indexFile, alignment);
-  uint32_t totalPages = 0;
-  serialization::readPod(indexFile, totalPages);
-  indexFile.close();
-  (void)cachedWidth;
-  (void)cachedLines;
-  (void)fontId;
-  (void)margin;
-  (void)alignment;
-
-  if (magic != TXT_CACHE_MAGIC || version != TXT_CACHE_VERSION || fileSize != txt.getFileSize() || totalPages == 0) {
-    return -1.0f;
-  }
-
-  return clampProgressPercent((static_cast<float>(currentPage + 1) / static_cast<float>(totalPages)) * 100.0f);
-}
-
-float loadRecentBookProgressPercent(const RecentBook& book) {
-  if (FsHelpers::hasEpubExtension(book.path)) {
-    return loadEpubProgressPercent(book);
-  }
-  if (FsHelpers::hasXtcExtension(book.path)) {
-    return loadXtcProgressPercent(book);
-  }
-  if (FsHelpers::hasTxtExtension(book.path) || FsHelpers::hasMarkdownExtension(book.path)) {
-    return loadTxtProgressPercent(book);
-  }
-  return -1.0f;
 }
 
 BookReadingStats loadRecentBookStats(const RecentBook& book) {
@@ -435,7 +309,7 @@ void HomeActivity::loadAllBookStats() {
   const int count = std::min(static_cast<int>(recentBooks.size()), kMaxCachedBooks);
   for (int i = 0; i < count; ++i) {
     cachedBookStats[i] = loadRecentBookStats(recentBooks[i]);
-    cachedBookProgress[i] = loadRecentBookProgressPercent(recentBooks[i]);
+    cachedBookProgress[i] = RecentBookProgress::loadPercent(recentBooks[i]);
   }
   bookStatsCached = true;
   LOG_DBG("HOME", "carousel: cached stats/progress for %d book(s) in %lums", count, millis() - start);
@@ -688,7 +562,7 @@ void HomeActivity::updateHighlightedBookContext() {
       currentBookProgressPercent = cachedBookProgress[idx];
     } else {
       currentBookStats = loadRecentBookStats(recentBooks[idx]);
-      currentBookProgressPercent = loadRecentBookProgressPercent(recentBooks[idx]);
+      currentBookProgressPercent = RecentBookProgress::loadPercent(recentBooks[idx]);
     }
   }
 
@@ -813,7 +687,7 @@ void HomeActivity::renderCarouselFrameToCurrentBuffer(int bookIdx, BookReadingSt
       frameProgressPercent = cachedBookProgress[bookIdx];
     } else {
       frameStats = loadRecentBookStats(recentBooks[bookIdx]);
-      frameProgressPercent = loadRecentBookProgressPercent(recentBooks[bookIdx]);
+      frameProgressPercent = RecentBookProgress::loadPercent(recentBooks[bookIdx]);
     }
     if (hasAnyBookStats(frameStats)) frameStatsPtr = &frameStats;
   }

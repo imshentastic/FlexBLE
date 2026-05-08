@@ -24,8 +24,11 @@ class RecentBooksGridActivity final : public Activity {
   ButtonNavigator buttonNavigator;
   int selectorIndex = 0;
   std::vector<RecentBook> recentBooks;
+  std::vector<float> recentBookProgress;
+  std::vector<bool> recentBookProgressLoaded;
   int loadedPageStart = -1;
 
   void loadRecentBooks();
   void loadPageCovers(int pageStart);
+  void ensureProgressLoaded(int index);
 };

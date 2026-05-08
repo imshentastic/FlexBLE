@@ -19,7 +19,6 @@
 - Avoid an EPUB CSS-cache rebuild crash after clearing a book cache by growing the CSS rule table in guarded chunks instead of reserving the full rule limit at once
 - Avoid rebuilding the current EPUB section when changes to Reader Options affect only render-quality settings.
 - Skip image decoding during the font prewarm scan.
-- Fix Lyra Carousel side covers failing to draw when the perspective slot is taller than the cached thumbnail.
 
 ## [v1.2.9.1] - 2026-05-03
 
