@@ -735,6 +735,8 @@ bool CssParser::loadFromStream(FsFile& source) {
   }
 
   if (stopParsing) {
+    LOG_ERR("CSS", "CSS parse stopped after %zu bytes with %zu selector rules and %zu descendant rules loaded",
+            totalRead, rulesBySelector_.size(), descendantRules_.size());
     return false;
   }
 
