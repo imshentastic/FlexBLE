@@ -26,9 +26,42 @@ bool isSleepImageFile(const std::string& path) {
   return FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path);
 }
 
+bool hasFileMetadata(const std::string& path) {
+  return FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) || FsHelpers::hasTxtExtension(path) ||
+         FsHelpers::hasMarkdownExtension(path);
+}
+
 std::string buildFullPath(std::string basepath, const std::string& entry) {
   if (basepath.back() != '/') basepath += "/";
   return basepath + entry;
+}
+
+std::string normalizeDirectoryPath(std::string path) {
+  while (path.length() > 1 && path.back() == '/') {
+    path.pop_back();
+  }
+  return path;
+}
+
+void collectMetadataPathsRecursively(const std::string& dirPath, std::vector<std::string>& paths) {
+  auto dir = Storage.open(dirPath.c_str());
+  if (!dir || !dir.isDirectory()) {
+    LOG_ERR("FileBrowser", "Failed to scan directory metadata before delete: %s", dirPath.c_str());
+    return;
+  }
+
+  char name[256];
+  for (auto file = dir.openNextFile(); file; file = dir.openNextFile()) {
+    file.getName(name, sizeof(name));
+    const std::string childPath = buildFullPath(dirPath, name);
+    if (file.isDirectory()) {
+      collectMetadataPathsRecursively(childPath, paths);
+    } else if (hasFileMetadata(childPath)) {
+      paths.push_back(childPath);
+    }
+    file.close();
+  }
+  dir.close();
 }
 
 std::string getFileName(std::string filename);
@@ -151,20 +184,28 @@ void FileBrowserActivity::promptDeleteFile(const std::string& fullPath, const st
 }
 
 void FileBrowserActivity::promptDeleteDirectory(const std::string& fullPath, const std::string& entry) {
-  auto handler = [this, fullPath](const ActivityResult& res) {
+  const std::string dirPath = normalizeDirectoryPath(fullPath);
+  auto handler = [this, dirPath](const ActivityResult& res) {
     if (res.isCancelled) {
       LOG_DBG("FileBrowser", "Delete cancelled by user");
       return;
     }
 
-    LOG_DBG("FileBrowser", "Attempting to delete directory: %s", fullPath.c_str());
-    if (!Storage.removeDir(fullPath.c_str())) {
-      LOG_ERR("FileBrowser", "Failed to delete directory: %s", fullPath.c_str());
+    std::vector<std::string> metadataPaths;
+    collectMetadataPathsRecursively(dirPath, metadataPaths);
+
+    LOG_DBG("FileBrowser", "Attempting to delete directory: %s", dirPath.c_str());
+    if (!Storage.removeDir(dirPath.c_str())) {
+      LOG_ERR("FileBrowser", "Failed to delete directory: %s", dirPath.c_str());
       return;
     }
 
     LOG_DBG("FileBrowser", "Deleted successfully");
-    const std::string favoritePrefix = fullPath.back() == '/' ? fullPath : fullPath + "/";
+    for (const auto& metadataPath : metadataPaths) {
+      clearFileMetadata(metadataPath);
+    }
+
+    const std::string favoritePrefix = dirPath + "/";
     if (!APP_STATE.favoriteSleepImagePath.empty() && APP_STATE.favoriteSleepImagePath.rfind(favoritePrefix, 0) == 0) {
       unpinSleepFavorite();
     }
