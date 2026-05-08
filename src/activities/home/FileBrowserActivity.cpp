@@ -150,6 +150,38 @@ void FileBrowserActivity::promptDeleteFile(const std::string& fullPath, const st
   startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading, entry), handler);
 }
 
+void FileBrowserActivity::promptDeleteDirectory(const std::string& fullPath, const std::string& entry) {
+  auto handler = [this, fullPath](const ActivityResult& res) {
+    if (res.isCancelled) {
+      LOG_DBG("FileBrowser", "Delete cancelled by user");
+      return;
+    }
+
+    LOG_DBG("FileBrowser", "Attempting to delete directory: %s", fullPath.c_str());
+    if (!Storage.removeDir(fullPath.c_str())) {
+      LOG_ERR("FileBrowser", "Failed to delete directory: %s", fullPath.c_str());
+      return;
+    }
+
+    LOG_DBG("FileBrowser", "Deleted successfully");
+    const std::string favoritePrefix = fullPath.back() == '/' ? fullPath : fullPath + "/";
+    if (!APP_STATE.favoriteSleepImagePath.empty() && APP_STATE.favoriteSleepImagePath.rfind(favoritePrefix, 0) == 0) {
+      unpinSleepFavorite();
+    }
+
+    loadFiles();
+    if (files.empty()) {
+      selectorIndex = 0;
+    } else if (selectorIndex >= files.size()) {
+      selectorIndex = files.size() - 1;
+    }
+    requestUpdate(true);
+  };
+
+  const std::string heading = tr(STR_DELETE) + std::string("? ");
+  startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading, entry), handler);
+}
+
 void FileBrowserActivity::pinSleepFavorite(const std::string& fullPath) {
   APP_STATE.favoriteSleepImagePath = fullPath;
   if (!APP_STATE.saveToFile()) {
@@ -281,8 +313,12 @@ void FileBrowserActivity::loop() {
       return;
     }
 
-    if (mode == Mode::Books && mappedInput.getHeldTime() >= GO_HOME_MS && !isDirectory) {
-      showFileActionMenu(entry);
+    if (mode == Mode::Books && mappedInput.getHeldTime() >= GO_HOME_MS) {
+      if (isDirectory) {
+        promptDeleteDirectory(buildFullPath(basepath, entry), entry);
+      } else {
+        showFileActionMenu(entry);
+      }
       return;
     } else {
       // --- SHORT PRESS ACTION: OPEN/NAVIGATE ---

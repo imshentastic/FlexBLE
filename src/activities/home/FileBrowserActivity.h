@@ -17,6 +17,7 @@ class FileBrowserActivity final : public Activity {
   // Deletion
   void clearFileMetadata(const std::string& fullPath);
   void promptDeleteFile(const std::string& fullPath, const std::string& entry);
+  void promptDeleteDirectory(const std::string& fullPath, const std::string& entry);
   void pinSleepFavorite(const std::string& fullPath);
   void unpinSleepFavorite();
   bool isPinnedSleepFavorite(const std::string& fullPath) const;
