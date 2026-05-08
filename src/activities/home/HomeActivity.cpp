@@ -217,6 +217,15 @@ bool isCarouselCacheHeaderValid(const CarouselCacheHeader& header, uint64_t cach
          header.sideCoverW == LyraCarouselTheme::kSideCoverW && header.sideCoverH == LyraCarouselTheme::kSideCoverH;
 }
 
+bool readCarouselCacheHeader(FsFile& file, CarouselCacheHeader& header) {
+  CarouselCacheHeader readHeader{};
+  if (!serialization::tryReadPod(file, readHeader)) {
+    return false;
+  }
+  header = readHeader;
+  return true;
+}
+
 bool hasValidCarouselDiskCache(const std::vector<RecentBook>& recentBooks, const GfxRenderer& renderer) {
   const int bookCount = static_cast<int>(recentBooks.size());
   if (bookCount <= 0) return false;
@@ -231,9 +240,9 @@ bool hasValidCarouselDiskCache(const std::vector<RecentBook>& recentBooks, const
   }
 
   CarouselCacheHeader header{};
-  serialization::readPod(cacheFile, header);
+  const bool readOk = readCarouselCacheHeader(cacheFile, header);
   cacheFile.close();
-  return isCarouselCacheHeaderValid(header, cacheKeyHash, bookCount, renderer);
+  return readOk && isCarouselCacheHeaderValid(header, cacheKeyHash, bookCount, renderer);
 }
 }  // namespace
 
@@ -753,7 +762,12 @@ bool HomeActivity::buildCarouselCacheFile(const std::string& cacheKey, uint64_t 
       static_cast<uint16_t>(LyraCarouselTheme::kSideCoverW),
       static_cast<uint16_t>(LyraCarouselTheme::kSideCoverH),
   };
-  serialization::writePod(file, header);
+  if (!serialization::tryWritePod(file, header)) {
+    file.close();
+    Storage.remove(CAROUSEL_CACHE_TMP_PATH);
+    LOG_ERR("HOME", "carousel: failed to write SD cache header");
+    return false;
+  }
 
   const auto start = millis();
   Rect popupRect{};
@@ -825,9 +839,8 @@ bool HomeActivity::loadCarouselFrameFromDisk(uint64_t cacheKeyHash, int bookCoun
   }
 
   CarouselCacheHeader header{};
-  serialization::readPod(file, header);
-  const bool valid = isCarouselCacheHeaderValid(header, cacheKeyHash, bookCount, renderer);
-  if (!valid) {
+  if (!readCarouselCacheHeader(file, header) ||
+      !isCarouselCacheHeaderValid(header, cacheKeyHash, bookCount, renderer)) {
     file.close();
     return false;
   }
@@ -910,9 +923,9 @@ bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
   FsFile cacheFile;
   if (Storage.openFileForRead("HOME", CAROUSEL_CACHE_PATH, cacheFile)) {
     CarouselCacheHeader header{};
-    serialization::readPod(cacheFile, header);
+    const bool readOk = readCarouselCacheHeader(cacheFile, header);
     cacheFile.close();
-    diskCacheValid = isCarouselCacheHeaderValid(header, newKeyHash, bookCount, renderer);
+    diskCacheValid = readOk && isCarouselCacheHeaderValid(header, newKeyHash, bookCount, renderer);
   }
 
   if (!allocateCarouselFrameSlots(targetFrameCount)) {
