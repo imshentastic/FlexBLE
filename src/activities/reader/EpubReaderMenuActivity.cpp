@@ -3,8 +3,6 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
-#include <array>
-
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -12,7 +10,32 @@
 
 namespace {
 
-using ReaderLayoutSettingsSnapshot = std::array<uint8_t, 13>;
+struct ReaderLayoutSettingsSnapshot {
+  uint8_t fontFamily;
+  uint8_t fontSize;
+  uint8_t lineSpacing;
+  uint8_t orientation;
+  uint8_t screenMargin;
+  uint8_t paragraphAlignment;
+  uint8_t embeddedStyle;
+  uint8_t hyphenationEnabled;
+  uint8_t imageRendering;
+  uint8_t extraParagraphSpacing;
+  uint8_t forceParagraphIndents;
+  uint8_t bionicReadingEnabled;
+  uint8_t guideReadingEnabled;
+
+  bool operator==(const ReaderLayoutSettingsSnapshot& other) const {
+    return fontFamily == other.fontFamily && fontSize == other.fontSize && lineSpacing == other.lineSpacing &&
+           orientation == other.orientation && screenMargin == other.screenMargin &&
+           paragraphAlignment == other.paragraphAlignment && embeddedStyle == other.embeddedStyle &&
+           hyphenationEnabled == other.hyphenationEnabled && imageRendering == other.imageRendering &&
+           extraParagraphSpacing == other.extraParagraphSpacing &&
+           forceParagraphIndents == other.forceParagraphIndents && bionicReadingEnabled == other.bionicReadingEnabled &&
+           guideReadingEnabled == other.guideReadingEnabled;
+  }
+  bool operator!=(const ReaderLayoutSettingsSnapshot& other) const { return !(*this == other); }
+};
 
 ReaderLayoutSettingsSnapshot captureReaderLayoutSettings() {
   return {

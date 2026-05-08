@@ -7,9 +7,11 @@
 - Add a `Recent Books View` setting so the dedicated Recent Books screen can switch between the classic list and a 3x3 cover grid
 - Add real EPUB `<hr>` rendering so horizontal rules now display as visible separators instead of being ignored
 - Add a per-session auto page turn interval picker so EPUB readers can choose any value from 5 to 120 seconds instead of only the old preset list
+- Add abilty to render block redactions, black-square ornaments, Greek category letters, and turned-comma punctuation in reader fonts (PR #104)
 
 ### Fixed
 - Keep EPUB list bullets attached to the first paragraph in `<li><p>...</p></li>` list items
+- Keep EPUB/XTC thumbnail cache paths, Recent Books cover updates, and carousel snapshot reads consistent when thumbnail dimensions or cache files change
 - Harden JPEG image scaling, EPUB thumbnail caching, and large CSS rule handling against crashes, stale cache files, and long-session allocation failures
 - Serialize SD-card and display access on the shared SPI bus to prevent task-ownership crashes during state saves, sleep transitions, and other concurrent render/storage activity
 - Guard SPI bus lock acquisition so a failed recursive mutex take no longer marks the lock as held and triggers a mismatched release
@@ -20,13 +22,6 @@
 - Avoid an EPUB CSS-cache rebuild crash after clearing a book cache by growing the CSS rule table in guarded chunks instead of reserving the full rule limit at once
 - Avoid rebuilding the current EPUB section when changes to Reader Options affect only render-quality settings.
 - Skip image decoding during the font prewarm scan.
-
-### Fixed
-- Render missing Unicode block redactions, black-square ornaments, Greek category letters, and turned-comma punctuation in reader fonts
-- Serialize SD-card and display access on the shared SPI bus to prevent task-ownership crashes during state saves, sleep transitions, and other concurrent render/storage activity
-- Guard SPI bus lock acquisition so a failed recursive mutex take no longer marks the lock as held and triggers a mismatched release
-- Harden EPUB section-cache writes and promotion so truncated SD writes fail fast, temp caches are synced before rename, and invalid page-cache files are less likely to persist across reloads
-- Reject invalid serialized string lengths before allocation so corrupted cache data cannot trigger oversized string resizes during reads
 - Clear cached EPUB metadata for books inside deleted folders so stale `/.crosspoint/epub_*` directories are not left behind
 
 ## [v1.2.9.1] - 2026-05-03

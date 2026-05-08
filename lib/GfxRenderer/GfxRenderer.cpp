@@ -52,8 +52,7 @@ bool GfxRenderer::ensureBitmapScratchBuffers(const size_t outputRowSize, const s
   if (outputRowSize > bitmapScratchOutputRowSize_) {
     auto* grownOutput = static_cast<uint8_t*>(realloc(bitmapScratchOutputRow_, outputRowSize));
     if (!grownOutput) {
-      LOG_ERR("GFX", "!! Failed to grow BMP output row scratch buffer to %u bytes",
-              static_cast<unsigned>(outputRowSize));
+      LOG_ERR("GFX", "!! Failed to grow BMP output row scratch buffer to %zu bytes", outputRowSize);
       return false;
     }
     bitmapScratchOutputRow_ = grownOutput;
@@ -63,7 +62,7 @@ bool GfxRenderer::ensureBitmapScratchBuffers(const size_t outputRowSize, const s
   if (rowBytesSize > bitmapScratchRowBytesSize_) {
     auto* grownRowBytes = static_cast<uint8_t*>(realloc(bitmapScratchRowBytes_, rowBytesSize));
     if (!grownRowBytes) {
-      LOG_ERR("GFX", "!! Failed to grow BMP row-bytes scratch buffer to %u bytes", static_cast<unsigned>(rowBytesSize));
+      LOG_ERR("GFX", "!! Failed to grow BMP row-bytes scratch buffer to %zu bytes", rowBytesSize);
       return false;
     }
     bitmapScratchRowBytes_ = grownRowBytes;

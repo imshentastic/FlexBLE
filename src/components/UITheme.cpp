@@ -2,6 +2,7 @@
 
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalStorage.h>
 #include <Logging.h>
 
 #include <cstdint>
@@ -81,15 +82,36 @@ int UITheme::getNumberOfItemsPerPage(const GfxRenderer& renderer, bool hasHeader
 }
 
 std::string UITheme::getCoverThumbPath(const std::string& coverBmpPath, int coverHeight) {
+  if (coverHeight <= 0) {
+    return "";
+  }
+  // Use int64_t so large heights cannot overflow before division.
   const int coverWidth = static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 5);
   return getCoverThumbPath(coverBmpPath, coverWidth, coverHeight);
 }
 
 std::string UITheme::getCoverThumbPath(const std::string& coverBmpPath, int width, int height) {
+  if (width <= 0 || height <= 0) {
+    return "";
+  }
   std::string thumbPath = coverBmpPath;
+  const bool hasWidthPlaceholder = thumbPath.find("[WIDTH]", 0) != std::string::npos;
+  size_t widthPos = thumbPath.find("[WIDTH]", 0);
+  if (widthPos != std::string::npos) {
+    thumbPath.replace(widthPos, 7, std::to_string(width));
+  }
   size_t pos = thumbPath.find("[HEIGHT]", 0);
   if (pos != std::string::npos) {
-    thumbPath.replace(pos, 8, std::to_string(width) + "x" + std::to_string(height));
+    if (hasWidthPlaceholder) {
+      thumbPath.replace(pos, 8, std::to_string(height));
+    } else {
+      std::string legacyPath = thumbPath;
+      legacyPath.replace(pos, 8, std::to_string(height));
+      thumbPath.replace(pos, 8, std::to_string(width) + "x" + std::to_string(height));
+      if (!Storage.exists(thumbPath.c_str()) && Storage.exists(legacyPath.c_str())) {
+        return legacyPath;
+      }
+    }
   }
   return thumbPath;
 }

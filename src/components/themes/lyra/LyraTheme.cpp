@@ -40,8 +40,8 @@ constexpr int topHintButtonY = 345;
 constexpr int popupMarginX = 16;
 constexpr int popupMarginY = 12;
 constexpr int maxListValueWidth = 200;
-constexpr int mainMenuIconSize = 32;
-constexpr int listIconSize = 24;
+constexpr uint32_t mainMenuIconSize = 32;
+constexpr uint32_t listIconSize = 24;
 constexpr int mainMenuColumns = 2;
 int coverWidth = 0;
 
@@ -254,7 +254,7 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
 
   int textX = rect.x + LyraMetrics::values.contentSidePadding + hPaddingInSelection;
   int textWidth = contentWidth - LyraMetrics::values.contentSidePadding * 2 - hPaddingInSelection * 2;
-  int iconSize;
+  uint32_t iconSize;
   if (rowIcon != nullptr) {
     iconSize = (rowSubtitle != nullptr) ? mainMenuIconSize : listIconSize;
     textX += iconSize + hPaddingInSelection;

@@ -64,7 +64,7 @@ class Xtc {
   std::string getCoverBmpPath() const;
   bool generateCoverBmp() const;
   // Thumbnail support (for Continue Reading card)
-  /** Returns the height-placeholder thumbnail cache path. */
+  /** Returns the default thumbnail cache path template with a height placeholder. */
   std::string getThumbBmpPath() const;
   /**
    * Returns a thumbnail cache path for a height-keyed thumbnail.
@@ -76,7 +76,7 @@ class Xtc {
    * Returns a thumbnail cache path for a requested bounding box in pixels.
    * @param width Target bounding width in pixels.
    * @param height Target bounding height in pixels.
-   * @note Preferred overload for exact cache-key control. This function is const and does not throw.
+   * @note Preferred overload for exact cache-key control. Existing files are reused.
    */
   std::string getThumbBmpPath(uint16_t width, uint16_t height) const;
   /**

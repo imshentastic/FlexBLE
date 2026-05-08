@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
-#include <functional>
 #include <string>
 
 #include "RecentBooksStore.h"
@@ -91,7 +90,9 @@ float loadTxtProgressPercent(const RecentBook& book) {
     return -1.0f;
   }
 
-  const uint32_t currentPage = static_cast<uint32_t>(progressData[0]) | (static_cast<uint32_t>(progressData[1]) << 8);
+  const uint32_t currentPage = static_cast<uint32_t>(progressData[0]) | (static_cast<uint32_t>(progressData[1]) << 8) |
+                               (static_cast<uint32_t>(progressData[2]) << 16) |
+                               (static_cast<uint32_t>(progressData[3]) << 24);
 
   FsFile indexFile;
   if (!Storage.openFileForRead("RBPR", txt.getCachePath() + "/index.bin", indexFile)) {
@@ -99,24 +100,24 @@ float loadTxtProgressPercent(const RecentBook& book) {
   }
 
   uint32_t magic = 0;
-  serialization::readPod(indexFile, magic);
   uint8_t version = 0;
-  serialization::readPod(indexFile, version);
   uint32_t fileSize = 0;
-  serialization::readPod(indexFile, fileSize);
   int32_t cachedWidth = 0;
-  serialization::readPod(indexFile, cachedWidth);
   int32_t cachedLines = 0;
-  serialization::readPod(indexFile, cachedLines);
   int32_t fontId = 0;
-  serialization::readPod(indexFile, fontId);
   int32_t margin = 0;
-  serialization::readPod(indexFile, margin);
   uint8_t alignment = 0;
-  serialization::readPod(indexFile, alignment);
   uint32_t totalPages = 0;
-  serialization::readPod(indexFile, totalPages);
+  const bool readOk =
+      serialization::tryReadPod(indexFile, magic) && serialization::tryReadPod(indexFile, version) &&
+      serialization::tryReadPod(indexFile, fileSize) && serialization::tryReadPod(indexFile, cachedWidth) &&
+      serialization::tryReadPod(indexFile, cachedLines) && serialization::tryReadPod(indexFile, fontId) &&
+      serialization::tryReadPod(indexFile, margin) && serialization::tryReadPod(indexFile, alignment) &&
+      serialization::tryReadPod(indexFile, totalPages);
   indexFile.close();
+  if (!readOk) {
+    return -1.0f;
+  }
   (void)cachedWidth;
   (void)cachedLines;
   (void)fontId;
@@ -146,13 +147,11 @@ float RecentBookProgress::loadPercent(const RecentBook& book) {
 
 bool RecentBookProgress::hasPercent(const float progress) { return progress >= 0.0f; }
 
-void RecentBookProgress::formatPercent(const float progress, char* buffer, const size_t len) {
-  if (!buffer || len == 0) {
-    return;
-  }
-  buffer[0] = '\0';
+std::string RecentBookProgress::formatPercent(const float progress) {
   if (!hasPercent(progress)) {
-    return;
+    return "";
   }
-  snprintf(buffer, len, "%.0f%%", clampProgressPercent(progress));
+  char buffer[8];
+  snprintf(buffer, sizeof(buffer), "%.0f%%", clampProgressPercent(progress));
+  return buffer;
 }

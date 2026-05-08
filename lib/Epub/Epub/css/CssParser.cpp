@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cctype>
 #include <iterator>
 #include <string_view>
@@ -63,6 +64,7 @@ bool isCssWhitespace(const char c) { return c == ' ' || c == '\t' || c == '\n' |
 
 size_t mergeDuplicateRules(std::vector<std::pair<std::string, CssStyle>>& rules) {
   if (rules.empty()) return 0;
+  assert(std::is_sorted(rules.begin(), rules.end(), [](const auto& a, const auto& b) { return a.first < b.first; }));
 
   const size_t originalSize = rules.size();
   auto writeIt = rules.begin();
@@ -574,7 +576,7 @@ bool CssParser::processRuleBlockWithStyle(const std::string& selectorGroup, cons
     if (it != rulesBySelector_.end()) {
       it->second.applyOver(style);
     } else {
-      rulesBySelector_.emplace_back(std::move(key), std::move(style));
+      rulesBySelector_.emplace_back(std::move(key), style);
     }
   }
   return true;

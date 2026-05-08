@@ -276,7 +276,7 @@ bool Xtc::generateThumbBmp() const {
 }
 
 bool Xtc::generateThumbBmp(uint16_t height) const {
-  return generateThumbBmp(static_cast<uint16_t>(static_cast<int>(height * 0.6)), height);
+  return generateThumbBmp(static_cast<uint16_t>(height * 0.6), height);
 }
 
 bool Xtc::generateThumbBmp(uint16_t width, uint16_t height) const {
@@ -284,7 +284,8 @@ bool Xtc::generateThumbBmp(uint16_t width, uint16_t height) const {
     LOG_ERR("XTC", "Cannot generate thumb BMP with invalid dimensions: %ux%u", width, height);
     return false;
   }
-  if (Storage.exists(getThumbBmpPath(width, height).c_str())) return true;
+  const std::string thumbPath = getThumbBmpPath(width, height);
+  if (Storage.exists(thumbPath.c_str())) return true;
 
   if (!loaded || !parser) {
     LOG_ERR("XTC", "Cannot generate thumb BMP, file not loaded");
@@ -315,17 +316,31 @@ bool Xtc::generateThumbBmp(uint16_t width, uint16_t height) const {
     if (generateCoverBmp()) {
       FsFile src, dst;
       if (Storage.openFileForRead("XTC", getCoverBmpPath(), src)) {
-        if (Storage.openFileForWrite("XTC", getThumbBmpPath(width, height), dst)) {
+        if (Storage.openFileForWrite("XTC", thumbPath, dst)) {
+          bool copyOk = true;
           uint8_t buffer[512];
           while (src.available()) {
             size_t bytesRead = src.read(buffer, sizeof(buffer));
-            dst.write(buffer, bytesRead);
+            if (bytesRead == 0) {
+              copyOk = false;
+              break;
+            }
+            const size_t bytesWritten = dst.write(buffer, bytesRead);
+            if (bytesWritten != bytesRead) {
+              copyOk = false;
+              break;
+            }
           }
           dst.close();
+          if (!copyOk) {
+            src.close();
+            Storage.remove(thumbPath.c_str());
+            return false;
+          }
         }
         src.close();
       }
-      return Storage.exists(getThumbBmpPath(width, height).c_str());
+      return Storage.exists(thumbPath.c_str());
     }
     return false;
   }
@@ -353,7 +368,7 @@ bool Xtc::generateThumbBmp(uint16_t width, uint16_t height) const {
   }
 
   FsFile thumbBmp;
-  if (!Storage.openFileForWrite("XTC", getThumbBmpPath(width, height), thumbBmp)) {
+  if (!Storage.openFileForWrite("XTC", thumbPath, thumbBmp)) {
     free(pageBuffer);
     return false;
   }
@@ -367,6 +382,7 @@ bool Xtc::generateThumbBmp(uint16_t width, uint16_t height) const {
   if (!rowBuffer) {
     free(pageBuffer);
     thumbBmp.close();
+    Storage.remove(thumbPath.c_str());
     return false;
   }
 

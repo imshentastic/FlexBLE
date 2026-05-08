@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+
 #include "MappedInputManager.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
@@ -11,7 +13,8 @@ class EpubReaderAutoPageTurnIntervalActivity final : public Activity {
   explicit EpubReaderAutoPageTurnIntervalActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                   int initialSeconds, bool ignoreInitialConfirmRelease = false)
       : Activity("EpubReaderAutoPageTurnInterval", renderer, mappedInput),
-        seconds(initialSeconds),
+        seconds(std::clamp(initialSeconds, 5, 120)),
+        buttonNavigator(),
         ignoreConfirmRelease(ignoreInitialConfirmRelease) {}
 
   void onEnter() override;
@@ -23,7 +26,7 @@ class EpubReaderAutoPageTurnIntervalActivity final : public Activity {
  private:
   int seconds;
   ButtonNavigator buttonNavigator;
-  bool ignoreConfirmRelease = false;
+  bool ignoreConfirmRelease;
 
   void adjustSeconds(int delta);
 };

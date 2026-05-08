@@ -662,16 +662,24 @@ bool Epub::generateCoverBmp(bool cropped) const {
   return false;
 }
 
-std::string Epub::getThumbBmpPath() const { return cachePath + "/thumb_[HEIGHT].bmp"; }
+std::string Epub::getThumbBmpPath() const { return cachePath + "/thumb_[WIDTH]x[HEIGHT].bmp"; }
 std::string Epub::getThumbBmpPath(int height) const { return getThumbBmpPath(0, height); }
 std::string Epub::getThumbBmpPath(int width, int height) const {
   if (height <= 0) {
-    return "";
+    height = kDefaultThumbHeight;
   }
   if (width <= 0) {
     width = static_cast<int>((static_cast<int64_t>(height) * 3 + 2) / 5);
   }
-  return cachePath + "/thumb_" + std::to_string(width) + "x" + std::to_string(height) + ".bmp";
+  const std::string newPath = cachePath + "/thumb_" + std::to_string(width) + "x" + std::to_string(height) + ".bmp";
+  if (Storage.exists(newPath.c_str())) {
+    return newPath;
+  }
+  const std::string legacyPath = cachePath + "/thumb_" + std::to_string(height) + ".bmp";
+  if (Storage.exists(legacyPath.c_str())) {
+    return legacyPath;
+  }
+  return newPath;
 }
 
 bool Epub::generateThumbBmp(int height) const { return generateThumbBmp(0, height); }
