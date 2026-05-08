@@ -296,7 +296,11 @@ void Epub::parseCssFiles() const {
 
   // No cache yet - parse CSS files
   bool parsedAllCss = true;
-  for (const auto& cssPath : cssFiles) {
+  size_t parsedCssFileCount = 0;
+  size_t failedCssFileIndex = 0;
+  std::string failedCssPath;
+  for (size_t cssFileIndex = 0; cssFileIndex < cssFiles.size(); ++cssFileIndex) {
+    const auto& cssPath = cssFiles[cssFileIndex];
     LOG_DBG("EBP", "Parsing CSS file: %s", cssPath.c_str());
 
     // Check heap before parsing - CSS parsing allocates heavily
@@ -341,8 +345,13 @@ void Epub::parseCssFiles() const {
       continue;
     }
     if (!cssParser->loadFromStream(tempCssFile)) {
-      LOG_ERR("EBP", "CSS parsing failed: %s", cssPath.c_str());
+      failedCssFileIndex = cssFileIndex + 1;
+      failedCssPath = cssPath;
+      LOG_ERR("EBP", "CSS parsing failed for file %zu/%zu after %zu parsed files: %s", failedCssFileIndex,
+              cssFiles.size(), parsedCssFileCount, cssPath.c_str());
       parsedAllCss = false;
+    } else {
+      ++parsedCssFileCount;
     }
     // Explicitly close() file before calling Storage.remove()
     tempCssFile.close();
@@ -353,6 +362,9 @@ void Epub::parseCssFiles() const {
   }
 
   if (!parsedAllCss) {
+    LOG_ERR("EBP",
+            "Discarding %zu partial CSS rules after parse failure in %s; CSS cache will not be written for this book",
+            cssParser->ruleCount(), failedCssPath.empty() ? "<unknown>" : failedCssPath.c_str());
     cssParser->clear();
     return;
   }
