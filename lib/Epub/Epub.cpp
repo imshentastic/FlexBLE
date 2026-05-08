@@ -31,6 +31,10 @@ bool nonEmptyFileExists(const std::string& path) {
   }
   return nonEmpty;
 }
+
+std::string getThumbBmpPathForDimensions(const std::string& cachePath, int width, int height) {
+  return cachePath + "/thumb_" + std::to_string(width) + "x" + std::to_string(height) + ".bmp";
+}
 }  // namespace
 
 bool Epub::findContentOpfFile(std::string* contentOpfFile) const {
@@ -683,7 +687,7 @@ std::string Epub::getThumbBmpPath(int width, int height) const {
   if (width <= 0) {
     width = static_cast<int>((static_cast<int64_t>(height) * 3 + 2) / 5);
   }
-  const std::string newPath = cachePath + "/thumb_" + std::to_string(width) + "x" + std::to_string(height) + ".bmp";
+  const std::string newPath = getThumbBmpPathForDimensions(cachePath, width, height);
   if (Storage.exists(newPath.c_str())) {
     return newPath;
   }
@@ -704,7 +708,7 @@ bool Epub::generateThumbBmp(int width, int height) const {
   if (width <= 0) {
     width = static_cast<int>((static_cast<int64_t>(height) * 3 + 2) / 5);
   }
-  const std::string thumbPath = getThumbBmpPath(width, height);
+  const std::string thumbPath = getThumbBmpPathForDimensions(cachePath, width, height);
 
   // Already generated, return true
   if (nonEmptyFileExists(thumbPath)) {
