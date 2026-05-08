@@ -1168,7 +1168,18 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       const auto accumulated = self->blockStyleStack.back().getCombinedBlockStyle(userAlignmentBlockStyle,
                                                                                   BlockStyle::CombineAxis::Horizontal);
       self->blockStyleStack.push_back(accumulated);
-      self->startNewTextBlock(accumulated.withoutBottom());
+      // Common EPUB shape: <li><p>text</p></li>. Keep the first paragraph in the marker block
+      // so the auto bullet does not become its own orphaned paragraph.
+      const bool reuseListMarkerBlock = strcmp(name, "p") == 0 && self->pendingListMarkerDepth >= 0 &&
+                                        self->depth == self->pendingListMarkerDepth + 1 && self->currentTextBlock &&
+                                        self->currentTextBlock->size() == 1;
+      if (reuseListMarkerBlock) {
+        const auto mergedStyle = self->currentTextBlock->getBlockStyle().getCombinedBlockStyle(
+            accumulated.withoutBottom(), BlockStyle::CombineAxis::Vertical);
+        self->currentTextBlock->setBlockStyle(mergedStyle);
+      } else {
+        self->startNewTextBlock(accumulated.withoutBottom());
+      }
       if (strcmp(name, "p") == 0) {
         self->xpathParagraphIndex++;
       }
@@ -1176,6 +1187,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
 
       if (strcmp(name, "li") == 0) {
         self->currentTextBlock->addWord("\xe2\x80\xa2", EpdFontFamily::REGULAR);
+        self->pendingListMarkerDepth = self->depth;
       }
     }
   } else if (matches(name, UNDERLINE_TAGS, std::size(UNDERLINE_TAGS))) {
@@ -1579,6 +1591,10 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
                                                  : static_cast<CssTextAlign>(self->paragraphAlignment);
     self->startNewTextBlock(paragraphAlignmentBlockStyle);
     self->nextWordContinues = false;
+  }
+
+  if (strcmp(name, "li") == 0 && self->pendingListMarkerDepth == self->depth) {
+    self->pendingListMarkerDepth = -1;
   }
 
   // Leaving bold tag
