@@ -55,6 +55,7 @@ constexpr int kTitleBottomGap = 8;
 constexpr int kMenuLabelTopGap = 3;
 constexpr int kMenuLabelBottomGap = 4;
 constexpr int kMenuRowDrop = 31;
+
 constexpr int kStatsToProgressGap = 6;
 
 constexpr int kCornerRadius = 6;
@@ -68,6 +69,24 @@ constexpr int kMenuIconPad = 14;   // symmetric vertical padding → tile height
 constexpr int kHighlightPad = 7;   // highlight padding around the selected icon
 // Row is anchored to the bottom of the screen, just above button hints
 constexpr int kButtonHintsH = LyraCarouselMetrics::values.buttonHintsHeight;
+
+struct MenuLayoutMetrics {
+  int tileH;
+  int tileW;
+  int labelLineHeight;
+  int rowY;
+  int labelY;
+};
+
+MenuLayoutMetrics computeMenuLayout(const GfxRenderer& renderer, int buttonCount) {
+  const int tileH = kMenuIconPad + kMenuIconSize + kMenuIconPad;
+  const int labelLineHeight = renderer.getLineHeight(kMenuLabelFontId);
+  const int rowY = renderer.getScreenHeight() - kButtonHintsH - tileH - kMenuLabelTopGap - labelLineHeight -
+                   kMenuLabelBottomGap + kMenuRowDrop;
+  return {
+      tileH, renderer.getScreenWidth() / buttonCount, labelLineHeight, rowY, rowY - kMenuLabelTopGap - labelLineHeight,
+  };
+}
 
 std::atomic<int> lastCarouselSelectorIndex{-1};
 Rect lastCenterCoverRect{0, 0, 0, 0};
@@ -234,7 +253,8 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
           const float srcW = static_cast<float>(bitmap.getWidth());
           const float srcH = static_cast<float>(bitmap.getHeight());
           const float srcRatio = srcW / srcH;
-          const float targetRatio = static_cast<float>(outRect.width) / static_cast<float>(outRect.height);
+          const float safeTargetHeight = outRect.height == 0 ? 1.0f : static_cast<float>(outRect.height);
+          const float targetRatio = static_cast<float>(outRect.width) / safeTargetHeight;
           float cropX = 0.0f;
           float cropY = 0.0f;
 
@@ -423,24 +443,17 @@ void LyraCarouselTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int but
   if (buttonCount <= 0) return;
   // Rect is retained by the BaseTheme interface; this carousel menu anchors to the screen bottom.
 
-  const int tileH = kMenuIconPad + kMenuIconSize + kMenuIconPad;
-  const int tileW = renderer.getScreenWidth() / buttonCount;
-  const int labelLineHeight = renderer.getLineHeight(kMenuLabelFontId);
-  // Anchor row just above button hints, ignoring rect.y which may be off-screen
-  // for large cover tiles
-  const int rowY = renderer.getScreenHeight() - kButtonHintsH - tileH - kMenuLabelTopGap - labelLineHeight -
-                   kMenuLabelBottomGap + kMenuRowDrop;
-  const int labelY = rowY - kMenuLabelTopGap - labelLineHeight;
+  const MenuLayoutMetrics metrics = computeMenuLayout(renderer, buttonCount);
 
   for (int i = 0; i < buttonCount; ++i) {
-    const int tileX = i * tileW;
-    const int iconX = tileX + (tileW - kMenuIconSize) / 2;
-    const int iconY = rowY + kMenuIconPad;
+    const int tileX = i * metrics.tileW;
+    const int iconX = tileX + (metrics.tileW - kMenuIconSize) / 2;
+    const int iconY = metrics.rowY + kMenuIconPad;
 
     const bool selected = (selectedIndex == i);
     if (selected) {
       const int highlightSize = kMenuIconSize + 2 * kHighlightPad;
-      const int highlightY = rowY + (tileH - highlightSize) / 2;
+      const int highlightY = metrics.rowY + (metrics.tileH - highlightSize) / 2;
       renderer.fillRoundedRect(iconX - kHighlightPad, highlightY, highlightSize, highlightSize, kCornerRadius,
                                Color::Black);
     }
@@ -461,34 +474,29 @@ void LyraCarouselTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int but
     }
   }
 
-  renderer.fillRect(0, labelY, renderer.getScreenWidth(), labelLineHeight, false);
+  renderer.fillRect(0, metrics.labelY, renderer.getScreenWidth(), metrics.labelLineHeight, false);
   if (selectedIndex >= 0 && selectedIndex < buttonCount && buttonLabel != nullptr) {
     const std::string labelStr = buttonLabel(selectedIndex);
     const auto centeredLabel =
         renderer.truncatedText(kMenuLabelFontId, labelStr.c_str(), renderer.getScreenWidth() - 40);
     const int labelWidth = renderer.getTextWidth(kMenuLabelFontId, centeredLabel.c_str(), EpdFontFamily::REGULAR);
-    renderer.drawText(kMenuLabelFontId, (renderer.getScreenWidth() - labelWidth) / 2, labelY + 2, centeredLabel.c_str(),
-                      true, EpdFontFamily::REGULAR);
+    renderer.drawText(kMenuLabelFontId, (renderer.getScreenWidth() - labelWidth) / 2, metrics.labelY + 2,
+                      centeredLabel.c_str(), true, EpdFontFamily::REGULAR);
   }
 }
 
-void LyraCarouselTheme::drawButtonMenuSelectionOverlay(const GfxRenderer& renderer, int buttonCount, int selectedIndex,
+void LyraCarouselTheme::drawButtonMenuSelectionOverlay(GfxRenderer& renderer, int buttonCount, int selectedIndex,
                                                        const std::function<std::string(int index)>& buttonLabel,
                                                        const std::function<UIIcon(int index)>& rowIcon) const {
   if (buttonCount <= 0 || selectedIndex < 0 || selectedIndex >= buttonCount) return;
 
-  const int tileH = kMenuIconPad + kMenuIconSize + kMenuIconPad;
-  const int tileW = renderer.getScreenWidth() / buttonCount;
-  const int labelLineHeight = renderer.getLineHeight(kMenuLabelFontId);
-  const int rowY = renderer.getScreenHeight() - kButtonHintsH - tileH - kMenuLabelTopGap - labelLineHeight -
-                   kMenuLabelBottomGap + kMenuRowDrop;
-  const int labelY = rowY - kMenuLabelTopGap - labelLineHeight;
+  const MenuLayoutMetrics metrics = computeMenuLayout(renderer, buttonCount);
 
-  const int tileX = selectedIndex * tileW;
-  const int iconX = tileX + (tileW - kMenuIconSize) / 2;
-  const int iconY = rowY + kMenuIconPad;
+  const int tileX = selectedIndex * metrics.tileW;
+  const int iconX = tileX + (metrics.tileW - kMenuIconSize) / 2;
+  const int iconY = metrics.rowY + kMenuIconPad;
   const int highlightSize = kMenuIconSize + 2 * kHighlightPad;
-  const int highlightY = rowY + (tileH - highlightSize) / 2;
+  const int highlightY = metrics.rowY + (metrics.tileH - highlightSize) / 2;
 
   renderer.fillRoundedRect(iconX - kHighlightPad, highlightY, highlightSize, highlightSize, kCornerRadius,
                            Color::Black);
@@ -505,14 +513,14 @@ void LyraCarouselTheme::drawButtonMenuSelectionOverlay(const GfxRenderer& render
     }
   }
 
-  renderer.fillRect(0, labelY, renderer.getScreenWidth(), labelLineHeight, false);
+  renderer.fillRect(0, metrics.labelY, renderer.getScreenWidth(), metrics.labelLineHeight, false);
   if (buttonLabel != nullptr) {
     const std::string labelStr = buttonLabel(selectedIndex);
     const auto centeredLabel =
         renderer.truncatedText(kMenuLabelFontId, labelStr.c_str(), renderer.getScreenWidth() - 40);
     const int labelWidth = renderer.getTextWidth(kMenuLabelFontId, centeredLabel.c_str(), EpdFontFamily::REGULAR);
-    renderer.drawText(kMenuLabelFontId, (renderer.getScreenWidth() - labelWidth) / 2, labelY + 2, centeredLabel.c_str(),
-                      true, EpdFontFamily::REGULAR);
+    renderer.drawText(kMenuLabelFontId, (renderer.getScreenWidth() - labelWidth) / 2, metrics.labelY + 2,
+                      centeredLabel.c_str(), true, EpdFontFamily::REGULAR);
   }
 }
 
@@ -642,9 +650,4 @@ void LyraCarouselTheme::drawList(const GfxRenderer& renderer, Rect rect, int ite
                         valueText.c_str(), !sel);
     }
   }
-}
-
-void LyraCarouselTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,
-                                   bool selected) const {
-  LyraTheme::drawTabBar(renderer, rect, tabs, selected);
 }

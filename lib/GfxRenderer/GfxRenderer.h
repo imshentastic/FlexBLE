@@ -42,6 +42,8 @@ class GfxRenderer {
   uint32_t frameBufferSize = HalDisplay::BUFFER_SIZE;
   std::vector<uint8_t*> bwBufferChunks;
   std::map<int, EpdFontFamily> fontMap;
+  // GfxRenderer is owned by the single render path. These mutable scratch
+  // buffers are intentionally unsynchronized and must not be used concurrently.
   mutable uint8_t* bitmapScratchOutputRow_ = nullptr;
   mutable size_t bitmapScratchOutputRowSize_ = 0;
   mutable uint8_t* bitmapScratchRowBytes_ = nullptr;

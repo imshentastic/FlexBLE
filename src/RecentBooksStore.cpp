@@ -22,39 +22,29 @@ RecentBooksStore RecentBooksStore::instance;
 
 void RecentBooksStore::addBook(const std::string& path, const std::string& title, const std::string& author,
                                const std::string& coverBmpPath) {
-  // Remove existing entry if present
-  auto it =
-      std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
-  if (it != recentBooks.end()) {
-    recentBooks.erase(it);
-  }
-
-  // Add to front
-  recentBooks.insert(recentBooks.begin(), {path, title, author, coverBmpPath});
-
-  // Trim to max size
-  if (recentBooks.size() > MAX_RECENT_BOOKS) {
-    recentBooks.resize(MAX_RECENT_BOOKS);
-  }
-
-  saveToFile();
+  addOrUpdateBook(path, title, author, coverBmpPath);
 }
 
 void RecentBooksStore::addOrUpdateBook(const std::string& path, const std::string& title, const std::string& author,
                                        const std::string& coverBmpPath) {
-  if (updateBook(path, title, author, coverBmpPath)) {
-    auto it =
-        std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
-    if (it != recentBooks.end() && it != recentBooks.begin()) {
+  auto it =
+      std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
+  if (it != recentBooks.end()) {
+    it->title = title;
+    it->author = author;
+    it->coverBmpPath = coverBmpPath;
+    if (it != recentBooks.begin()) {
       RecentBook book = std::move(*it);
       recentBooks.erase(it);
       recentBooks.insert(recentBooks.begin(), std::move(book));
-      saveToFile();
     }
-    return;
+  } else {
+    recentBooks.insert(recentBooks.begin(), {path, title, author, coverBmpPath});
+    if (recentBooks.size() > MAX_RECENT_BOOKS) {
+      recentBooks.resize(MAX_RECENT_BOOKS);
+    }
   }
-
-  addBook(path, title, author, coverBmpPath);
+  saveToFile();
 }
 
 bool RecentBooksStore::updateBook(const std::string& path, const std::string& title, const std::string& author,

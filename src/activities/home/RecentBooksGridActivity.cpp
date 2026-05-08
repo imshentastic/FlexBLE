@@ -23,6 +23,8 @@
 namespace {
 constexpr int kCoverCornerRadius = 2;
 constexpr int kGridColumns = 3;
+constexpr float kCircleRadians = 6.2831853f;
+constexpr float kCircleRadiansPerPercent = kCircleRadians / 100.0f;
 
 void drawInlineProgressCircle(const GfxRenderer& renderer, const int x, const int y, const int size,
                               const float progressPercent) {
@@ -35,7 +37,7 @@ void drawInlineProgressCircle(const GfxRenderer& renderer, const int x, const in
   const int innerRadius = std::max(1, radius - std::max(2, size / 4));
   const int outerRadiusSq = outerRadius * outerRadius;
   const int innerRadiusSq = innerRadius * innerRadius;
-  const float sweepRadians = std::clamp(progressPercent, 0.0f, 100.0f) * 0.06283185f;
+  const float sweepRadians = std::clamp(progressPercent, 0.0f, 100.0f) * kCircleRadiansPerPercent;
 
   for (int dy = -outerRadius; dy <= outerRadius; ++dy) {
     for (int dx = -outerRadius; dx <= outerRadius; ++dx) {
@@ -50,7 +52,7 @@ void drawInlineProgressCircle(const GfxRenderer& renderer, const int x, const in
 
       float angle = std::atan2(static_cast<float>(dx), static_cast<float>(-dy));
       if (angle < 0.0f) {
-        angle += 6.2831853f;
+        angle += kCircleRadians;
       }
       if (angle <= sweepRadians) {
         renderer.drawPixel(px, py, true);
@@ -121,30 +123,24 @@ int moveVerticalInGrid(const int currentIndex, const int totalItems, const int c
 
 void RecentBooksGridActivity::loadRecentBooks() {
   recentBooks.clear();
-  recentBookProgress.clear();
-  recentBookProgressLoaded.clear();
   const auto& books = RECENT_BOOKS.getBooks();
   recentBooks.reserve(std::min(books.size(), static_cast<size_t>(MAX_GRID_BOOKS)));
 
   for (const auto& book : books) {
     if (recentBooks.size() >= MAX_GRID_BOOKS) break;
     if (!Storage.exists(book.path.c_str())) continue;
-    recentBooks.push_back(book);
+    recentBooks.push_back(BookState{book});
   }
-
-  recentBookProgress.assign(recentBooks.size(), -1.0f);
-  recentBookProgressLoaded.assign(recentBooks.size(), false);
 }
 
 void RecentBooksGridActivity::ensureProgressLoaded(const int index) {
   if (index < 0 || index >= static_cast<int>(recentBooks.size())) return;
-  if (index >= static_cast<int>(recentBookProgress.size()) ||
-      index >= static_cast<int>(recentBookProgressLoaded.size()) || recentBookProgressLoaded[index]) {
+  if (recentBooks[index].progressLoaded) {
     return;
   }
 
-  recentBookProgress[index] = RecentBookProgress::loadPercent(recentBooks[index]);
-  recentBookProgressLoaded[index] = true;
+  recentBooks[index].progress = RecentBookProgress::loadPercent(recentBooks[index].book);
+  recentBooks[index].progressLoaded = true;
 }
 
 void RecentBooksGridActivity::loadPageCovers(int pageStart) {
@@ -152,11 +148,11 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
 
   bool needsGeneration = false;
   for (int i = pageStart; i < pageEnd; ++i) {
-    if (recentBooks[i].coverBmpPath.empty()) {
+    if (recentBooks[i].book.coverBmpPath.empty()) {
       needsGeneration = true;
       break;
     }
-    const std::string thumbPath = UITheme::getCoverThumbPath(recentBooks[i].coverBmpPath, COVER_HEIGHT);
+    const std::string thumbPath = UITheme::getCoverThumbPath(recentBooks[i].book.coverBmpPath, COVER_HEIGHT);
     if (!Storage.exists(thumbPath.c_str())) {
       needsGeneration = true;
       break;
@@ -173,7 +169,7 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
   int processedCount = 0;
 
   for (int i = pageStart; i < pageEnd; ++i) {
-    RecentBook& book = recentBooks[i];
+    RecentBook& book = recentBooks[i].book;
     const std::string coverPath =
         book.coverBmpPath.empty() ? "" : UITheme::getCoverThumbPath(book.coverBmpPath, COVER_HEIGHT);
     if (coverPath.empty() || !Storage.exists(coverPath.c_str())) {
@@ -185,7 +181,11 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
           }
           GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-          if (!epub.generateThumbBmp(COVER_HEIGHT)) {
+          if (epub.generateThumbBmp(0, COVER_HEIGHT)) {
+            const std::string generatedPath = epub.getThumbBmpPath(0, COVER_HEIGHT);
+            book.coverBmpPath = generatedPath;
+            RECENT_BOOKS.updateBook(book.path, book.title, book.author, generatedPath);
+          } else {
             RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
             book.coverBmpPath = "";
           }
@@ -198,7 +198,12 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
           }
           GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-          if (!xtc.generateThumbBmp(COVER_HEIGHT)) {
+          if (xtc.generateThumbBmp(COVER_HEIGHT)) {
+            const std::string generatedPath =
+                xtc.getThumbBmpPath(static_cast<uint16_t>(COVER_HEIGHT * 0.6), COVER_HEIGHT);
+            book.coverBmpPath = generatedPath;
+            RECENT_BOOKS.updateBook(book.path, book.title, book.author, generatedPath);
+          } else {
             RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
             book.coverBmpPath = "";
           }
@@ -218,7 +223,7 @@ void RecentBooksGridActivity::onEnter() {
   Activity::onEnter();
   loadRecentBooks();
   selectorIndex = 0;
-  loadedPageStart = -1;
+  loadedPageStart = NO_PAGE_LOADED;
   ensureProgressLoaded(selectorIndex);
   requestUpdate();
 }
@@ -226,15 +231,13 @@ void RecentBooksGridActivity::onEnter() {
 void RecentBooksGridActivity::onExit() {
   Activity::onExit();
   recentBooks.clear();
-  recentBookProgress.clear();
-  recentBookProgressLoaded.clear();
 }
 
 void RecentBooksGridActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (!recentBooks.empty() && selectorIndex >= 0 && selectorIndex < static_cast<int>(recentBooks.size())) {
-      LOG_DBG("RBGA", "Selected recent book: %s", recentBooks[selectorIndex].path.c_str());
-      onSelectBook(recentBooks[selectorIndex].path);
+      LOG_DBG("RBGA", "Selected recent book: %s", recentBooks[selectorIndex].book.path.c_str());
+      onSelectBook(recentBooks[selectorIndex].book.path);
       return;
     }
   }
@@ -245,48 +248,35 @@ void RecentBooksGridActivity::loop() {
   }
 
   const int listSize = static_cast<int>(recentBooks.size());
+  enum class NavDirection { Right, Left, Down, Up };
+  auto handleNav = [this, listSize](NavDirection direction) {
+    switch (direction) {
+      case NavDirection::Right:
+        selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, true);
+        break;
+      case NavDirection::Left:
+        selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, false);
+        break;
+      case NavDirection::Down:
+        selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, true);
+        break;
+      case NavDirection::Up:
+        selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, false);
+        break;
+    }
+    ensureProgressLoaded(selectorIndex);
+    requestUpdate();
+  };
 
-  buttonNavigator.onRelease({MappedInputManager::Button::Right}, [this, listSize] {
-    selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, true);
-    ensureProgressLoaded(selectorIndex);
-    requestUpdate();
-  });
-  buttonNavigator.onRelease({MappedInputManager::Button::Left}, [this, listSize] {
-    selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, false);
-    ensureProgressLoaded(selectorIndex);
-    requestUpdate();
-  });
-  buttonNavigator.onRelease({MappedInputManager::Button::Down}, [this, listSize] {
-    selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, true);
-    ensureProgressLoaded(selectorIndex);
-    requestUpdate();
-  });
-  buttonNavigator.onRelease({MappedInputManager::Button::Up}, [this, listSize] {
-    selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, false);
-    ensureProgressLoaded(selectorIndex);
-    requestUpdate();
-  });
+  buttonNavigator.onRelease({MappedInputManager::Button::Right}, [&] { handleNav(NavDirection::Right); });
+  buttonNavigator.onRelease({MappedInputManager::Button::Left}, [&] { handleNav(NavDirection::Left); });
+  buttonNavigator.onRelease({MappedInputManager::Button::Down}, [&] { handleNav(NavDirection::Down); });
+  buttonNavigator.onRelease({MappedInputManager::Button::Up}, [&] { handleNav(NavDirection::Up); });
 
-  buttonNavigator.onContinuous({MappedInputManager::Button::Right}, [this, listSize] {
-    selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, true);
-    ensureProgressLoaded(selectorIndex);
-    requestUpdate();
-  });
-  buttonNavigator.onContinuous({MappedInputManager::Button::Left}, [this, listSize] {
-    selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, false);
-    ensureProgressLoaded(selectorIndex);
-    requestUpdate();
-  });
-  buttonNavigator.onContinuous({MappedInputManager::Button::Down}, [this, listSize] {
-    selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, true);
-    ensureProgressLoaded(selectorIndex);
-    requestUpdate();
-  });
-  buttonNavigator.onContinuous({MappedInputManager::Button::Up}, [this, listSize] {
-    selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, false);
-    ensureProgressLoaded(selectorIndex);
-    requestUpdate();
-  });
+  buttonNavigator.onContinuous({MappedInputManager::Button::Right}, [&] { handleNav(NavDirection::Right); });
+  buttonNavigator.onContinuous({MappedInputManager::Button::Left}, [&] { handleNav(NavDirection::Left); });
+  buttonNavigator.onContinuous({MappedInputManager::Button::Down}, [&] { handleNav(NavDirection::Down); });
+  buttonNavigator.onContinuous({MappedInputManager::Button::Up}, [&] { handleNav(NavDirection::Up); });
 }
 
 void RecentBooksGridActivity::render(RenderLock&&) {
@@ -320,28 +310,22 @@ void RecentBooksGridActivity::render(RenderLock&&) {
     if (selectorIndex >= 0 && selectorIndex < static_cast<int>(recentBooks.size())) {
       const int titleLh = renderer.getLineHeight(UI_10_FONT_ID);
       const int titleY = contentTop + (titleStripHeight - titleLh) / 2;
-      char progressLabel[8];
-      progressLabel[0] = '\0';
-      const bool hasProgress = selectorIndex < static_cast<int>(recentBookProgress.size()) &&
-                               selectorIndex < static_cast<int>(recentBookProgressLoaded.size()) &&
-                               recentBookProgressLoaded[selectorIndex] &&
-                               RecentBookProgress::hasPercent(recentBookProgress[selectorIndex]);
-      if (hasProgress) {
-        RecentBookProgress::formatPercent(recentBookProgress[selectorIndex], progressLabel, sizeof(progressLabel));
-      }
+      const auto& selectedBook = recentBooks[selectorIndex];
+      const bool hasProgress = selectedBook.progressLoaded && RecentBookProgress::hasPercent(selectedBook.progress);
+      const std::string progressLabel = hasProgress ? RecentBookProgress::formatPercent(selectedBook.progress) : "";
 
       const int progressIconSize = hasProgress ? std::max(8, titleLh - 2) : 0;
       const char* progressSeparator = "  |   ";
       const int separatorWidth =
           hasProgress ? renderer.getTextWidth(UI_10_FONT_ID, progressSeparator, EpdFontFamily::REGULAR) : 0;
       const int progressWidth =
-          hasProgress ? renderer.getTextWidth(UI_10_FONT_ID, progressLabel, EpdFontFamily::REGULAR) : 0;
+          hasProgress ? renderer.getTextWidth(UI_10_FONT_ID, progressLabel.c_str(), EpdFontFamily::REGULAR) : 0;
       const int progressIconGap = hasProgress ? renderer.getTextWidth(UI_10_FONT_ID, "  ", EpdFontFamily::REGULAR) : 0;
       const int progressSuffixWidth =
           hasProgress ? separatorWidth + progressWidth + progressIconGap + progressIconSize : 0;
       const int titleMaxWidth = std::max(0, totalGridWidth - progressSuffixWidth);
-      const std::string truncTitle = renderer.truncatedText(UI_10_FONT_ID, recentBooks[selectorIndex].title.c_str(),
-                                                            titleMaxWidth, EpdFontFamily::REGULAR);
+      const std::string truncTitle =
+          renderer.truncatedText(UI_10_FONT_ID, selectedBook.book.title.c_str(), titleMaxWidth, EpdFontFamily::REGULAR);
       renderer.drawText(UI_10_FONT_ID, startXOffset, titleY, truncTitle.c_str(), true, EpdFontFamily::REGULAR);
       if (hasProgress) {
         const int titleWidth = renderer.getTextWidth(UI_10_FONT_ID, truncTitle.c_str(), EpdFontFamily::REGULAR);
@@ -349,10 +333,10 @@ void RecentBooksGridActivity::render(RenderLock&&) {
         progressX = std::min(progressX, startXOffset + totalGridWidth - progressSuffixWidth);
         renderer.drawText(UI_10_FONT_ID, progressX, titleY, progressSeparator, true, EpdFontFamily::REGULAR);
         progressX += separatorWidth;
-        renderer.drawText(UI_10_FONT_ID, progressX, titleY, progressLabel, true, EpdFontFamily::REGULAR);
+        renderer.drawText(UI_10_FONT_ID, progressX, titleY, progressLabel.c_str(), true, EpdFontFamily::REGULAR);
         const int iconX = progressX + progressWidth + progressIconGap;
         const int iconY = titleY + (titleLh - progressIconSize) / 2;
-        drawInlineProgressCircle(renderer, iconX, iconY, progressIconSize, recentBookProgress[selectorIndex]);
+        drawInlineProgressCircle(renderer, iconX, iconY, progressIconSize, selectedBook.progress);
       }
     }
 
@@ -368,9 +352,10 @@ void RecentBooksGridActivity::render(RenderLock&&) {
       int bw = COVER_WIDTH;
       int bh = COVER_HEIGHT;
       bool drawn = false;
-      const std::string thumbPath = recentBooks[bookIdx].coverBmpPath.empty()
-                                        ? ""
-                                        : UITheme::getCoverThumbPath(recentBooks[bookIdx].coverBmpPath, COVER_HEIGHT);
+      const std::string thumbPath =
+          recentBooks[bookIdx].book.coverBmpPath.empty()
+              ? ""
+              : UITheme::getCoverThumbPath(recentBooks[bookIdx].book.coverBmpPath, COVER_HEIGHT);
       if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
         FsFile file;
         if (Storage.openFileForRead("RBGA", thumbPath, file)) {

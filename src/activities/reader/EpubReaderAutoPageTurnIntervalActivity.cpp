@@ -14,15 +14,7 @@ constexpr int kMaxSeconds = 120;
 constexpr int kSmallStep = 1;
 constexpr int kLargeStep = 5;
 
-int clampSeconds(const int seconds) {
-  if (seconds < kMinSeconds) {
-    return kMinSeconds;
-  }
-  if (seconds > kMaxSeconds) {
-    return kMaxSeconds;
-  }
-  return seconds;
-}
+int clampSeconds(const int seconds) { return std::clamp(seconds, kMinSeconds, kMaxSeconds); }
 }  // namespace
 
 void EpubReaderAutoPageTurnIntervalActivity::onEnter() {

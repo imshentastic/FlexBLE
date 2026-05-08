@@ -36,7 +36,7 @@ class ImageToFramebufferDecoder {
   // Size validation helpers
   static constexpr int MAX_SOURCE_WIDTH = 2048;
   static constexpr int MAX_SOURCE_HEIGHT = 3072;
-  static constexpr int64_t MAX_SOURCE_PIXELS = 2048LL * 2048LL;
+  static constexpr int64_t MAX_SOURCE_PIXELS = 2048LL * 3072LL;
 
   bool validateImageDimensions(int width, int height, const std::string& format);
   void warnUnsupportedFeature(const std::string& feature, const std::string& imagePath);

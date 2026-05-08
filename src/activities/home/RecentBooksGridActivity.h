@@ -21,12 +21,17 @@ class RecentBooksGridActivity final : public Activity {
   void render(RenderLock&&) override;
 
  private:
+  struct BookState {
+    RecentBook book;
+    float progress = -1.0f;
+    bool progressLoaded = false;
+  };
+  static constexpr int NO_PAGE_LOADED = -1;
+
   ButtonNavigator buttonNavigator;
   int selectorIndex = 0;
-  std::vector<RecentBook> recentBooks;
-  std::vector<float> recentBookProgress;
-  std::vector<bool> recentBookProgressLoaded;
-  int loadedPageStart = -1;
+  std::vector<BookState> recentBooks;
+  int loadedPageStart = NO_PAGE_LOADED;
 
   void loadRecentBooks();
   void loadPageCovers(int pageStart);

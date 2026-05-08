@@ -64,18 +64,16 @@ class LyraCarouselTheme : public LyraTheme {
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<std::string(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;
-  void drawButtonMenuSelectionOverlay(const GfxRenderer& renderer, int buttonCount, int selectedIndex,
+  // LyraTheme has no virtual overlay hook; this is a carousel-only helper.
+  void drawButtonMenuSelectionOverlay(GfxRenderer& renderer, int buttonCount, int selectedIndex,
                                       const std::function<std::string(int index)>& buttonLabel,
                                       const std::function<UIIcon(int index)>& rowIcon) const;
   void drawCarouselBorder(GfxRenderer& renderer, Rect coverRect, const std::vector<RecentBook>& recentBooks,
                           int centerIdx, bool inCarouselRow) const override;
-  // LyraTheme has no virtual overlay hook; this is a carousel-only helper.
   void drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
                 const std::function<std::string(int index)>& rowTitle,
                 const std::function<std::string(int index)>& rowSubtitle = {},
                 const std::function<UIIcon(int index)>& rowIcon = {},
                 const std::function<std::string(int index)>& rowValue = {}, bool highlightValue = false,
                 const std::function<bool(int index)>& isHeader = {}) const override;
-  void drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,
-                  bool selected) const override;
 };

@@ -1,5 +1,7 @@
 #pragma once
+#include <array>
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include "../Activity.h"
@@ -35,8 +37,8 @@ class HomeActivity final : public Activity {
   GlobalReadingStats globalStats;
 
   // Per-book stats and progress cached at onEnter() to avoid SD reads during navigation.
-  BookReadingStats cachedBookStats[kMaxCachedBooks] = {};
-  float cachedBookProgress[kMaxCachedBooks] = {};
+  std::array<BookReadingStats, kMaxCachedBooks> cachedBookStats{};
+  std::array<float, kMaxCachedBooks> cachedBookProgress{};
   bool bookStatsCached = false;
 
   uint8_t* carouselFrames[kCarouselFrameCount] = {};
@@ -46,6 +48,7 @@ class HomeActivity final : public Activity {
   std::vector<RecentBook> recentBooks;
   void onSelectBook(const std::string& path);
   void onFileBrowserOpen();
+  void onContinueReading();
   void onRecentsOpen();
   void onSettingsOpen();
   void onFileTransferOpen();
@@ -63,7 +66,8 @@ class HomeActivity final : public Activity {
   bool buildCarouselCacheFile(const std::string& cacheKey, uint64_t cacheKeyHash, int bookCount,
                               bool showProgressPopup = false);
   bool loadCarouselFrameFromDisk(uint64_t cacheKeyHash, int bookCount, int bookIdx, int slotIdx);
-  int chooseCarouselEvictionSlot(int centerIdx, int bookCount, int protectedBookIdx = -1) const;
+  int chooseCarouselEvictionSlot(int centerIdx, int bookCount,
+                                 std::optional<int> protectedBookIdx = std::nullopt) const;
   void renderCarouselFrameToCurrentBuffer(int bookIdx, BookReadingStats* outStats, float* outProgressPercent,
                                           bool* outUsedCachedStats);
   void renderCarouselFrame(int bookIdx, int slotIdx);

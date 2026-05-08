@@ -462,7 +462,7 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
   ctx.scaledSrcHeight = (srcHeight + jpegScaleDenom - 1) / jpegScaleDenom;
   ctx.dstWidth = destWidth;
   ctx.dstHeight = destHeight;
-  if (destWidth <= 0 || destHeight <= 0 || ctx.scaledSrcWidth <= 0 || ctx.scaledSrcHeight <= 0) {
+  if (ctx.scaledSrcWidth <= 0 || ctx.scaledSrcHeight <= 0) {
     LOG_ERR("JPG", "Invalid scaled JPEG dimensions: src=%dx%d scaled=%dx%d dst=%dx%d", srcWidth, srcHeight,
             ctx.scaledSrcWidth, ctx.scaledSrcHeight, destWidth, destHeight);
     jpeg->close();

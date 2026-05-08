@@ -30,7 +30,8 @@ class RecentBooksStore {
   // Get singleton instance
   static RecentBooksStore& getInstance() { return instance; }
 
-  // Add a book to the recent list (moves to front if already exists)
+  // Deprecated compatibility wrapper. Use addOrUpdateBook so the promote-or-update behavior is explicit.
+  [[deprecated("use addOrUpdateBook")]]
   void addBook(const std::string& path, const std::string& title, const std::string& author,
                const std::string& coverBmpPath);
 
