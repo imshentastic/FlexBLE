@@ -137,6 +137,12 @@ BookReadingStats loadRecentBookStats(const RecentBook& book) {
   return BookReadingStats::load(cachePath);
 }
 
+void updateRecentBookCoverPath(const RecentBook& book, const std::string& coverBmpPath) {
+  if (!RECENT_BOOKS.updateBook(book.path, book.title, book.author, coverBmpPath)) {
+    LOG_ERR("HOME", "failed to update recent book metadata: %s", book.path.c_str());
+  }
+}
+
 std::vector<HomeMenuItem> buildHomeMenuItems(bool hasOpdsServers, bool hasReadingStats, bool hasBookmarks) {
   std::vector<HomeMenuItem> items = {
       {tr(STR_BROWSE_FILES), Folder, HomeMenuAction::BrowseFiles},
@@ -371,7 +377,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               success =
                   epub.generateThumbBmp(LyraCarouselTheme::kSideCoverW, LyraCarouselTheme::kSideCoverH) && success;
             if (!success) {
-              RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+              updateRecentBookCoverPath(book, "");
               book.coverBmpPath = "";
             } else if (static_cast<size_t>(progress) < bookUpdated.size()) {
               bookUpdated[progress] = true;
@@ -394,7 +400,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
                 success =
                     xtc.generateThumbBmp(LyraCarouselTheme::kSideCoverW, LyraCarouselTheme::kSideCoverH) && success;
               if (!success) {
-                RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+                updateRecentBookCoverPath(book, "");
                 book.coverBmpPath = "";
               } else if (static_cast<size_t>(progress) < bookUpdated.size()) {
                 bookUpdated[progress] = true;
@@ -422,7 +428,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             }
             bool success = epub.generateThumbBmp(0, coverHeight);
             if (!success) {
-              RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+              updateRecentBookCoverPath(book, "");
               book.coverBmpPath = "";
             } else if (static_cast<size_t>(progress) < bookUpdated.size()) {
               bookUpdated[progress] = true;  // non-carousel path reuses same tracking
@@ -439,7 +445,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               GUI.fillPopupProgress(renderer, popupRect, 10 + progress * progressIncrement);
               bool success = xtc.generateThumbBmp(coverHeight);
               if (!success) {
-                RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+                updateRecentBookCoverPath(book, "");
                 book.coverBmpPath = "";
               } else if (static_cast<size_t>(progress) < bookUpdated.size()) {
                 bookUpdated[progress] = true;

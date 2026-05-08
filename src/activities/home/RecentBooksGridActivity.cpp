@@ -119,6 +119,12 @@ int moveVerticalInGrid(const int currentIndex, const int totalItems, const int c
   }
   return std::max(previousPageStart, previousPageCandidate);
 }
+
+void updateRecentBookCoverPath(const RecentBook& book, const std::string& coverBmpPath) {
+  if (!RECENT_BOOKS.updateBook(book.path, book.title, book.author, coverBmpPath)) {
+    LOG_ERR("RBGA", "failed to update recent book metadata: %s", book.path.c_str());
+  }
+}
 }  // namespace
 
 void RecentBooksGridActivity::loadRecentBooks() {
@@ -184,9 +190,9 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
           if (epub.generateThumbBmp(0, COVER_HEIGHT)) {
             const std::string generatedPath = epub.getThumbBmpPath(0, COVER_HEIGHT);
             book.coverBmpPath = generatedPath;
-            RECENT_BOOKS.updateBook(book.path, book.title, book.author, generatedPath);
+            updateRecentBookCoverPath(book, generatedPath);
           } else {
-            RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+            updateRecentBookCoverPath(book, "");
             book.coverBmpPath = "";
           }
         }
@@ -202,9 +208,9 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
             const std::string generatedPath =
                 xtc.getThumbBmpPath(static_cast<uint16_t>(COVER_HEIGHT * 0.6), COVER_HEIGHT);
             book.coverBmpPath = generatedPath;
-            RECENT_BOOKS.updateBook(book.path, book.title, book.author, generatedPath);
+            updateRecentBookCoverPath(book, generatedPath);
           } else {
-            RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+            updateRecentBookCoverPath(book, "");
             book.coverBmpPath = "";
           }
         }

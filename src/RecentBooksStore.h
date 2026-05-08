@@ -43,8 +43,8 @@ class RecentBooksStore {
   // updateBook updates metadata for an existing book only and must not change
   // recent-books ordering. Use addOrUpdateBook when the touched book should
   // become most recent. Returns false if the book does not exist.
-  bool updateBook(const std::string& path, const std::string& title, const std::string& author,
-                  const std::string& coverBmpPath);
+  [[nodiscard]] bool updateBook(const std::string& path, const std::string& title, const std::string& author,
+                                const std::string& coverBmpPath);
 
   // Update the stored path for a book (e.g. after moving the file).
   // Also patches coverBmpPath if it was inside oldCachePath, replacing the prefix with newCachePath.
