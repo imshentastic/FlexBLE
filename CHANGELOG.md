@@ -11,6 +11,7 @@
 
 ### Fixed
 - Keep EPUB list bullets attached to the first paragraph in `<li><p>...</p></li>` list items
+- Keep thumbnail cache path placeholder handling explicit for concrete paths, dimension templates, and legacy height-only templates
 - Keep EPUB/XTC thumbnail cache paths, Recent Books cover updates, and carousel snapshot reads consistent when thumbnail dimensions or cache files change
 - Serialize `GfxRenderer` bitmap scratch-buffer access so concurrent image draws cannot reuse the same temporary rows at the same time
 - Harden JPEG image scaling, EPUB thumbnail caching, and large CSS rule handling against crashes, stale cache files, and long-session allocation failures

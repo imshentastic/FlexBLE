@@ -5,6 +5,7 @@
 #include <HalStorage.h>
 #include <Logging.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -15,6 +16,13 @@
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "components/themes/lyra/LyraTheme.h"
 #include "components/themes/roundedraff/RoundedRaffTheme.h"
+
+namespace {
+constexpr char kWidthPlaceholder[] = "[WIDTH]";
+constexpr char kHeightPlaceholder[] = "[HEIGHT]";
+constexpr size_t kWidthPlaceholderLength = sizeof(kWidthPlaceholder) - 1;
+constexpr size_t kHeightPlaceholderLength = sizeof(kHeightPlaceholder) - 1;
+}  // namespace
 
 UITheme UITheme::instance;
 
@@ -94,20 +102,37 @@ std::string UITheme::getCoverThumbPath(const std::string& coverBmpPath, int widt
   if (width <= 0 || height <= 0) {
     return "";
   }
-  std::string thumbPath = coverBmpPath;
-  const bool hasWidthPlaceholder = thumbPath.find("[WIDTH]", 0) != std::string::npos;
-  size_t widthPos = thumbPath.find("[WIDTH]", 0);
-  if (widthPos != std::string::npos) {
-    thumbPath.replace(widthPos, 7, std::to_string(width));
+  const size_t initialWidthPos = coverBmpPath.find(kWidthPlaceholder, 0);
+  const size_t initialHeightPos = coverBmpPath.find(kHeightPlaceholder, 0);
+  const bool hasWidthPlaceholder = initialWidthPos != std::string::npos;
+  const bool hasHeightPlaceholder = initialHeightPos != std::string::npos;
+
+  if (!hasWidthPlaceholder && !hasHeightPlaceholder) {
+    return coverBmpPath;
   }
-  size_t pos = thumbPath.find("[HEIGHT]", 0);
+  if ((hasWidthPlaceholder &&
+       coverBmpPath.find(kWidthPlaceholder, initialWidthPos + kWidthPlaceholderLength) != std::string::npos) ||
+      (hasHeightPlaceholder &&
+       coverBmpPath.find(kHeightPlaceholder, initialHeightPos + kHeightPlaceholderLength) != std::string::npos)) {
+    return "";
+  }
+  if (!hasHeightPlaceholder) {
+    return "";
+  }
+
+  std::string thumbPath = coverBmpPath;
+  size_t widthPos = thumbPath.find(kWidthPlaceholder, 0);
+  if (widthPos != std::string::npos) {
+    thumbPath.replace(widthPos, kWidthPlaceholderLength, std::to_string(width));
+  }
+  size_t pos = thumbPath.find(kHeightPlaceholder, 0);
   if (pos != std::string::npos) {
     if (hasWidthPlaceholder) {
-      thumbPath.replace(pos, 8, std::to_string(height));
+      thumbPath.replace(pos, kHeightPlaceholderLength, std::to_string(height));
     } else {
       std::string legacyPath = thumbPath;
-      legacyPath.replace(pos, 8, std::to_string(height));
-      thumbPath.replace(pos, 8, std::to_string(width) + "x" + std::to_string(height));
+      legacyPath.replace(pos, kHeightPlaceholderLength, std::to_string(height));
+      thumbPath.replace(pos, kHeightPlaceholderLength, std::to_string(width) + "x" + std::to_string(height));
       if (!Storage.exists(thumbPath.c_str()) && Storage.exists(legacyPath.c_str())) {
         return legacyPath;
       }

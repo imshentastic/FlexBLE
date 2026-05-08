@@ -25,8 +25,12 @@ class UITheme {
   // when coverHeight is invalid.
   static std::string getCoverThumbPath(const std::string& coverBmpPath, int coverHeight);
   // Returns the cache path for a generated thumbnail at the requested cache-key
-  // dimensions. coverBmpPath is the source thumbnail template; no scaling is
-  // done here. Returns an empty string for invalid dimensions.
+  // dimensions. coverBmpPath may be:
+  // - a concrete path with no placeholders, returned unchanged;
+  // - a dimensions template containing one [WIDTH] and one [HEIGHT] placeholder;
+  // - a legacy height-only template containing one [HEIGHT] placeholder.
+  // No scaling is done here. Returns an empty string for invalid dimensions or
+  // unsupported placeholder templates.
   static std::string getCoverThumbPath(const std::string& coverBmpPath, int width, int height);
   static UIIcon getFileIcon(const std::string& filename);
   static int getStatusBarHeight();
