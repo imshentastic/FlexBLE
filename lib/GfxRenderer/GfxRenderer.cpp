@@ -153,6 +153,27 @@ struct SyntheticSolidGlyphMetrics {
   int height;
 };
 
+static void fillRectClipped(const GfxRenderer& renderer, int x, int y, int width, int height, const bool pixelState) {
+  if (width <= 0 || height <= 0) return;
+
+  const int screenWidth = renderer.getScreenWidth();
+  const int screenHeight = renderer.getScreenHeight();
+  const int x2 = x + width;
+  const int y2 = y + height;
+  if (x >= screenWidth || y >= screenHeight || x2 <= 0 || y2 <= 0) return;
+
+  const int clippedX = std::max(0, x);
+  const int clippedY = std::max(0, y);
+  const int clippedX2 = std::min(screenWidth, x2);
+  const int clippedY2 = std::min(screenHeight, y2);
+  renderer.fillRect(clippedX, clippedY, clippedX2 - clippedX, clippedY2 - clippedY, pixelState);
+}
+
+static void drawPixelClipped(const GfxRenderer& renderer, const int x, const int y, const bool pixelState) {
+  if (x < 0 || x >= renderer.getScreenWidth() || y < 0 || y >= renderer.getScreenHeight()) return;
+  renderer.drawPixel(x, y, pixelState);
+}
+
 static SyntheticSolidGlyphMetrics getSyntheticSolidGlyphMetrics(const EpdFontFamily& font,
                                                                 const EpdFontFamily::Style style, const uint32_t cp) {
   const EpdFontData* data = font.getData(style);
@@ -179,13 +200,13 @@ static SyntheticSolidGlyphMetrics getSyntheticGreekGlyphMetrics(const EpdFontFam
 
 static void fillSyntheticSolidGlyph(const GfxRenderer& renderer, const SyntheticSolidGlyphMetrics& metrics,
                                     const int cursorX, const int baselineY, const bool pixelState) {
-  renderer.fillRect(cursorX + metrics.left, baselineY - metrics.top, metrics.width, metrics.height, pixelState);
+  fillRectClipped(renderer, cursorX + metrics.left, baselineY - metrics.top, metrics.width, metrics.height, pixelState);
 }
 
 static void fillSyntheticSolidGlyphRotated90CW(const GfxRenderer& renderer, const SyntheticSolidGlyphMetrics& metrics,
                                                const int cursorX, const int cursorY, const bool pixelState) {
-  renderer.fillRect(cursorX + metrics.ascender - metrics.top, cursorY - metrics.left - metrics.width + 1,
-                    metrics.height, metrics.width, pixelState);
+  fillRectClipped(renderer, cursorX + metrics.ascender - metrics.top, cursorY - metrics.left - metrics.width + 1,
+                  metrics.height, metrics.width, pixelState);
 }
 
 static int syntheticStroke(const SyntheticSolidGlyphMetrics& metrics) {
@@ -210,22 +231,22 @@ static void drawSyntheticGreekGlyph(const GfxRenderer& renderer, const Synthetic
   if (w <= 0 || h <= 0) return;
 
   if (cp == syntheticGlyph::GREEK_CAPITAL_GAMMA) {
-    renderer.fillRect(x, y, s, h, pixelState);
-    renderer.fillRect(x, y, w, s, pixelState);
+    fillRectClipped(renderer, x, y, s, h, pixelState);
+    fillRectClipped(renderer, x, y, w, s, pixelState);
   } else if (cp == syntheticGlyph::GREEK_SMALL_EPSILON) {
     for (int gy = 0; gy < h; gy++) {
       const int srcY = gy * 7 / h;
       for (int gx = 0; gx < w; gx++) {
-        if (epsilonTemplatePixel(gx * 7 / w, srcY)) renderer.drawPixel(x + gx, y + gy, pixelState);
+        if (epsilonTemplatePixel(gx * 7 / w, srcY)) drawPixelClipped(renderer, x + gx, y + gy, pixelState);
       }
     }
   } else if (cp == syntheticGlyph::GREEK_SMALL_OMEGA) {
     const int mid = w / 2;
-    renderer.fillRect(x, y + s, s, h - 2 * s, pixelState);
-    renderer.fillRect(x + w - s, y + s, s, h - 2 * s, pixelState);
-    renderer.fillRect(x + s, y + h - s, mid - s, s, pixelState);
-    renderer.fillRect(x + mid, y + h - s, w - mid - s, s, pixelState);
-    renderer.fillRect(x + mid - s / 2, y + h / 2, s, h / 2, pixelState);
+    fillRectClipped(renderer, x, y + s, s, h - 2 * s, pixelState);
+    fillRectClipped(renderer, x + w - s, y + s, s, h - 2 * s, pixelState);
+    fillRectClipped(renderer, x + s, y + h - s, mid - s, s, pixelState);
+    fillRectClipped(renderer, x + mid, y + h - s, w - mid - s, s, pixelState);
+    fillRectClipped(renderer, x + mid - s / 2, y + h / 2, s, h / 2, pixelState);
   }
 }
 
@@ -248,7 +269,7 @@ static void drawSyntheticGreekGlyphRotated90CW(const GfxRenderer& renderer, cons
                (gy >= metrics.height - s && gx >= s && gx < metrics.width - s) ||
                (gx >= metrics.width / 2 - s / 2 && gx < metrics.width / 2 - s / 2 + s && gy >= metrics.height / 2);
       }
-      if (draw) renderer.drawPixel(baseX + gy, baseY - gx, pixelState);
+      if (draw) drawPixelClipped(renderer, baseX + gy, baseY - gx, pixelState);
     }
   }
 }
