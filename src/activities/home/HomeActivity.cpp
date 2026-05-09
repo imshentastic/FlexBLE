@@ -273,6 +273,11 @@ bool hasValidCarouselDiskCache(const std::vector<RecentBook>& recentBooks, const
   cacheFile.close();
   return readOk && isCarouselCacheHeaderValid(header, cacheKeyHash, bookCount, renderer);
 }
+
+int getHomeMenuSelectionOffset(const std::vector<RecentBook>& recentBooks) {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  return metrics.homeContinueReadingInMenu ? 0 : static_cast<int>(recentBooks.size());
+}
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -319,9 +324,12 @@ static_assert(HomeActivity::kMaxCachedBooks >= LyraCarouselMetrics::values.homeR
               "kMaxCachedBooks must cover all carousel slots");
 
 int HomeActivity::getMenuItemCount() const {
+  const auto& metrics = UITheme::getInstance().getMetrics();
   int count = 4;  // File Browser, Recents, File transfer, Settings
-  if (!recentBooks.empty()) {
+  if (!metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     count += recentBooks.size();
+  } else if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
+    count++;  // Continue Reading menu item
   }
   if (hasOpdsServers) {
     count++;
@@ -1082,7 +1090,7 @@ void HomeActivity::loop() {
     if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
       menuItems.insert(menuItems.begin(), {tr(STR_CONTINUE_READING), Book, HomeMenuAction::ContinueReading});
     }
-    const int menuSelectedIndex = selectorIndex - static_cast<int>(recentBooks.size());
+    const int menuSelectedIndex = selectorIndex - getHomeMenuSelectionOffset(recentBooks);
     if (menuSelectedIndex < 0 || menuSelectedIndex >= static_cast<int>(menuItems.size())) {
       return;
     }
@@ -1193,7 +1201,7 @@ void HomeActivity::render(RenderLock&&) {
 
   GUI.drawButtonMenu(
       renderer, Rect{0, menuStartY, pageWidth, menuHeight}, static_cast<int>(menuItems.size()),
-      selectorIndex - static_cast<int>(recentBooks.size()),
+      selectorIndex - getHomeMenuSelectionOffset(recentBooks),
       [&menuItems](int index) { return std::string(menuItems[index].label); },
       [&menuItems](int index) { return menuItems[index].icon; });
 
