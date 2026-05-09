@@ -19,8 +19,11 @@ constexpr int kCoverRadius = 18;
 constexpr int kMenuRadius = 30;
 constexpr int kBottomRadius = 15;
 constexpr int kRowRadius = 20;
-constexpr int kInteractiveInsetX = 20;
+constexpr int kInteractiveInsetX = 15;
 constexpr int kSelectableRowGap = 6;
+constexpr int kHomeMenuSidePadding = RoundedRaffMetrics::values.contentSidePadding;
+constexpr int kListSidePadding = 5;
+constexpr int kTabHorizontalInset = 2;
 constexpr int kTitleFontId = UI_12_FONT_ID;     // Requested main title size: 12px
 constexpr int kSubtitleFontId = SMALL_FONT_ID;  // Requested subtitle size: 8px
 constexpr int kGuideFontId = SMALL_FONT_ID;     // Closest available to requested 6px
@@ -107,14 +110,17 @@ void RoundedRaffTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const 
     return;
   }
 
-  const int slotWidth = rect.width / static_cast<int>(tabs.size());
+  const int tabCount = static_cast<int>(tabs.size());
   const int tabY = rect.y + 4;
   const int tabHeight = rect.height - 12;
 
-  for (size_t i = 0; i < tabs.size(); i++) {
-    const int slotX = rect.x + static_cast<int>(i) * slotWidth;
-    const int tabX = slotX + 4;
-    const int tabWidth = slotWidth - 8;
+  for (int i = 0; i < tabCount; i++) {
+    const int slotX = rect.x + (i * rect.width) / tabCount;
+    const int nextSlotX = rect.x + ((i + 1) * rect.width) / tabCount;
+    const int slotWidth = nextSlotX - slotX;
+    const int tabInsetX = std::min(kTabHorizontalInset, slotWidth / 2);
+    const int tabX = slotX + tabInsetX;
+    const int tabWidth = std::max(0, slotWidth - tabInsetX * 2);
     const auto& tab = tabs[i];
 
     if (tab.selected) {
@@ -122,7 +128,7 @@ void RoundedRaffTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const 
     }
 
     const int textWidth = renderer.getTextWidth(kTitleFontId, tab.label, EpdFontFamily::BOLD);
-    const int textX = slotX + (slotWidth - textWidth) / 2;
+    const int textX = tabX + (tabWidth - textWidth) / 2;
     const int textY = tabY + (tabHeight - renderer.getLineHeight(kTitleFontId)) / 2;
     renderer.drawText(kTitleFontId, textX, textY, tab.label, !(tab.selected), EpdFontFamily::BOLD);
   }
@@ -219,9 +225,9 @@ void RoundedRaffTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int butt
                                       const std::function<std::string(int index)>& buttonLabel,
                                       const std::function<UIIcon(int index)>& rowIcon) const {
   (void)rowIcon;
-  const int sidePadding = RoundedRaffMetrics::values.contentSidePadding;
+  const int sidePadding = kHomeMenuSidePadding;
   const int rowX = rect.x + sidePadding;
-  const int rowHeight = renderer.getLineHeight(kTitleFontId) + 20;  // 10px top + 10px bottom
+  const int rowHeight = renderer.getLineHeight(kTitleFontId) + 15;  // 10px top + 10px bottom
   const int rowGap = kSelectableRowGap;
   const int rowStep = rowHeight + rowGap;
   const int pageItems = std::max(1, rect.height / rowStep);
@@ -234,7 +240,7 @@ void RoundedRaffTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int butt
   for (int i = pageStartIndex; i < buttonCount && i < pageStartIndex + pageItems; ++i) {
     const std::string label = buttonLabel(i);
     const int rowY = menuTop + (i - pageStartIndex) * rowStep;
-    constexpr int kRowPaddingX = 40;  // 20px L/R
+    constexpr int kRowPaddingX = 30;  // 20px L/R
     const int maxLabelWidth = std::max(0, menuMaxWidth - kRowPaddingX);
     const std::string truncatedLabel =
         renderer.truncatedText(kTitleFontId, label.c_str(), maxLabelWidth, EpdFontFamily::BOLD);
@@ -278,7 +284,7 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
   const int pageItems = std::max(1, rect.height / rowStep);
   const int pageStartIndex = std::max(0, selectedIndex / pageItems) * pageItems;
 
-  const int sidePadding = RoundedRaffMetrics::values.contentSidePadding;
+  const int sidePadding = kListSidePadding;
   const int rowX = rect.x + sidePadding;
   const int rowWidth = rect.width - sidePadding * 2;
 
