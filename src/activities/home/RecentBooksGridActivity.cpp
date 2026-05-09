@@ -130,6 +130,23 @@ bool hasThumbnailPlaceholder(const std::string& coverBmpPath) {
   return coverBmpPath.find("[WIDTH]") != std::string::npos || coverBmpPath.find("[HEIGHT]") != std::string::npos;
 }
 
+void calculateCoverFillCrop(const Bitmap& bitmap, float& cropX, float& cropY) {
+  cropX = 0.0f;
+  cropY = 0.0f;
+  const float srcW = static_cast<float>(bitmap.getWidth());
+  const float srcH = static_cast<float>(bitmap.getHeight());
+  if (srcW <= 0.0f || srcH <= 0.0f) return;
+
+  const float srcRatio = srcW / srcH;
+  const float targetRatio = static_cast<float>(RecentBooksGridActivity::COVER_WIDTH) /
+                            static_cast<float>(RecentBooksGridActivity::COVER_HEIGHT);
+  if (srcRatio > targetRatio) {
+    cropX = std::max(0.0f, 1.0f - (targetRatio / srcRatio));
+  } else if (srcRatio < targetRatio) {
+    cropY = std::max(0.0f, 1.0f - (srcRatio / targetRatio));
+  }
+}
+
 std::string getReusableCoverPath(const RecentBook& book) {
   if (FsHelpers::hasEpubExtension(book.path)) {
     return Epub(book.path, "/.crosspoint").getThumbBmpPath();
@@ -188,7 +205,7 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
       needsGeneration = true;
       break;
     }
-    const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, COVER_HEIGHT);
+    const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, COVER_WIDTH, COVER_HEIGHT);
     if (!Storage.exists(thumbPath.c_str())) {
       needsGeneration = true;
       break;
@@ -207,7 +224,7 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
   for (int i = pageStart; i < pageEnd; ++i) {
     RecentBook& book = recentBooks[i].book;
     const std::string coverPath =
-        book.coverBmpPath.empty() ? "" : UITheme::getCoverThumbPath(book.coverBmpPath, COVER_HEIGHT);
+        book.coverBmpPath.empty() ? "" : UITheme::getCoverThumbPath(book.coverBmpPath, COVER_WIDTH, COVER_HEIGHT);
     if (coverPath.empty() || !Storage.exists(coverPath.c_str())) {
       if (FsHelpers::hasEpubExtension(book.path)) {
         Epub epub(book.path, "/.crosspoint");
@@ -217,7 +234,7 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
           }
           GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-          if (epub.generateThumbBmp(0, COVER_HEIGHT)) {
+          if (epub.generateThumbBmp(COVER_WIDTH, COVER_HEIGHT)) {
             const std::string reusablePath = epub.getThumbBmpPath();
             book.coverBmpPath = reusablePath;
             updateRecentBookCoverPath(book, reusablePath);
@@ -234,7 +251,7 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
           }
           GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-          if (xtc.generateThumbBmp(COVER_HEIGHT)) {
+          if (xtc.generateThumbBmp(COVER_WIDTH, COVER_HEIGHT)) {
             const std::string reusablePath = xtc.getThumbBmpPath();
             book.coverBmpPath = reusablePath;
             updateRecentBookCoverPath(book, reusablePath);
@@ -382,25 +399,25 @@ void RecentBooksGridActivity::render(RenderLock&&) {
       const int x = startXOffset + col * (COVER_WIDTH + metrics.verticalSpacing);
       const int y = contentTop + titleStripHeight + titleGridGap + row * (COVER_HEIGHT + rowSpacing);
 
-      int bx = x;
-      int by = y;
-      int bw = COVER_WIDTH;
-      int bh = COVER_HEIGHT;
+      const int bx = x;
+      const int by = y;
+      constexpr int bw = COVER_WIDTH;
+      constexpr int bh = COVER_HEIGHT;
       bool drawn = false;
       const std::string thumbPath =
           recentBooks[bookIdx].book.coverBmpPath.empty()
               ? ""
-              : UITheme::getCoverThumbPath(recentBooks[bookIdx].book.coverBmpPath, COVER_HEIGHT);
+              : UITheme::getCoverThumbPath(recentBooks[bookIdx].book.coverBmpPath, COVER_WIDTH, COVER_HEIGHT);
       if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
         FsFile file;
         if (Storage.openFileForRead("RBGA", thumbPath, file)) {
           Bitmap bmp(file);
           if (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0) {
-            bw = std::min(COVER_WIDTH, bmp.getWidth());
-            bh = std::min(COVER_HEIGHT, bmp.getHeight());
-            bx = x + (COVER_WIDTH - bw) / 2;
-            by = y + (COVER_HEIGHT - bh) / 2;
-            renderer.drawBitmap(bmp, bx, by, bw, bh);
+            float cropX = 0.0f;
+            float cropY = 0.0f;
+            calculateCoverFillCrop(bmp, cropX, cropY);
+            renderer.fillRoundedRect(bx, by, bw, bh, kCoverCornerRadius, Color::White);
+            renderer.drawBitmap(bmp, bx, by, bw, bh, cropX, cropY);
             renderer.maskRoundedRectOutsideCorners(bx, by, bw, bh, kCoverCornerRadius, Color::White);
             renderer.drawRoundedRect(bx, by, bw, bh, 2, kCoverCornerRadius, true);
             drawn = true;
