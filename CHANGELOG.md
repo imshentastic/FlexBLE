@@ -16,6 +16,7 @@
 - Allow the web file manager and WebDAV to browse dot-prefixed hidden files when hidden files are enabled, matching the device file browser
 
 ### Fixed
+- Long-press to delete a folder now triggers on delay rather than release
 - Render simple black CSS backgrounds for whitespace-only EPUB inline spans, including NBSP redaction bars that previously appeared as only trailing punctuation
 - Preserve whitespace-only XHTML text nodes during browser EPUB optimization so redaction spans keep their intended width
 - Keep EPUB list bullets attached to the first paragraph in `<li><p>...</p></li>` list items
@@ -26,6 +27,7 @@
 - Prevent concurrent render/storage crashes by serializing `GfxRenderer` scratch-buffer access, shared SPI bus access, and failed SPI lock cleanup
 - Make reader prewarm lighter by skipping image decoding, keeping mixed-style font glyphs cached together, and avoiding section rebuilds for render-quality-only option changes
 - Keep the Recent Books grid from saving grid-sized cover thumbnails as reusable cover paths so Lyra Carousel does not render tiny covers
+- Avoid building the Lyra Carousel SD snapshot when RAM has already fallen back to a reduced frame cache
 
 ## [v1.2.9.1] - 2026-05-03
 

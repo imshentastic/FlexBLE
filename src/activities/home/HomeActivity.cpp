@@ -986,20 +986,27 @@ bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
     loadOrRender(prevIdx, 2);
   }
 
+  const bool hasFullFrameCache = gCarouselCache.frameCount >= targetFrameCount;
   gCarouselCache.key = newKey;
-  gCarouselCache.keyHash = newKeyHash;
+  gCarouselCache.keyHash = diskCacheValid ? newKeyHash : 0;
   carouselFramesReady = true;
   coverRendered = false;
   coverBufferStored = false;
 
   // Persist the freshly-rendered carousel snapshot back to SD after Home is
   // already visible so later reader->Home returns can bootstrap from disk
-  // instead of live-rendering covers again. This also matters in degraded
-  // memory mode (for example 2/3 RAM slots), where the missing third slot can
-  // still be served from SD on selection/menu navigation.
+  // instead of live-rendering covers again. If RAM already forced a reduced
+  // frame cache, skip the optional SD snapshot work and avoid more heap churn.
   if (!diskCacheValid && gCarouselCache.frameCount > 0) {
-    showedProgressPopup =
-        buildCarouselCacheFile(newKey, newKeyHash, bookCount, showProgressPopup) || showedProgressPopup;
+    if (hasFullFrameCache) {
+      const bool cacheBuilt = buildCarouselCacheFile(newKey, newKeyHash, bookCount, showProgressPopup);
+      if (cacheBuilt) {
+        gCarouselCache.keyHash = newKeyHash;
+        showedProgressPopup = true;
+      }
+    } else {
+      LOG_INF("HOME", "carousel: skipping SD cache build in degraded frame cache mode");
+    }
   }
   return showedProgressPopup;
 }
