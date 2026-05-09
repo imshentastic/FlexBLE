@@ -25,6 +25,32 @@ uint16_t measureBackgroundWidth(const GfxRenderer& renderer, const int fontId, c
   return static_cast<uint16_t>(std::max(0, renderer.getTextAdvanceX(fontId, word.c_str(), style)));
 }
 
+bool isWhitespaceOnlyBackgroundToken(const std::string& word) {
+  if (word.empty()) {
+    return false;
+  }
+
+  for (size_t i = 0; i < word.size();) {
+    const auto c = static_cast<uint8_t>(word[i]);
+    if (c == ' ' || c == '\r' || c == '\n' || c == '\t') {
+      ++i;
+      continue;
+    }
+    if (c == 0xC2 && i + 1 < word.size() && static_cast<uint8_t>(word[i + 1]) == 0xA0) {
+      i += 2;
+      continue;
+    }
+    if (c == 0xE2 && i + 2 < word.size() && static_cast<uint8_t>(word[i + 1]) == 0x80 &&
+        static_cast<uint8_t>(word[i + 2]) == 0xAF) {
+      i += 3;
+      continue;
+    }
+    return false;
+  }
+
+  return true;
+}
+
 bool readBoundedString(FsFile& file, std::string& s) {
   uint32_t len = 0;
   if (!serialization::tryReadPod(file, len)) {
@@ -76,7 +102,7 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
     const EpdFontFamily::Style currentStyle = wordStyles[i];
     const uint8_t boundary = wordBionicBoundary[i];
 
-    if (wordBackgroundBlack[i] != 0) {
+    if (wordBackgroundBlack[i] != 0 && isWhitespaceOnlyBackgroundToken(words[i])) {
       const uint16_t backgroundWidth = measureBackgroundWidth(renderer, fontId, words[i], currentStyle);
       if (backgroundWidth > 0) {
         renderer.fillRect(wordX, y, backgroundWidth, renderer.getFontAscenderSize(fontId), true);

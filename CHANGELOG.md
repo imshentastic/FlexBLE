@@ -15,7 +15,7 @@
 - Use the fast EPUB spine/TOC indexing path for books with 300+ spine entries so heavily split books build `book.bin` faster on first open
 
 ### Fixed
-- Render simple black CSS backgrounds behind EPUB inline text, including `nbsp;` redaction bars that previously were removed completely
+- Render simple black CSS backgrounds for whitespace-only EPUB inline spans, including NBSP redaction bars that previously appeared as only trailing punctuation
 - Preserve whitespace-only XHTML text nodes during browser EPUB optimization so redaction spans keep their intended width
 - Keep EPUB list bullets attached to the first paragraph in `<li><p>...</p></li>` list items
 - Keep EPUB and XTC thumbnail caches, Recent Books covers, carousel snapshots, and deleted-folder metadata in sync when cache files change or are removed
