@@ -198,6 +198,21 @@ static SyntheticSolidGlyphMetrics getSyntheticGreekGlyphMetrics(const EpdFontFam
       width,    height};
 }
 
+static SyntheticSolidGlyphMetrics getSyntheticReplacementGlyphMetrics(const EpdFontFamily& font,
+                                                                      const EpdFontFamily::Style style) {
+  const EpdFontData* data = font.getData(style);
+  const uint16_t advanceX = syntheticGlyph::replacementAdvanceX(data, font.getGlyph('M', style));
+  const int height = syntheticGlyph::replacementHeight(data);
+  const int width = syntheticGlyph::replacementWidth(advanceX, height);
+  const int ascender = data && data->ascender > 0 ? data->ascender : height;
+  return {advanceX,
+          ascender,
+          syntheticGlyph::replacementLeft(advanceX, width),
+          syntheticGlyph::replacementTop(data, height),
+          width,
+          height};
+}
+
 static void fillSyntheticSolidGlyph(const GfxRenderer& renderer, const SyntheticSolidGlyphMetrics& metrics,
                                     const int cursorX, const int baselineY, const bool pixelState) {
   fillRectClipped(renderer, cursorX + metrics.left, baselineY - metrics.top, metrics.width, metrics.height, pixelState);
@@ -219,6 +234,80 @@ static bool epsilonTemplatePixel(const int srcX, const int srcY) {
       0b0111110, 0b1100000, 0b1000000, 0b1111100, 0b1000000, 0b1100000, 0b0111110,
   };
   return (EPSILON_7X7[srcY] & (1 << (6 - srcX))) != 0;
+}
+
+static bool questionTemplatePixel(const int srcX, const int srcY) {
+  static constexpr uint8_t QUESTION_7X9[] = {
+      0b0011100, 0b0100010, 0b0000010, 0b0000100, 0b0001000, 0b0001000, 0b0000000, 0b0001000, 0b0001000,
+  };
+  return (QUESTION_7X9[srcY] & (1 << (6 - srcX))) != 0;
+}
+
+static void drawSyntheticReplacementGlyph(const GfxRenderer& renderer, const SyntheticSolidGlyphMetrics& metrics,
+                                          const int cursorX, const int baselineY, const bool pixelState) {
+  const int x = cursorX + metrics.left;
+  const int y = baselineY - metrics.top;
+  const int w = metrics.width;
+  const int h = metrics.height;
+  if (w <= 0 || h <= 0) return;
+
+  const int limit = w < h ? w : h;
+  for (int gy = 0; gy < h; gy++) {
+    for (int gx = 0; gx < w; gx++) {
+      const int diamondX = abs((2 * gx + 1) - w);
+      const int diamondY = abs((2 * gy + 1) - h);
+      if (diamondX + diamondY <= limit) {
+        drawPixelClipped(renderer, x + gx, y + gy, pixelState);
+      }
+    }
+  }
+
+  if (w < 7 || h < 9) return;
+  const int qW = w > 10 ? 7 : 5;
+  const int qH = h > 12 ? 9 : 7;
+  const int qX = x + (w - qW) / 2;
+  const int qY = y + (h - qH) / 2;
+  for (int gy = 0; gy < qH; gy++) {
+    for (int gx = 0; gx < qW; gx++) {
+      if (questionTemplatePixel(gx * 7 / qW, gy * 9 / qH)) {
+        drawPixelClipped(renderer, qX + gx, qY + gy, !pixelState);
+      }
+    }
+  }
+}
+
+static void drawSyntheticReplacementGlyphRotated90CW(const GfxRenderer& renderer,
+                                                     const SyntheticSolidGlyphMetrics& metrics, const int cursorX,
+                                                     const int cursorY, const bool pixelState) {
+  const int baseX = cursorX + metrics.ascender - metrics.top;
+  const int baseY = cursorY - metrics.left;
+  const int w = metrics.width;
+  const int h = metrics.height;
+  if (w <= 0 || h <= 0) return;
+
+  const int limit = w < h ? w : h;
+  for (int gy = 0; gy < h; gy++) {
+    for (int gx = 0; gx < w; gx++) {
+      const int diamondX = abs((2 * gx + 1) - w);
+      const int diamondY = abs((2 * gy + 1) - h);
+      if (diamondX + diamondY <= limit) {
+        drawPixelClipped(renderer, baseX + gy, baseY - gx, pixelState);
+      }
+    }
+  }
+
+  if (w < 7 || h < 9) return;
+  const int qW = w > 10 ? 7 : 5;
+  const int qH = h > 12 ? 9 : 7;
+  const int qLeft = (w - qW) / 2;
+  const int qTop = (h - qH) / 2;
+  for (int gy = 0; gy < qH; gy++) {
+    for (int gx = 0; gx < qW; gx++) {
+      if (questionTemplatePixel(gx * 7 / qW, gy * 9 / qH)) {
+        drawPixelClipped(renderer, baseX + qTop + gy, baseY - (qLeft + gx), !pixelState);
+      }
+    }
+  }
 }
 
 static void drawSyntheticGreekGlyph(const GfxRenderer& renderer, const SyntheticSolidGlyphMetrics& metrics,
@@ -464,6 +553,15 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
       lastBaseX += fp4::toPixel(prevAdvanceFP + kernFP);       // snap 12.4 fixed-point to nearest pixel
     }
 
+    if (!hasRealGlyph && syntheticGlyph::isSpaceFallback(cp)) {
+      prevAdvanceFP = 0;
+      lastBaseLeft = 0;
+      lastBaseWidth = 0;
+      lastBaseTop = 0;
+      prevCp = 0;
+      continue;
+    }
+
     if (!hasRealGlyph && syntheticGlyph::isSolid(cp)) {
       const auto metrics = getSyntheticSolidGlyphMetrics(font, style, cp);
       fillSyntheticSolidGlyph(*this, metrics, lastBaseX, yPos, black);
@@ -478,6 +576,17 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     if (!hasRealGlyph && syntheticGlyph::isGreekFallback(cp)) {
       const auto metrics = getSyntheticGreekGlyphMetrics(font, style, cp);
       drawSyntheticGreekGlyph(*this, metrics, cp, lastBaseX, yPos, black);
+      lastBaseLeft = metrics.left;
+      lastBaseWidth = metrics.width;
+      lastBaseTop = metrics.top;
+      prevAdvanceFP = metrics.advanceX;
+      prevCp = cp;
+      continue;
+    }
+
+    if (!hasRealGlyph && syntheticGlyph::isReplacementFallback(cp)) {
+      const auto metrics = getSyntheticReplacementGlyphMetrics(font, style);
+      drawSyntheticReplacementGlyph(*this, metrics, lastBaseX, yPos, black);
       lastBaseLeft = metrics.left;
       lastBaseWidth = metrics.width;
       lastBaseTop = metrics.top;
@@ -1454,6 +1563,12 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
       widthPx += fp4::toPixel(prevAdvanceFP + kernFP);         // snap 12.4 fixed-point to nearest pixel
     }
 
+    if (!hasRealGlyph && syntheticGlyph::isSpaceFallback(cp)) {
+      prevAdvanceFP = 0;
+      prevCp = 0;
+      continue;
+    }
+
     if (!hasRealGlyph && syntheticGlyph::isSolid(cp)) {
       prevAdvanceFP = getSyntheticSolidGlyphMetrics(font, style, cp).advanceX;
       prevCp = cp;
@@ -1462,6 +1577,12 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
 
     if (!hasRealGlyph && syntheticGlyph::isGreekFallback(cp)) {
       prevAdvanceFP = getSyntheticGreekGlyphMetrics(font, style, cp).advanceX;
+      prevCp = cp;
+      continue;
+    }
+
+    if (!hasRealGlyph && syntheticGlyph::isReplacementFallback(cp)) {
+      prevAdvanceFP = getSyntheticReplacementGlyphMetrics(font, style).advanceX;
       prevCp = cp;
       continue;
     }
@@ -1549,6 +1670,15 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
       lastBaseY -= fp4::toPixel(prevAdvanceFP + kernFP);       // snap 12.4 fixed-point to nearest pixel
     }
 
+    if (!hasRealGlyph && syntheticGlyph::isSpaceFallback(cp)) {
+      prevAdvanceFP = 0;
+      lastBaseLeft = 0;
+      lastBaseWidth = 0;
+      lastBaseTop = 0;
+      prevCp = 0;
+      continue;
+    }
+
     if (!hasRealGlyph && syntheticGlyph::isSolid(cp)) {
       const auto metrics = getSyntheticSolidGlyphMetrics(font, style, cp);
       fillSyntheticSolidGlyphRotated90CW(*this, metrics, x, lastBaseY, black);
@@ -1563,6 +1693,17 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
     if (!hasRealGlyph && syntheticGlyph::isGreekFallback(cp)) {
       const auto metrics = getSyntheticGreekGlyphMetrics(font, style, cp);
       drawSyntheticGreekGlyphRotated90CW(*this, metrics, cp, x, lastBaseY, black);
+      lastBaseLeft = metrics.left;
+      lastBaseWidth = metrics.width;
+      lastBaseTop = metrics.top;
+      prevAdvanceFP = metrics.advanceX;
+      prevCp = cp;
+      continue;
+    }
+
+    if (!hasRealGlyph && syntheticGlyph::isReplacementFallback(cp)) {
+      const auto metrics = getSyntheticReplacementGlyphMetrics(font, style);
+      drawSyntheticReplacementGlyphRotated90CW(*this, metrics, x, lastBaseY, black);
       lastBaseLeft = metrics.left;
       lastBaseWidth = metrics.width;
       lastBaseTop = metrics.top;

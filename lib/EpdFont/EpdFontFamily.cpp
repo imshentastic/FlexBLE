@@ -48,6 +48,16 @@ void EpdFontFamily::getTextDimensions(const char* string, int* w, int* h, const 
 
     const bool hasRealGlyph = findGlyphData(cp, style).glyph != nullptr;
 
+    if (!isCombining && !hasRealGlyph && syntheticGlyph::isSpaceFallback(cp)) {
+      lastBaseX += fp4::toPixel(prevAdvanceFP);
+      prevCp = 0;
+      prevAdvanceFP = 0;
+      lastBaseLeft = 0;
+      lastBaseWidth = 0;
+      lastBaseTop = 0;
+      continue;
+    }
+
     if (!isCombining && !hasRealGlyph && syntheticGlyph::isSolid(cp)) {
       const EpdFontData* data = getData(style);
       const uint16_t advanceX = syntheticGlyph::solidAdvanceX(data, getGlyph('M', style));
@@ -81,6 +91,32 @@ void EpdFontFamily::getTextDimensions(const char* string, int* w, int* h, const 
       const int glyphWidth = syntheticGlyph::greekWidth(cp, advanceX, glyphHeight);
       const int glyphLeft = syntheticGlyph::greekLeft(cp, advanceX, glyphWidth);
       const int glyphTop = syntheticGlyph::greekTop(data, cp, glyphHeight);
+
+      if (prevCp != 0) {
+        const auto kernFP = getKerning(prevCp, cp, style);
+        lastBaseX += fp4::toPixel(prevAdvanceFP + kernFP);
+      }
+
+      minX = std::min(minX, lastBaseX + glyphLeft);
+      maxX = std::max(maxX, lastBaseX + glyphLeft + glyphWidth);
+      minY = std::min(minY, glyphTop - glyphHeight);
+      maxY = std::max(maxY, glyphTop);
+
+      lastBaseLeft = glyphLeft;
+      lastBaseWidth = glyphWidth;
+      lastBaseTop = glyphTop;
+      prevAdvanceFP = advanceX;
+      prevCp = cp;
+      continue;
+    }
+
+    if (!isCombining && !hasRealGlyph && syntheticGlyph::isReplacementFallback(cp)) {
+      const EpdFontData* data = getData(style);
+      const uint16_t advanceX = syntheticGlyph::replacementAdvanceX(data, getGlyph('M', style));
+      const int glyphHeight = syntheticGlyph::replacementHeight(data);
+      const int glyphWidth = syntheticGlyph::replacementWidth(advanceX, glyphHeight);
+      const int glyphLeft = syntheticGlyph::replacementLeft(advanceX, glyphWidth);
+      const int glyphTop = syntheticGlyph::replacementTop(data, glyphHeight);
 
       if (prevCp != 0) {
         const auto kernFP = getKerning(prevCp, cp, style);
@@ -177,7 +213,13 @@ const EpdGlyph* EpdFontFamily::getGlyph(const uint32_t cp, const Style style) co
 
 uint32_t EpdFontFamily::getFallbackCodepoint(const uint32_t cp, const Style style) const {
   if (findGlyphData(cp, style).glyph) return cp;
-  return syntheticGlyph::aliasCodepoint(cp);
+  const uint32_t aliasCp = syntheticGlyph::aliasCodepoint(cp);
+  if (aliasCp != cp) {
+    return findGlyphData(aliasCp, style).glyph ? aliasCp : REPLACEMENT_GLYPH;
+  }
+  if (syntheticGlyph::isSpaceFallback(cp)) return cp;
+  if (syntheticGlyph::isSolid(cp) || syntheticGlyph::isGreekFallback(cp)) return cp;
+  return REPLACEMENT_GLYPH;
 }
 
 int8_t EpdFontFamily::getKerning(const uint32_t leftCp, const uint32_t rightCp, const Style style) const {

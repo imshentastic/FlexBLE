@@ -145,6 +145,10 @@ constexpr bool isSolid(uint32_t cp) { return cp == FULL_BLOCK || cp == BLACK_SQU
 constexpr bool isGreekFallback(uint32_t cp) {
   return cp == GREEK_CAPITAL_GAMMA || cp == GREEK_SMALL_EPSILON || cp == GREEK_SMALL_OMEGA;
 }
+constexpr bool isReplacementFallback(uint32_t cp) { return cp == 0xFFFD; }
+constexpr bool isSpaceFallback(uint32_t cp) {
+  return cp == 0x00A0 || cp == 0x1680 || (cp >= 0x2000 && cp <= 0x200A) || cp == 0x202F || cp == 0x205F || cp == 0x3000;
+}
 constexpr uint32_t aliasCodepoint(uint32_t cp) {
   return cp == MODIFIER_LETTER_TURNED_COMMA ? LEFT_SINGLE_QUOTATION_MARK : cp;
 }
@@ -185,6 +189,37 @@ inline int solidTop(const EpdFontData* data, uint32_t cp, int height) {
   const int ascender = data && data->ascender > 0 ? data->ascender : height;
   if (cp != BLACK_SQUARE || ascender <= height) return height;
   return height + (ascender - height) / 2;
+}
+
+inline uint16_t replacementAdvanceX(const EpdFontData* data, const EpdGlyph* emGlyph) {
+  if (emGlyph && emGlyph->advanceX > 0) {
+    return emGlyph->advanceX;
+  }
+  int px = data && data->ascender > 0 ? (data->ascender * 3 + 3) / 4 : 8;
+  if (px < 3) px = 3;
+  return static_cast<uint16_t>(fp4::fromPixel(px));
+}
+
+inline int replacementHeight(const EpdFontData* data) {
+  const int ascender = data && data->ascender > 0 ? data->ascender : 8;
+  return ascender > 3 ? ascender : 3;
+}
+
+inline int replacementWidth(uint16_t advanceX, int height) {
+  const int advancePx = fp4::toPixel(advanceX);
+  int width = advancePx < height ? advancePx : height;
+  if (width < 3) width = 3;
+  return width;
+}
+
+inline int replacementLeft(uint16_t advanceX, int width) {
+  const int advancePx = fp4::toPixel(advanceX);
+  return advancePx > width ? (advancePx - width) / 2 : 0;
+}
+
+inline int replacementTop(const EpdFontData* data, int height) {
+  const int ascender = data && data->ascender > 0 ? data->ascender : height;
+  return ascender > height ? height + (ascender - height) / 2 : height;
 }
 
 inline uint16_t greekAdvanceX(const EpdFontData* data, const EpdGlyph* emGlyph, uint32_t cp) {
