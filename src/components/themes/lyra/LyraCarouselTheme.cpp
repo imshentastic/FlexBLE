@@ -532,6 +532,7 @@ void LyraCarouselTheme::drawList(const GfxRenderer& renderer, Rect rect, int ite
                                  const std::function<std::string(int index)>& rowSubtitle,
                                  const std::function<UIIcon(int index)>& rowIcon,
                                  const std::function<std::string(int index)>& rowValue, bool highlightValue,
+                                 const std::function<bool(int index)>& rowDimmed,
                                  const std::function<bool(int index)>& isHeader) const {
   constexpr int hPad = 8;
   constexpr int listIconSz = 24;
@@ -621,6 +622,15 @@ void LyraCarouselTheme::drawList(const GfxRenderer& renderer, Rect rect, int ite
     auto itemName = rowTitle(i);
     auto item = renderer.truncatedText(UI_10_FONT_ID, itemName.c_str(), rowTextWidth);
     renderer.drawText(UI_10_FONT_ID, textX, itemY + 7, item.c_str(), !sel);
+    if (rowDimmed && rowDimmed(i) && !sel) {
+      const int titleWidth = renderer.getTextWidth(UI_10_FONT_ID, item.c_str());
+      const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
+      for (int py = itemY + 7; py < itemY + 7 + lineH; py++) {
+        for (int px = textX; px < textX + titleWidth; px++) {
+          if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
+        }
+      }
+    }
 
     if (rowIcon != nullptr) {
       const uint8_t* iconBitmap = iconForName(rowIcon(i), iconSize);

@@ -17,6 +17,7 @@
 
 ### Fixed
 - Keep the RoundedRaff home menu's selection index aligned with its inline Continue Reading row so Settings remains reachable
+- Allow backing out of WiFi scan/connect screens so network selection no longer traps users while a scan or connection attempt is in progress
 - Render missing glyphs as a visible replacement symbol even when compact UI fonts do not include `U+FFFD`
 - Validate KOReader Sync authentication responses and log clearer JSON parse diagnostics when a server or proxy returns non-JSON content
 - Long-press to delete a folder now triggers on delay rather than release

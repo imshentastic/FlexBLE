@@ -74,6 +74,13 @@ KOReaderSyncClient::Error validateAuthResponse(const char* body) {
   return KOReaderSyncClient::OK;
 }
 
+// Cloudflare tunnels send a 3-cert Google Trust Services chain. During the TLS handshake
+// mbedTLS makes many small allocations that collectively consume ~48KB of heap. With only
+// ~50KB free after WiFi connects, the session drove min-free-ever down to 2600 bytes before
+// failing with MBEDTLS_ERR_X509_ALLOC_FAILED (-0x2880). Check total free heap (not max
+// contiguous block) because the failure mode is aggregate exhaustion, not one large alloc.
+constexpr uint32_t MIN_HEAP_FOR_TLS = 55000;
+
 #ifdef SIMULATOR
 void addAuthHeaders(HTTPClient& http) {
   http.addHeader("Accept", "application/vnd.koreader.v1+json");
@@ -175,7 +182,12 @@ KOReaderSyncClient::Error KOReaderSyncClient::authenticate() {
   }
 
   std::string url = KOREADER_STORE.getBaseUrl() + "/users/auth";
-  LOG_DBG("KOSync", "Authenticating: %s (heap: %u)", url.c_str(), (unsigned)ESP.getFreeHeap());
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  LOG_DBG("KOSync", "Authenticating: %s (heap: %u)", url.c_str(), (unsigned)freeHeap);
+  if (freeHeap < MIN_HEAP_FOR_TLS) {
+    LOG_ERR("KOSync", "Insufficient heap for TLS handshake: %u bytes free (need %u)", freeHeap, MIN_HEAP_FOR_TLS);
+    return LOW_MEMORY;
+  }
 
 #ifdef SIMULATOR
   HTTPClient http;
@@ -238,7 +250,12 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
   }
 
   std::string url = KOREADER_STORE.getBaseUrl() + "/syncs/progress/" + documentHash;
-  LOG_DBG("KOSync", "Getting progress: %s (heap: %u)", url.c_str(), (unsigned)ESP.getFreeHeap());
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  LOG_DBG("KOSync", "Getting progress: %s (heap: %u)", url.c_str(), (unsigned)freeHeap);
+  if (freeHeap < MIN_HEAP_FOR_TLS) {
+    LOG_ERR("KOSync", "Insufficient heap for TLS handshake: %u bytes free (need %u)", freeHeap, MIN_HEAP_FOR_TLS);
+    return LOW_MEMORY;
+  }
 
 #ifdef SIMULATOR
   HTTPClient http;
@@ -338,7 +355,12 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
   }
 
   std::string url = KOREADER_STORE.getBaseUrl() + "/syncs/progress";
-  LOG_DBG("KOSync", "Updating progress: %s (heap: %u)", url.c_str(), (unsigned)ESP.getFreeHeap());
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  LOG_DBG("KOSync", "Updating progress: %s (heap: %u)", url.c_str(), (unsigned)freeHeap);
+  if (freeHeap < MIN_HEAP_FOR_TLS) {
+    LOG_ERR("KOSync", "Insufficient heap for TLS handshake: %u bytes free (need %u)", freeHeap, MIN_HEAP_FOR_TLS);
+    return LOW_MEMORY;
+  }
 
   // Build JSON body
   JsonDocument doc;
@@ -426,6 +448,8 @@ const char* KOReaderSyncClient::errorString(Error error) {
       return "No progress found";
     case INVALID_AUTH_RESPONSE:
       return "Invalid auth response";
+    case LOW_MEMORY:
+      return "Not enough memory for sync - please retry";
     default:
       return "Unknown error";
   }
