@@ -485,7 +485,7 @@ void LyraCarouselTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int but
   }
 }
 
-void LyraCarouselTheme::drawButtonMenuSelectionOverlay(GfxRenderer& renderer, int buttonCount, int selectedIndex,
+void LyraCarouselTheme::drawButtonMenuSelectionOverlay(const GfxRenderer& renderer, int buttonCount, int selectedIndex,
                                                        const std::function<std::string(int index)>& buttonLabel,
                                                        const std::function<UIIcon(int index)>& rowIcon) const {
   if (buttonCount <= 0 || selectedIndex < 0 || selectedIndex >= buttonCount) return;
