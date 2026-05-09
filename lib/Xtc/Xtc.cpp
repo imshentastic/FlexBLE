@@ -13,6 +13,21 @@
 
 #include <algorithm>
 
+namespace {
+bool thumbnailHasDimensions(const std::string& path, const uint16_t width, const uint16_t height) {
+  FsFile file;
+  if (!Storage.openFileForRead("XTC", path, file)) {
+    return false;
+  }
+
+  Bitmap bitmap(file);
+  const bool matches =
+      bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() == width && bitmap.getHeight() == height;
+  file.close();
+  return matches;
+}
+}  // namespace
+
 bool Xtc::load() {
   LOG_DBG("XTC", "Loading XTC: %s", filepath.c_str());
 
@@ -296,7 +311,12 @@ bool Xtc::generateThumbBmp(uint16_t width, uint16_t height) const {
     return false;
   }
   const std::string thumbPath = getThumbBmpPath(width, height);
-  if (Storage.exists(thumbPath.c_str())) return true;
+  const bool thumbExists = Storage.exists(thumbPath.c_str());
+  if (thumbExists) {
+    if (thumbnailHasDimensions(thumbPath, width, height)) {
+      return true;
+    }
+  }
 
   if (!loaded || !parser) {
     LOG_ERR("XTC", "Cannot generate thumb BMP, file not loaded");
@@ -314,50 +334,23 @@ bool Xtc::generateThumbBmp(uint16_t width, uint16_t height) const {
     LOG_DBG("XTC", "Failed to get first page info");
     return false;
   }
+  if (pageInfo.width == 0 || pageInfo.height == 0) {
+    LOG_ERR("XTC", "Cannot generate thumb BMP with invalid page dimensions: %ux%u", pageInfo.width, pageInfo.height);
+    return false;
+  }
+  if (thumbExists) {
+    Storage.remove(thumbPath.c_str());
+  }
 
   const uint8_t bitDepth = parser->getBitDepth();
   const uint16_t THUMB_TARGET_WIDTH = width;
   const uint16_t THUMB_TARGET_HEIGHT = height;
 
-  float scaleX = static_cast<float>(THUMB_TARGET_WIDTH) / pageInfo.width;
-  float scaleY = static_cast<float>(THUMB_TARGET_HEIGHT) / pageInfo.height;
-  float scale = std::min(scaleX, scaleY);
-
-  if (scale >= 1.0f) {
-    if (generateCoverBmp()) {
-      FsFile src, dst;
-      if (Storage.openFileForRead("XTC", getCoverBmpPath(), src)) {
-        if (Storage.openFileForWrite("XTC", thumbPath, dst)) {
-          bool copyOk = true;
-          uint8_t buffer[512];
-          while (src.available()) {
-            size_t bytesRead = src.read(buffer, sizeof(buffer));
-            if (bytesRead == 0) {
-              copyOk = false;
-              break;
-            }
-            const size_t bytesWritten = dst.write(buffer, bytesRead);
-            if (bytesWritten != bytesRead) {
-              copyOk = false;
-              break;
-            }
-          }
-          dst.close();
-          if (!copyOk) {
-            src.close();
-            Storage.remove(thumbPath.c_str());
-            return false;
-          }
-        }
-        src.close();
-      }
-      return Storage.exists(thumbPath.c_str());
-    }
-    return false;
-  }
-
-  uint16_t thumbWidth = static_cast<uint16_t>(pageInfo.width * scale);
-  uint16_t thumbHeight = static_cast<uint16_t>(pageInfo.height * scale);
+  const float scaleX = static_cast<float>(THUMB_TARGET_WIDTH) / pageInfo.width;
+  const float scaleY = static_cast<float>(THUMB_TARGET_HEIGHT) / pageInfo.height;
+  const float scale = std::max(scaleX, scaleY);
+  const uint16_t thumbWidth = THUMB_TARGET_WIDTH;
+  const uint16_t thumbHeight = THUMB_TARGET_HEIGHT;
 
   size_t bitmapSize;
   if (bitDepth == 2) {
@@ -397,7 +390,15 @@ bool Xtc::generateThumbBmp(uint16_t width, uint16_t height) const {
     return false;
   }
 
-  uint32_t scaleInv_fp = static_cast<uint32_t>(65536.0f / scale);
+  const uint32_t scaleInv_fp = static_cast<uint32_t>(65536.0f / scale);
+  const uint64_t srcWidth_fp = static_cast<uint64_t>(pageInfo.width) << 16;
+  const uint64_t srcHeight_fp = static_cast<uint64_t>(pageInfo.height) << 16;
+  const uint64_t visibleWidth_fp = static_cast<uint64_t>(thumbWidth) * scaleInv_fp;
+  const uint64_t visibleHeight_fp = static_cast<uint64_t>(thumbHeight) * scaleInv_fp;
+  const uint32_t cropX_fp =
+      static_cast<uint32_t>(srcWidth_fp > visibleWidth_fp ? (srcWidth_fp - visibleWidth_fp) / 2 : 0);
+  const uint32_t cropY_fp =
+      static_cast<uint32_t>(srcHeight_fp > visibleHeight_fp ? (srcHeight_fp - visibleHeight_fp) / 2 : 0);
   const size_t planeSize = (bitDepth == 2) ? ((static_cast<size_t>(pageInfo.width) * pageInfo.height + 7) / 8) : 0;
   const uint8_t* plane1 = (bitDepth == 2) ? pageBuffer : nullptr;
   const uint8_t* plane2 = (bitDepth == 2) ? pageBuffer + planeSize : nullptr;
@@ -406,16 +407,16 @@ bool Xtc::generateThumbBmp(uint16_t width, uint16_t height) const {
 
   for (uint16_t dstY = 0; dstY < thumbHeight; dstY++) {
     memset(rowBuffer, 0xFF, rowSize);
-    uint32_t srcYStart = (static_cast<uint32_t>(dstY) * scaleInv_fp) >> 16;
-    uint32_t srcYEnd = (static_cast<uint32_t>(dstY + 1) * scaleInv_fp) >> 16;
+    uint32_t srcYStart = (cropY_fp + static_cast<uint32_t>(dstY) * scaleInv_fp) >> 16;
+    uint32_t srcYEnd = (cropY_fp + static_cast<uint32_t>(dstY + 1) * scaleInv_fp) >> 16;
     if (srcYStart >= pageInfo.height) srcYStart = pageInfo.height - 1;
     if (srcYEnd > pageInfo.height) srcYEnd = pageInfo.height;
     if (srcYEnd <= srcYStart) srcYEnd = srcYStart + 1;
     if (srcYEnd > pageInfo.height) srcYEnd = pageInfo.height;
 
     for (uint16_t dstX = 0; dstX < thumbWidth; dstX++) {
-      uint32_t srcXStart = (static_cast<uint32_t>(dstX) * scaleInv_fp) >> 16;
-      uint32_t srcXEnd = (static_cast<uint32_t>(dstX + 1) * scaleInv_fp) >> 16;
+      uint32_t srcXStart = (cropX_fp + static_cast<uint32_t>(dstX) * scaleInv_fp) >> 16;
+      uint32_t srcXEnd = (cropX_fp + static_cast<uint32_t>(dstX + 1) * scaleInv_fp) >> 16;
       if (srcXStart >= pageInfo.width) srcXStart = pageInfo.width - 1;
       if (srcXEnd > pageInfo.width) srcXEnd = pageInfo.width;
       if (srcXEnd <= srcXStart) srcXEnd = srcXStart + 1;

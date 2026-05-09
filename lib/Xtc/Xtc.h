@@ -94,11 +94,11 @@ class Xtc {
    */
   bool generateThumbBmp(uint16_t height) const;
   /**
-   * Generates a thumbnail in cache that fits within the requested bounding box.
-   * @param width Target bounding width in pixels.
-   * @param height Target bounding height in pixels.
+   * Generates a thumbnail in cache that fills the requested cover slot, cropping from center when aspect ratios differ.
+   * @param width Target output width in pixels.
+   * @param height Target output height in pixels.
    * @return true when the cached thumbnail exists or was written successfully; false on load/write/decode failure.
-   * @note Preferred overload for exact cache-key control. Existing files are reused.
+   * @note Preferred overload for exact cache-key control. Existing files are reused when dimensions match.
    */
   bool generateThumbBmp(uint16_t width, uint16_t height) const;
 

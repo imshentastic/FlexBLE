@@ -130,6 +130,26 @@ bool hasThumbnailPlaceholder(const std::string& coverBmpPath) {
   return coverBmpPath.find("[WIDTH]") != std::string::npos || coverBmpPath.find("[HEIGHT]") != std::string::npos;
 }
 
+bool needsCoverThumbGeneration(const RecentBook& book, const std::string& thumbPath) {
+  if (thumbPath.empty() || !Storage.exists(thumbPath.c_str())) {
+    return true;
+  }
+  if (!FsHelpers::hasXtcExtension(book.path)) {
+    return false;
+  }
+
+  FsFile file;
+  if (!Storage.openFileForRead("RBGA", thumbPath, file)) {
+    return true;
+  }
+  Bitmap bitmap(file);
+  const bool hasExpectedSize = bitmap.parseHeaders() == BmpReaderError::Ok &&
+                               bitmap.getWidth() == RecentBooksGridActivity::COVER_WIDTH &&
+                               bitmap.getHeight() == RecentBooksGridActivity::COVER_HEIGHT;
+  file.close();
+  return !hasExpectedSize;
+}
+
 void calculateCoverFillCrop(const Bitmap& bitmap, float& cropX, float& cropY) {
   cropX = 0.0f;
   cropY = 0.0f;
@@ -206,7 +226,7 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
       break;
     }
     const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, COVER_WIDTH, COVER_HEIGHT);
-    if (!Storage.exists(thumbPath.c_str())) {
+    if (needsCoverThumbGeneration(book, thumbPath)) {
       needsGeneration = true;
       break;
     }
@@ -225,7 +245,7 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
     RecentBook& book = recentBooks[i].book;
     const std::string coverPath =
         book.coverBmpPath.empty() ? "" : UITheme::getCoverThumbPath(book.coverBmpPath, COVER_WIDTH, COVER_HEIGHT);
-    if (coverPath.empty() || !Storage.exists(coverPath.c_str())) {
+    if (needsCoverThumbGeneration(book, coverPath)) {
       if (FsHelpers::hasEpubExtension(book.path)) {
         Epub epub(book.path, "/.crosspoint");
         if (epub.load(false, true)) {
