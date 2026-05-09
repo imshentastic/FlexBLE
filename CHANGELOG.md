@@ -24,6 +24,7 @@
 - Harden EPUB section and page-cache reads/writes so truncated SD writes, invalid serialized strings, and bad temp-cache promotion fail safely
 - Prevent concurrent render/storage crashes by serializing `GfxRenderer` scratch-buffer access, shared SPI bus access, and failed SPI lock cleanup
 - Make reader prewarm lighter by skipping image decoding, keeping mixed-style font glyphs cached together, and avoiding section rebuilds for render-quality-only option changes
+- Keep the Recent Books grid from saving grid-sized cover thumbnails as reusable cover paths so Lyra Carousel does not render tiny covers
 
 ## [v1.2.9.1] - 2026-05-03
 

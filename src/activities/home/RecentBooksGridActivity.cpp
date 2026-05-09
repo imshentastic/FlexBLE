@@ -125,6 +125,34 @@ void updateRecentBookCoverPath(const RecentBook& book, const std::string& coverB
     LOG_ERR("RBGA", "failed to update recent book metadata: %s", book.path.c_str());
   }
 }
+
+bool hasThumbnailPlaceholder(const std::string& coverBmpPath) {
+  return coverBmpPath.find("[WIDTH]") != std::string::npos || coverBmpPath.find("[HEIGHT]") != std::string::npos;
+}
+
+std::string getReusableCoverPath(const RecentBook& book) {
+  if (FsHelpers::hasEpubExtension(book.path)) {
+    return Epub(book.path, "/.crosspoint").getThumbBmpPath();
+  }
+  if (FsHelpers::hasXtcExtension(book.path)) {
+    return Xtc(book.path, "/.crosspoint").getThumbBmpPath();
+  }
+  return book.coverBmpPath;
+}
+
+void ensureReusableCoverPath(RecentBook& book) {
+  if (book.coverBmpPath.empty() || hasThumbnailPlaceholder(book.coverBmpPath)) {
+    return;
+  }
+
+  const std::string reusablePath = getReusableCoverPath(book);
+  if (reusablePath.empty() || reusablePath == book.coverBmpPath) {
+    return;
+  }
+
+  book.coverBmpPath = reusablePath;
+  updateRecentBookCoverPath(book, reusablePath);
+}
 }  // namespace
 
 void RecentBooksGridActivity::loadRecentBooks() {
@@ -154,11 +182,13 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
 
   bool needsGeneration = false;
   for (int i = pageStart; i < pageEnd; ++i) {
-    if (recentBooks[i].book.coverBmpPath.empty()) {
+    RecentBook& book = recentBooks[i].book;
+    ensureReusableCoverPath(book);
+    if (book.coverBmpPath.empty()) {
       needsGeneration = true;
       break;
     }
-    const std::string thumbPath = UITheme::getCoverThumbPath(recentBooks[i].book.coverBmpPath, COVER_HEIGHT);
+    const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, COVER_HEIGHT);
     if (!Storage.exists(thumbPath.c_str())) {
       needsGeneration = true;
       break;
@@ -188,9 +218,9 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
           }
           GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
           if (epub.generateThumbBmp(0, COVER_HEIGHT)) {
-            const std::string generatedPath = epub.getThumbBmpPath(0, COVER_HEIGHT);
-            book.coverBmpPath = generatedPath;
-            updateRecentBookCoverPath(book, generatedPath);
+            const std::string reusablePath = epub.getThumbBmpPath();
+            book.coverBmpPath = reusablePath;
+            updateRecentBookCoverPath(book, reusablePath);
           } else {
             updateRecentBookCoverPath(book, "");
             book.coverBmpPath = "";
@@ -205,10 +235,9 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
           }
           GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
           if (xtc.generateThumbBmp(COVER_HEIGHT)) {
-            const std::string generatedPath =
-                xtc.getThumbBmpPath(static_cast<uint16_t>(COVER_HEIGHT * 0.6), COVER_HEIGHT);
-            book.coverBmpPath = generatedPath;
-            updateRecentBookCoverPath(book, generatedPath);
+            const std::string reusablePath = xtc.getThumbBmpPath();
+            book.coverBmpPath = reusablePath;
+            updateRecentBookCoverPath(book, reusablePath);
           } else {
             updateRecentBookCoverPath(book, "");
             book.coverBmpPath = "";

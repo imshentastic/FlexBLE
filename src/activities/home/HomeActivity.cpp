@@ -143,6 +143,35 @@ void updateRecentBookCoverPath(const RecentBook& book, const std::string& coverB
   }
 }
 
+bool hasThumbnailPlaceholder(const std::string& coverBmpPath) {
+  return coverBmpPath.find("[WIDTH]") != std::string::npos || coverBmpPath.find("[HEIGHT]") != std::string::npos;
+}
+
+std::string getReusableCoverPath(const RecentBook& book) {
+  if (FsHelpers::hasEpubExtension(book.path)) {
+    return Epub(book.path, "/.crosspoint").getThumbBmpPath();
+  }
+  if (FsHelpers::hasXtcExtension(book.path)) {
+    return Xtc(book.path, "/.crosspoint").getThumbBmpPath();
+  }
+  return book.coverBmpPath;
+}
+
+bool ensureReusableCoverPath(RecentBook& book) {
+  if (book.coverBmpPath.empty() || hasThumbnailPlaceholder(book.coverBmpPath)) {
+    return false;
+  }
+
+  const std::string reusablePath = getReusableCoverPath(book);
+  if (reusablePath.empty() || reusablePath == book.coverBmpPath) {
+    return false;
+  }
+
+  book.coverBmpPath = reusablePath;
+  updateRecentBookCoverPath(book, reusablePath);
+  return true;
+}
+
 std::vector<HomeMenuItem> buildHomeMenuItems(bool hasOpdsServers, bool hasReadingStats, bool hasBookmarks) {
   std::vector<HomeMenuItem> items = {
       {tr(STR_BROWSE_FILES), Folder, HomeMenuAction::BrowseFiles},
@@ -311,16 +340,18 @@ void HomeActivity::loadRecentBooks(int maxBooks) {
   const auto& books = RECENT_BOOKS.getBooks();
   recentBooks.reserve(std::min(static_cast<int>(books.size()), maxBooks));
 
-  for (const RecentBook& book : books) {
+  for (const RecentBook& storedBook : books) {
     // Limit to maximum number of recent books
     if (recentBooks.size() >= maxBooks) {
       break;
     }
 
+    RecentBook book = storedBook;
     if (!Storage.exists(book.path.c_str())) {
       continue;
     }
 
+    ensureReusableCoverPath(book);
     recentBooks.push_back(book);
   }
 }
