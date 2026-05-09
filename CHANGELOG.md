@@ -11,6 +11,9 @@
 - Add long-press action on the "Home/Back" button within the file-browser to toggle hidden files and folders
 - Add a simulator-only `S` key shortcut for testing sleep and wake behavior
 
+### Changed
+- Use the fast EPUB spine/TOC indexing path for books with 300+ spine entries so heavily split books build `book.bin` faster on first open
+
 ### Fixed
 - Render simple black CSS backgrounds behind EPUB inline text, including `nbsp;` redaction bars that previously were removed completely
 - Preserve whitespace-only XHTML text nodes during browser EPUB optimization so redaction spans keep their intended width
