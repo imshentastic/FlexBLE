@@ -10,12 +10,15 @@
 #include <algorithm>
 #include <cstring>
 
+#include "CrossPointSettings.h"
+
 namespace {
 constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
 constexpr size_t HIDDEN_ITEM_COUNT = sizeof(HIDDEN_ITEMS) / sizeof(HIDDEN_ITEMS[0]);
 
-bool isHiddenItem(const char* name) {
-  return std::any_of(HIDDEN_ITEMS, HIDDEN_ITEMS + HIDDEN_ITEM_COUNT,
+bool isProtectedPathSegment(const char* name) {
+  return (!SETTINGS.showHiddenFiles && name[0] == '.') ||
+         std::any_of(HIDDEN_ITEMS, HIDDEN_ITEMS + HIDDEN_ITEM_COUNT,
                      [name](const char* item) { return strcmp(name, item) == 0; });
 }
 
@@ -235,12 +238,7 @@ void WebDAVHandler::handlePropfind(WebServer& s) {
     while (file) {
       file.getName(name, sizeof(name));
 
-      // Skip hidden/protected items
-      const bool shouldHide =
-          (name[0] == '.') || std::any_of(std::begin(HIDDEN_ITEMS), std::end(HIDDEN_ITEMS),
-                                          [name](const auto* item) { return strcmp(name, item) == 0; });
-
-      if (!shouldHide) {
+      if (!isProtectedPathSegment(name)) {
         String childPath = path;
         if (!childPath.endsWith("/")) childPath += "/";
         childPath += name;
@@ -774,12 +772,7 @@ bool WebDAVHandler::isProtectedPath(const String& path) const {
 
     String segment = path.substring(start, end);
 
-    if (segment.startsWith(".")) return true;
-
-    if (std::any_of(std::begin(HIDDEN_ITEMS), std::end(HIDDEN_ITEMS),
-                    [&segment](const auto* item) { return segment.equals(item); })) {
-      return true;
-    }
+    if (isProtectedPathSegment(segment.c_str())) return true;
 
     start = end + 1;
   }

@@ -13,6 +13,7 @@
 
 ### Changed
 - Use the fast EPUB spine/TOC indexing path for books with 300+ spine entries so heavily split books build `book.bin` faster on first open
+- Allow the web file manager and WebDAV to browse dot-prefixed hidden files when hidden files are enabled, matching the device file browser
 
 ### Fixed
 - Render simple black CSS backgrounds for whitespace-only EPUB inline spans, including NBSP redaction bars that previously appeared as only trailing punctuation
