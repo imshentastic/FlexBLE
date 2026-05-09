@@ -18,58 +18,6 @@ namespace {
 constexpr unsigned long GO_HOME_MS = 1000;
 }  // namespace
 
-void sortFileList(std::vector<std::string>& strs) {
-  std::sort(begin(strs), end(strs), [](const std::string& str1, const std::string& str2) {
-    // Directories first
-    bool isDir1 = str1.back() == '/';
-    bool isDir2 = str2.back() == '/';
-    if (isDir1 != isDir2) return isDir1;
-
-    // Start naive natural sort
-    const char* s1 = str1.c_str();
-    const char* s2 = str2.c_str();
-
-    // Iterate while both strings have characters
-    while (*s1 && *s2) {
-      // Check if both are at the start of a number
-      if (isdigit(*s1) && isdigit(*s2)) {
-        // Skip leading zeros and track them
-        const char* start1 = s1;
-        const char* start2 = s2;
-        while (*s1 == '0') s1++;
-        while (*s2 == '0') s2++;
-
-        // Count digits to compare lengths first
-        int len1 = 0, len2 = 0;
-        while (isdigit(s1[len1])) len1++;
-        while (isdigit(s2[len2])) len2++;
-
-        // Different length so return smaller integer value
-        if (len1 != len2) return len1 < len2;
-
-        // Same length so compare digit by digit
-        for (int i = 0; i < len1; i++) {
-          if (s1[i] != s2[i]) return s1[i] < s2[i];
-        }
-
-        // Numbers equal so advance pointers
-        s1 += len1;
-        s2 += len2;
-      } else {
-        // Regular case-insensitive character comparison
-        char c1 = tolower(*s1);
-        char c2 = tolower(*s2);
-        if (c1 != c2) return c1 < c2;
-        s1++;
-        s2++;
-      }
-    }
-
-    // One string is prefix of other
-    return *s1 == '\0' && *s2 != '\0';
-  });
-}
-
 void FileBrowserActivity::loadFiles() {
   files.clear();
 
@@ -103,7 +51,8 @@ void FileBrowserActivity::loadFiles() {
       }
     }
   }
-  sortFileList(files);
+  root.close();
+  FsHelpers::sortFileList(files);
 }
 
 void FileBrowserActivity::onEnter() {
@@ -190,17 +139,20 @@ void FileBrowserActivity::loop() {
       return;
     }
 
-    if (mode == Mode::Books && mappedInput.getHeldTime() >= GO_HOME_MS && !isDirectory) {
-      // --- LONG PRESS ACTION: DELETE FILE ---
+    if (mode == Mode::Books && mappedInput.getHeldTime() >= GO_HOME_MS) {
+      // --- LONG PRESS ACTION: DELETE FILE OR DIRECTORY ---
       std::string cleanBasePath = basepath;
       if (cleanBasePath.back() != '/') cleanBasePath += "/";
       const std::string fullPath = cleanBasePath + entry;
 
-      auto handler = [this, fullPath](const ActivityResult& res) {
+      auto handler = [this, fullPath, isDirectory](const ActivityResult& res) {
         if (!res.isCancelled) {
           LOG_DBG("FileBrowser", "Attempting to delete: %s", fullPath.c_str());
-          clearFileMetadata(fullPath);
-          if (Storage.remove(fullPath.c_str())) {
+          if (!isDirectory) {
+            clearFileMetadata(fullPath);
+          }
+          const bool deleted = isDirectory ? Storage.removeDir(fullPath.c_str()) : Storage.remove(fullPath.c_str());
+          if (deleted) {
             LOG_DBG("FileBrowser", "Deleted successfully");
             loadFiles();
             if (files.empty()) {
@@ -212,7 +164,7 @@ void FileBrowserActivity::loop() {
 
             requestUpdate(true);
           } else {
-            LOG_ERR("FileBrowser", "Failed to delete file: %s", fullPath.c_str());
+            LOG_ERR("FileBrowser", "Failed to delete: %s", fullPath.c_str());
           }
         } else {
           LOG_DBG("FileBrowser", "Delete cancelled by user");
