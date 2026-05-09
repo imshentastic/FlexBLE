@@ -46,10 +46,16 @@ void drawScrollBar(const GfxRenderer& renderer, Rect rect, int itemCount, int pa
 
 std::string sanitizeButtonLabel(std::string label) {
   // Remove common directional prefixes/symbols (e.g. "<< Home", unsupported icon glyphs).
-  while (!label.empty() && !std::isalnum(static_cast<unsigned char>(label[0]))) {
-    label.erase(0, 1);
+  while (!label.empty()) {
+    const auto leadingByte = static_cast<unsigned char>(label[0]);
+    if (label.rfind("\xC2\xAB", 0) == 0 || label.rfind("\xC2\xBB", 0) == 0) {
+      label.erase(0, 2);
+    } else if (leadingByte < 0x80 && !std::isalnum(leadingByte)) {
+      label.erase(0, 1);
+    } else {
+      break;
+    }
   }
-  // Trim any extra left spaces.
   while (!label.empty() && label[0] == ' ') {
     label.erase(0, 1);
   }
