@@ -293,10 +293,10 @@ bool CrossPointSettings::loadFromBinaryFile() {
     if (++settingsRead >= fileSettingsCount) break;
     {
       // Older builds wrote uiTheme via raw readPod, so any byte (including
-      // values that were briefly assigned to themes that no longer exist) may
-      // be on disk. Map anything outside the current enum to LYRA so the
-      // migration is deterministic instead of leaning on readAndValidate's
-      // no-op-on-invalid behaviour.
+      // values that were briefly assigned to themes that are not currently
+      // exposed) may be on disk. Map anything outside the active theme count
+      // to LYRA so the migration is deterministic instead of leaning on
+      // readAndValidate's no-op-on-invalid behaviour.
       uint8_t rawTheme = LYRA;
       serialization::readPod(inputFile, rawTheme);
       uiTheme = (rawTheme < UI_THEME_COUNT) ? rawTheme : static_cast<uint8_t>(LYRA);

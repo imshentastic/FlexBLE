@@ -12,6 +12,7 @@
 - Added simulator tools for testing sleep/wake behavior and smoke-testing common screens and EPUB reader menus.
 
 ### Changed
+- Temporarily hid the Lyra Carousel theme option unless `CROSSINK_ENABLE_LYRA_CAROUSEL=1` is set at build time, and migrated existing disabled selections back to Lyra while the carousel remains experimental.
 - Use the fast EPUB spine/TOC indexing path for books with 300+ spine entries so heavily split books build `book.bin` faster on first open.
 - Allow the web file manager and WebDAV to browse dot-prefixed hidden files when hidden files are enabled, matching the device file browser.
 
