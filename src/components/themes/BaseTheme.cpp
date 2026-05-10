@@ -289,8 +289,7 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
     }
   }
 
-  // Draw all items using a running Y to accommodate variable-height section headers
-  int currentY = rect.y;
+  // Draw all visible page items
   for (int i = pageStartIndex; i < itemCount && i < pageStartIndex + pageItems; i++) {
     const int itemY = rect.y + (i % pageItems) * rowHeight;
 
