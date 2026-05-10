@@ -16,6 +16,7 @@
 - Allow the web file manager and WebDAV to browse dot-prefixed hidden files when hidden files are enabled, matching the device file browser
 
 ### Fixed
+- Fix a crash when opening Reader Options from the simulator
 - Keep the RoundedRaff home menu's selection index aligned with its inline Continue Reading row so Settings remains reachable
 - Keep RoundedRaff button-hint labels visible for UTF-8 locales such as Russian
 - Allow backing out of WiFi scan/connect screens so network selection no longer traps users while a scan or connection attempt is in progress

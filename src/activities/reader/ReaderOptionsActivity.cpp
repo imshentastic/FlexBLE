@@ -16,7 +16,9 @@ void ReaderOptionsActivity::onEnter() {
   Activity::onEnter();
 
   settings.clear();
-  std::copy_if(getSettingsList().begin(), getSettingsList().end(), std::back_inserter(settings),
+  const auto allSettings = getSettingsList();
+  settings.reserve(allSettings.size());
+  std::copy_if(allSettings.begin(), allSettings.end(), std::back_inserter(settings),
                [](const auto& s) { return s.category == StrId::STR_CAT_READER && s.type != SettingType::ACTION; });
   settingsCount = static_cast<int>(settings.size());
   selectedIndex = 0;
