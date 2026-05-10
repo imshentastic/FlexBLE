@@ -46,6 +46,8 @@ constexpr uint16_t DEFAULT_AUTO_PAGE_TURN_INTERVAL_S = 30;
 constexpr uint16_t MIN_AUTO_PAGE_TURN_INTERVAL_S = 5;
 constexpr uint16_t MAX_AUTO_PAGE_TURN_INTERVAL_S = 120;
 constexpr int MAX_PAGE_LOAD_RETRIES = 3;
+constexpr uint32_t MIN_FREE_HEAP_FOR_OPTIONAL_EPUB_REBUILD = 96U * 1024U;
+constexpr uint32_t MIN_MAX_ALLOC_FOR_OPTIONAL_EPUB_REBUILD = 48U * 1024U;
 
 int clampPercent(int percent) {
   if (percent < 0) {
@@ -59,6 +61,19 @@ int clampPercent(int percent) {
 
 uint16_t clampAutoPageTurnIntervalSeconds(const uint16_t seconds) {
   return std::clamp(seconds, MIN_AUTO_PAGE_TURN_INTERVAL_S, MAX_AUTO_PAGE_TURN_INTERVAL_S);
+}
+
+bool hasHeapForOptionalEpubRebuild(const char* tag, const char* action, const int spineIndex) {
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
+  if (freeHeap >= MIN_FREE_HEAP_FOR_OPTIONAL_EPUB_REBUILD && maxAllocHeap >= MIN_MAX_ALLOC_FOR_OPTIONAL_EPUB_REBUILD) {
+    return true;
+  }
+
+  LOG_DBG(tag, "Skipping %s for spine %d: low heap (free=%u, maxAlloc=%u, need free>=%u maxAlloc>=%u)", action,
+          spineIndex, freeHeap, maxAllocHeap, MIN_FREE_HEAP_FOR_OPTIONAL_EPUB_REBUILD,
+          MIN_MAX_ALLOC_FOR_OPTIONAL_EPUB_REBUILD);
+  return false;
 }
 
 }  // namespace
@@ -1447,6 +1462,10 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
     return;
   }
 
+  if (!hasHeapForOptionalEpubRebuild("ERS", "silent next-chapter indexing", nextSpineIndex)) {
+    return;
+  }
+
   LOG_DBG("ERS", "Silently indexing next chapter: %d (free=%u, maxAlloc=%u)", nextSpineIndex, ESP.getFreeHeap(),
           ESP.getMaxAllocHeap());
   if (!nextSection.createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
@@ -1815,6 +1834,10 @@ bool EpubReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gf
                                 SETTINGS.paragraphAlignment, viewportWidth, viewportHeight, SETTINGS.hyphenationEnabled,
                                 SETTINGS.embeddedStyle, SETTINGS.imageRendering, SETTINGS.bionicReadingEnabled,
                                 SETTINGS.guideReadingEnabled)) {
+    if (!hasHeapForOptionalEpubRebuild("SLP", "EPUB sleep-page cache rebuild", spineIndex)) {
+      return false;
+    }
+
     LOG_DBG("SLP", "EPUB: section cache not found for spine %d, rebuilding (free=%u, maxAlloc=%u)", spineIndex,
             ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     if (!section->createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
