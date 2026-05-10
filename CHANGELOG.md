@@ -34,6 +34,7 @@
 - Make XTC covers fill the Recent Books grid cover slots instead of appearing letterboxed when the first page has a different aspect ratio
 - Keep the Recent Books grid from saving grid-sized cover thumbnails as reusable cover paths so Lyra Carousel does not render tiny covers
 - Avoid building the Lyra Carousel SD snapshot when RAM has already fallen back to a reduced frame cache
+- Fix simulator build configuration so SDL2 and simulator-provided network/OTA shims compile cleanly
 
 ## [v1.2.9.1] - 2026-05-03
 
