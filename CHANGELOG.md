@@ -6,6 +6,7 @@
 - Added the Lyra Carousel home theme.
 - Added a `Recent Books View` setting so the dedicated Recent Books screen can switch between the classic list and a 3x3 cover grid.
 - Added EPUB `<hr>` rendering so horizontal rules display as visible separators instead of being ignored.
+- Added EPUB heap diagnostics around section rebuilds, image extraction, page serialization, and sleep-cache rebuilds to make low-memory crashes easier to trace.
 - Added a per-session auto page turn interval picker with values from 5 to 120 seconds.
 - Added reader font coverage for block redactions, black-square ornaments, Greek category letters, and turned-comma punctuation (PR #104).
 - Added a file-browser Home/Back long-press action for toggling hidden files and folders.

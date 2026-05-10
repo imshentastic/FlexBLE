@@ -753,6 +753,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         {
           const uint32_t freeHeap = ESP.getFreeHeap();
           const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
+          LOG_DBG("EHP", "Heap before image extraction: free=%u maxAlloc=%u src=%s", freeHeap, maxAllocHeap,
+                  src.c_str());
           if (!self->lowMemoryImageFallback &&
               (freeHeap < MIN_FREE_HEAP_FOR_IMAGE_EXTRACT || maxAllocHeap < MIN_MAX_ALLOC_FOR_IMAGE_EXTRACT)) {
             self->lowMemoryImageFallback = true;
@@ -789,6 +791,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
               }
 
               if (extractSuccess) {
+                LOG_DBG("EHP", "Heap after image extraction: free=%u maxAlloc=%u path=%s", ESP.getFreeHeap(),
+                        ESP.getMaxAllocHeap(), cachedImagePath.c_str());
                 // Get image dimensions
                 ImageDimensions dims = {0, 0};
                 ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(cachedImagePath);
@@ -1759,7 +1763,8 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
       return false;
     }
   } while (!done);
-  LOG_DBG("EHP", "Time to parse and build pages: %lu ms", millis() - chapterStartTime);
+  LOG_DBG("EHP", "Time to parse and build pages: %lu ms (free=%u, maxAlloc=%u)", millis() - chapterStartTime,
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   destroyXmlParser(parser);
   file.close();

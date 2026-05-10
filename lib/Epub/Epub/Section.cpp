@@ -1,5 +1,6 @@
 #include "Section.h"
 
+#include <Arduino.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <Serialization.h>
@@ -36,7 +37,8 @@ uint32_t Section::onPageComplete(std::unique_ptr<Page> page) {
     LOG_ERR("SCT", "Failed to serialize page %d", pageCount);
     return 0;
   }
-  LOG_DBG("SCT", "Page %d processed", pageCount);
+  LOG_DBG("SCT", "Page %d processed (pos=%lu, free=%u, maxAlloc=%u)", pageCount, static_cast<unsigned long>(position),
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   pageCount++;
   return position;
@@ -196,6 +198,9 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
   const auto localPath = epub->getSpineItem(spineIndex).href;
   const auto tmpHtmlPath = epub->getCachePath() + "/.tmp_" + std::to_string(spineIndex) + ".html";
   const auto tmpSectionPath = filePath + ".tmp";
+  LOG_DBG("SCT", "Create section start: spine=%d viewport=%ux%u image=%u bionic=%u guide=%u free=%u maxAlloc=%u",
+          spineIndex, viewportWidth, viewportHeight, imageRendering, bionicReadingEnabled, guideReadingEnabled,
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   // Create cache directory if it doesn't exist
   {
@@ -238,7 +243,8 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
     return false;
   }
 
-  LOG_DBG("SCT", "Streamed temp HTML to %s (%d bytes)", tmpHtmlPath.c_str(), fileSize);
+  LOG_DBG("SCT", "Streamed temp HTML to %s (%d bytes, free=%u, maxAlloc=%u)", tmpHtmlPath.c_str(), fileSize,
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   if (Storage.exists(tmpSectionPath.c_str())) {
     Storage.remove(tmpSectionPath.c_str());
@@ -280,7 +286,10 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
       },
       embeddedStyle, contentBase, imageBasePath, imageRendering, popupFn, cssParser);
   Hyphenator::setPreferredLanguage(epub->getLanguage());
+  LOG_DBG("SCT", "Parser start: spine=%d free=%u maxAlloc=%u", spineIndex, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   success = visitor.parseAndBuildPages();
+  LOG_DBG("SCT", "Parser done: spine=%d success=%u pages=%u free=%u maxAlloc=%u", spineIndex, success, pageCount,
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   if (imagesWereSuppressed) *imagesWereSuppressed = visitor.wasLowMemoryFallbackTriggered();
 
@@ -386,6 +395,8 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
   if (cssParser) {
     cssParser->clear();
   }
+  LOG_DBG("SCT", "Create section done: spine=%d pages=%u free=%u maxAlloc=%u", spineIndex, pageCount, ESP.getFreeHeap(),
+          ESP.getMaxAllocHeap());
   return true;
 }
 
