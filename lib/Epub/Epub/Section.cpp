@@ -198,6 +198,7 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
   const auto localPath = epub->getSpineItem(spineIndex).href;
   const auto tmpHtmlPath = epub->getCachePath() + "/.tmp_" + std::to_string(spineIndex) + ".html";
   const auto tmpSectionPath = filePath + ".tmp";
+  pageCount = 0;
   LOG_DBG("SCT", "Create section start: spine=%d viewport=%ux%u image=%u bionic=%u guide=%u free=%u maxAlloc=%u",
           spineIndex, viewportWidth, viewportHeight, imageRendering, bionicReadingEnabled, guideReadingEnabled,
           ESP.getFreeHeap(), ESP.getMaxAllocHeap());
