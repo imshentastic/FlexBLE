@@ -19,6 +19,7 @@
 ### Fixed
 - Fix a crash when opening Reader Options from the simulator
 - Keep the RoundedRaff home menu's selection index aligned with its inline Continue Reading row so Settings remains reachable
+- Give RoundedRaff keyboard keys more vertical space so number-row symbols no longer overlap their primary labels
 - Keep RoundedRaff button-hint labels visible for UTF-8 locales such as Russian
 - Allow backing out of WiFi scan/connect screens so network selection no longer traps users while a scan or connection attempt is in progress
 - Render missing glyphs as a visible replacement symbol even when compact UI fonts do not include `U+FFFD`

@@ -281,9 +281,10 @@ void RoundedRaffTheme::drawTextField(const GfxRenderer& renderer, Rect rect, con
 void RoundedRaffTheme::drawKeyboardKey(const GfxRenderer& renderer, Rect rect, const char* label, const bool isSelected,
                                        const char* secondaryLabel, const KeyboardKeyType keyType,
                                        const bool inactiveSelection) const {
-  constexpr int keyRadius = 10;
+  constexpr int keyRadius = 6;
   const bool disabled = keyType == KeyboardKeyType::Disabled;
   const bool invert = isSelected && !inactiveSelection;
+  const bool hasSecondary = secondaryLabel != nullptr && secondaryLabel[0] != '\0';
 
   if (isSelected) {
     const Color fillColor = (inactiveSelection || disabled) ? Color::LightGray : Color::Black;
@@ -319,15 +320,18 @@ void RoundedRaffTheme::drawKeyboardKey(const GfxRenderer& renderer, Rect rect, c
   }
 
   if (label != nullptr && label[0] != '\0') {
-    const int itemWidth = renderer.getTextWidth(UI_12_FONT_ID, label);
-    const int textX = rect.x + (rect.width - itemWidth) / 2;
-    const int textY = rect.y + (rect.height - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
-    renderer.drawText(UI_12_FONT_ID, textX, textY, label, !invert);
+    const int primaryFontId = hasSecondary ? UI_10_FONT_ID : UI_12_FONT_ID;
+    const int itemWidth = renderer.getTextWidth(primaryFontId, label);
+    const int centeredTextX = rect.x + (rect.width - itemWidth) / 2;
+    const int textX = hasSecondary ? std::max(rect.x + 4, centeredTextX - 6) : centeredTextX;
+    const int lineHeight = renderer.getLineHeight(primaryFontId);
+    const int textY = hasSecondary ? rect.y + rect.height - lineHeight - 2 : rect.y + (rect.height - lineHeight) / 2;
+    renderer.drawText(primaryFontId, textX, textY, label, !invert);
   }
 
-  if (secondaryLabel != nullptr && secondaryLabel[0] != '\0') {
+  if (hasSecondary) {
     const int secWidth = renderer.getTextWidth(SMALL_FONT_ID, secondaryLabel);
-    renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - secWidth - 3, rect.y + 1, secondaryLabel, !invert);
+    renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - secWidth - 3, rect.y + 2, secondaryLabel, !invert);
   }
 }
 
