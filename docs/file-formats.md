@@ -7,7 +7,9 @@ nav_order: 8
 
 ## `book.bin`
 
-### Version 3
+### Version 6
+
+Adds a Crossink-owned cache magic before the version byte so `book.bin` files written by upstream CrossPoint or other forks are rejected and rebuilt instead of being parsed as compatible Crossink metadata caches.
 
 ImHex Pattern:
 
@@ -17,7 +19,8 @@ import std.string;
 import std.core;
 
 // === Configuration ===
-#define EXPECTED_VERSION 3
+#define EXPECTED_MAGIC 0x425843FF
+#define EXPECTED_VERSION 6
 #define MAX_STRING_LENGTH 65535
 
 // === String Structure ===
@@ -39,6 +42,7 @@ fn format_string(String s) {
 struct Metadata {
     String title [[comment("Book title")]];
     String author [[comment("Book author")]];
+    String language [[comment("Book language")]];
     String coverItemHref [[comment("Path to cover image")]];
     String textReferenceHref [[comment("Path to guided first text reference")]];
 } [[comment("Book metadata information")]];
@@ -65,6 +69,11 @@ struct TocEntry {
 
 struct BookBin {
     // Header
+    u32 magic [[comment("Crossink cache magic: 0xFF CXB"), color("B8F7D4")]];
+    if (magic != EXPECTED_MAGIC) {
+        std::error(std::format("Unsupported cache magic: 0x{:08X} (expected 0x{:08X})", magic, EXPECTED_MAGIC));
+    }
+
     u8 version [[comment("Format version"), color("FFD93D")]];
     
     // Version validation
@@ -108,6 +117,10 @@ if (parsedSize != fileSize) {
 ```
 
 ## `section.bin`
+
+### Version 34
+
+Adds a Crossink-owned cache magic before the version byte so `sections/*.bin` files written by upstream CrossPoint or other forks are rejected and rebuilt instead of being parsed as compatible Crossink section caches.
 
 ### Version 33
 
@@ -161,7 +174,8 @@ import std.string;
 import std.core;
 
 // === Configuration ===
-#define EXPECTED_VERSION 33
+#define EXPECTED_MAGIC 0x535843FF
+#define EXPECTED_VERSION 34
 #define MAX_STRING_LENGTH 65535
 #define MAX_WORD_STRING_LENGTH 4096
 #define FOOTNOTE_NUMBER_LEN 32
@@ -326,6 +340,11 @@ struct AnchorEntry {
 
 struct SectionBin {
     // Header
+    u32 magic [[comment("Crossink cache magic: 0xFF CXS"), color("B8F7D4")]];
+    if (magic != EXPECTED_MAGIC) {
+        std::error(std::format("Unsupported cache magic: 0x{:08X} (expected 0x{:08X})", magic, EXPECTED_MAGIC));
+    }
+
     u8 version [[comment("Format version"), color("FFD93D")]];
     
     // Version validation
@@ -350,6 +369,7 @@ struct SectionBin {
     u32 lutOffset;
     u32 anchorMapOffset;
     u32 paragraphLutOffset;
+    u32 liLutOffset;
 
     Page pages[pageCount] [[inline]];
     
@@ -377,6 +397,13 @@ struct SectionBin {
     }
     u16 paragraphCount;
     u16 paragraphIndices[paragraphCount];
+
+    // List-item index -> page lookup
+    u32 liOffsetCheck = $;
+    if (liOffsetCheck != liLutOffset) {
+        std::warning(std::format("List-item LUT offset mismatch: expected 0x{:X}, got 0x{:X}", liLutOffset, liOffsetCheck));
+    }
+    u16 listItemIndices[paragraphCount];
 };
 
 // === File Parsing ===
@@ -391,3 +418,9 @@ if (parsedSize != fileSize) {
     std::warning(std::format("Unparsed data detected: {} bytes remaining at offset 0x{:X}", fileSize - parsedSize, parsedSize));
 }
 ```
+
+## `css_rules.cache`
+
+### Version 8
+
+Adds a Crossink-owned cache magic before the version byte so cached EPUB CSS rules written by upstream CrossPoint or other forks are rejected and rebuilt before section caches are regenerated.

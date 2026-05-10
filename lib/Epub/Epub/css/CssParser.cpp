@@ -894,7 +894,7 @@ CssStyle CssParser::parseInlineStyle(const std::string& styleValue) { return par
 
 // Cache serialization
 
-// Cache file name (version is CssParser::CSS_CACHE_VERSION)
+// Cache file name (magic + version identify Crossink-owned CSS rule caches)
 constexpr char rulesCache[] = "/css_rules.cache";
 
 bool CssParser::hasCache() const { return Storage.exists((cachePath + rulesCache).c_str()); }
@@ -913,7 +913,9 @@ bool CssParser::saveToCache() const {
     return false;
   }
 
-  // Write version
+  // Write header
+  const uint32_t magic = CssParser::CSS_CACHE_MAGIC;
+  file.write(reinterpret_cast<const uint8_t*>(&magic), sizeof(magic));
   file.write(CssParser::CSS_CACHE_VERSION);
 
   // Write rule count
@@ -1010,7 +1012,15 @@ bool CssParser::loadFromCache() {
   // Clear existing rules
   clear();
 
-  // Read and verify version
+  // Read and verify header
+  uint32_t magic = 0;
+  if (file.read(&magic, sizeof(magic)) != sizeof(magic) || magic != CssParser::CSS_CACHE_MAGIC) {
+    LOG_DBG("CSS", "Cache magic mismatch, removing stale cache for rebuild");
+    file.close();
+    Storage.remove((cachePath + rulesCache).c_str());
+    return false;
+  }
+
   uint8_t version = 0;
   if (file.read(&version, 1) != 1 || version != CssParser::CSS_CACHE_VERSION) {
     LOG_DBG("CSS", "Cache version mismatch (got %u, expected %u), removing stale cache for rebuild", version,
