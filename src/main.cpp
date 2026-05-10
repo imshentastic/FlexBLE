@@ -28,6 +28,7 @@
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/boot_sleep/SleepActivity.h"
 #include "activities/reader/KOReaderSyncActivity.h"
 #include "activities/settings/KOReaderSettingsActivity.h"
 #include "components/UITheme.h"
@@ -389,6 +390,108 @@ bool handleGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action
 
 namespace {
 constexpr uint16_t POST_SLEEP_SCREEN_SETTLE_MS = 500;
+// In cycle mode, a press shorter than this is a tap (cycle); longer is a wake.
+// Set equal to the wake-duration threshold so there is no dead zone between
+// "tap" and "wake" — anything below cycles, anything above wakes.
+constexpr unsigned long SCREENSAVER_TAP_MAX_MS = CrossPointSettings::POWER_BUTTON_LONG_PRESS_MS;
+}
+
+// Returns true if the wake-up press was a brief tap (released before SCREENSAVER_TAP_MAX_MS).
+// Returns false if the button is still held past the tap window — in that case the caller
+// should fall through to the existing wake-verification flow.
+//
+// We read GPIO directly rather than going through InputManager because its debounce can take
+// ~500ms to register a press; any tap shorter than that would be invisible. The deep-sleep
+// wake itself already proved the button went LOW, so we only need to determine "still held?"
+// vs "already released?" right now.
+bool detectScreensaverCycleTap() {
+  const unsigned long start = millis();
+  while (digitalRead(InputManager::POWER_BUTTON_PIN) == LOW && (millis() - start) < SCREENSAVER_TAP_MAX_MS) {
+    delay(5);
+  }
+  const bool released = digitalRead(InputManager::POWER_BUTTON_PIN) == HIGH;
+  LOG_INF("MAIN", "Cycle tap detect: %s (took %lu ms)", released ? "TAP" : "HELD", millis() - start);
+  return released;
+}
+
+// Wait POST_SLEEP_SCREEN_SETTLE_MS for the e-ink panel to finish settling. While waiting,
+// also poll the power-button GPIO so taps that land during this awake window cycle the
+// screensaver instead of being lost (the chip has not entered deep sleep yet, so InputManager
+// is dormant and GPIO wake is not armed). Returns true if a tap was observed; false on timeout.
+bool pollForCycleTapDuringSleepEntry() {
+  const auto start = millis();
+  while (millis() - start < POST_SLEEP_SCREEN_SETTLE_MS) {
+    if (digitalRead(InputManager::POWER_BUTTON_PIN) == LOW) {
+      const auto pressStart = millis();
+      while (digitalRead(InputManager::POWER_BUTTON_PIN) == LOW &&
+             (millis() - pressStart) < SCREENSAVER_TAP_MAX_MS) {
+        delay(5);
+      }
+      // Released within tap window = tap. Held past it = let the user wake (we will exit
+      // to deep sleep with the button still LOW; GPIO wake will fire immediately on arm).
+      return digitalRead(InputManager::POWER_BUTTON_PIN) == HIGH;
+    }
+    delay(10);
+  }
+  return false;
+}
+
+// Set by an ISR while a sleep-screen render is in progress. Lets us detect taps that land
+// during the (uninterruptible) e-ink refresh + greyscale pass — the chip is awake the whole
+// time, but no main-loop polling runs, so a flag-on-falling-edge ISR is the only way to
+// notice them. Volatile because shared with the ISR; only set/cleared with interrupts off.
+volatile bool sleepEntryTapPending = false;
+
+void IRAM_ATTR onSleepEntryPowerEdge() { sleepEntryTapPending = true; }
+
+void armSleepEntryTapIsr() {
+  sleepEntryTapPending = false;
+  attachInterrupt(InputManager::POWER_BUTTON_PIN, onSleepEntryPowerEdge, FALLING);
+}
+
+void disarmSleepEntryTapIsr() {
+  detachInterrupt(InputManager::POWER_BUTTON_PIN);
+  sleepEntryTapPending = false;
+}
+
+// Returns true if the ISR captured a press whose release has already happened
+// (button currently HIGH) — that is, a complete tap during the render. If the button
+// is still LOW, the press is unresolved (user might be tapping or holding); leave the
+// flag set and let the poll-for-release path decide.
+bool consumeCompletedSleepEntryTap() {
+  if (!sleepEntryTapPending) return false;
+  if (digitalRead(InputManager::POWER_BUTTON_PIN) != HIGH) return false;
+  sleepEntryTapPending = false;
+  return true;
+}
+
+[[noreturn]] void cycleScreensaverThenDeepSleep() {
+  APP_STATE.loadFromFile();
+
+  // Display + renderer init only — fonts are not needed because the cycle path
+  // only ever draws a BMP via SleepActivity::cycleScreensaverFromDeepSleep().
+  display.begin();
+  renderer.begin();
+
+  armSleepEntryTapIsr();
+  while (true) {
+    SleepActivity::cycleScreensaverFromDeepSleep(renderer);
+    if (consumeCompletedSleepEntryTap()) continue;
+    if (pollForCycleTapDuringSleepEntry()) continue;
+    break;
+  }
+  disarmSleepEntryTapIsr();
+
+  halTiltSensor.deepSleep();
+  display.deepSleep();
+  LOG_DBG("MAIN", "Screensaver cycled — re-entering deep sleep");
+  powerManager.startDeepSleep(gpio);
+
+  // startDeepSleep does not return on hardware. The simulator stubs it as a
+  // no-op; spin so [[noreturn]] holds and the simulator does not fall through.
+  while (true) {
+    delay(1000);
+  }
 }
 
 // Enter deep sleep mode
@@ -397,8 +500,25 @@ void enterDeepSleep() {
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
   APP_STATE.saveToFile();
 
-  activityManager.goToSleep();
-  delay(POST_SLEEP_SCREEN_SETTLE_MS);
+  if (SETTINGS.cycleScreensaverOnTap) {
+    armSleepEntryTapIsr();
+    activityManager.goToSleep();
+    while (true) {
+      if (consumeCompletedSleepEntryTap()) {
+        SleepActivity::cycleScreensaverFromDeepSleep(renderer);
+        continue;
+      }
+      if (pollForCycleTapDuringSleepEntry()) {
+        SleepActivity::cycleScreensaverFromDeepSleep(renderer);
+        continue;
+      }
+      break;
+    }
+    disarmSleepEntryTapIsr();
+  } else {
+    activityManager.goToSleep();
+    delay(POST_SLEEP_SCREEN_SETTLE_MS);
+  }
 
   halTiltSensor.deepSleep();
   display.deepSleep();
@@ -520,9 +640,18 @@ void setup() {
   const auto wakeupReason = gpio.getWakeupReason();
   switch (wakeupReason) {
     case HalGPIO::WakeupReason::PowerButton:
-      LOG_DBG("MAIN", "Verifying power button press duration");
-      gpio.verifyPowerButtonWakeup(SETTINGS.getPowerButtonWakeDuration(),
-                                   SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
+      if (SETTINGS.cycleScreensaverOnTap) {
+        if (detectScreensaverCycleTap()) {
+          cycleScreensaverThenDeepSleep();
+        }
+        // Held past the tap window — proceed to wake. Our raw-GPIO detect already
+        // confirmed the hold duration, so skip the InputManager-based verify which
+        // would otherwise miss presses that release just after its debounce wakes up.
+      } else {
+        LOG_DBG("MAIN", "Verifying power button press duration");
+        gpio.verifyPowerButtonWakeup(SETTINGS.getPowerButtonWakeDuration(),
+                                     SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
+      }
       break;
     case HalGPIO::WakeupReason::AfterUSBPower:
       // If USB power caused a cold boot, go back to sleep
