@@ -25,6 +25,7 @@ class TextBlock final : public Block {
   std::vector<uint16_t> wordBionicSuffixX;
   // Pre-computed pixel offset from word start to the guide dot that follows it. 0 = no dot.
   // Eliminates the guide dot as a separate TextBlock entry, saving ~12 bytes per inter-word gap.
+  // Empty when no word in the block has a guide dot.
   std::vector<uint16_t> wordGuideDotXOffset;
   // 1 when a simple black CSS background should be painted behind this word/token.
   std::vector<uint8_t> wordBackgroundBlack;

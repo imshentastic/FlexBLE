@@ -770,9 +770,15 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   }
 
   bool lineHasBionicSplit = false;
+  bool lineHasGuideDot = false;
   for (size_t i = 0; i < lineWordCount; i++) {
     if (wordIsBionicSuffix[lastBreakAt + i]) {
       lineHasBionicSplit = true;
+    }
+    if (wordIsGuideDot[lastBreakAt + i]) {
+      lineHasGuideDot = true;
+    }
+    if (lineHasBionicSplit && lineHasGuideDot) {
       break;
     }
   }
@@ -780,7 +786,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   // Merge bionic suffix tokens and guide dot tokens back into their preceding word entry so each
   // original word occupies one TextBlock slot. Both splits are recorded as per-word annotations
   // applied at render time, cutting the token count significantly when either feature is active.
-  // Bionic boundary/suffix vectors stay empty when this line has no bionic split.
+  // Bionic boundary/suffix and guide-dot vectors stay empty when this line has none.
   std::vector<std::string> outWords;
   std::vector<int16_t> outXPos;
   std::vector<EpdFontFamily::Style> outStyles;
@@ -795,7 +801,9 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     outBoundaries.reserve(lineWordCount);
     outSuffixX.reserve(lineWordCount);
   }
-  outGuideDotXOffset.reserve(lineWordCount);
+  if (lineHasGuideDot) {
+    outGuideDotXOffset.reserve(lineWordCount);
+  }
   outBackgroundBlack.reserve(lineWordCount);
 
   for (size_t i = 0; i < lineWordCount; i++) {
@@ -805,7 +813,9 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     } else if (wordIsGuideDot[lastBreakAt + i] && !outWords.empty()) {
       // Guide dot: annotate the preceding word entry with the dot's pixel offset.
       // Offset is relative to that word's x so render can place it without extra data.
-      outGuideDotXOffset.back() = static_cast<uint16_t>(lineXPos[i] - outXPos.back());
+      if (lineHasGuideDot) {
+        outGuideDotXOffset.back() = static_cast<uint16_t>(lineXPos[i] - outXPos.back());
+      }
     } else {
       // Normal word: check for a following bionic suffix to record the byte boundary.
       uint8_t boundary = 0;
@@ -827,7 +837,9 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
         outBoundaries.push_back(boundary);
         outSuffixX.push_back(suffixX);
       }
-      outGuideDotXOffset.push_back(0);  // filled in later if a guide dot follows
+      if (lineHasGuideDot) {
+        outGuideDotXOffset.push_back(0);  // filled in later if a guide dot follows
+      }
       outBackgroundBlack.push_back(lineWordBackgroundBlack[i]);
     }
   }

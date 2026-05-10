@@ -118,6 +118,10 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 36
+
+Adds a per-`TextBlock` Guide Dots metadata flag before the guide-dot offset vector. When no word in the block has a guide dot, the guide-dot offset vector is omitted; background bytes remain per-word.
+
 ### Version 35
 
 Adds a per-`TextBlock` Bionic Reading metadata flag before the bionic boundary/suffix vectors. When no word in the block has a bionic split, the boundary and suffix vectors are omitted; guide-dot offsets and background bytes remain per-word.
@@ -179,7 +183,7 @@ import std.core;
 
 // === Configuration ===
 #define EXPECTED_MAGIC 0x535843FF
-#define EXPECTED_VERSION 35
+#define EXPECTED_VERSION 36
 #define MAX_STRING_LENGTH 65535
 #define MAX_WORD_STRING_LENGTH 4096
 #define FOOTNOTE_NUMBER_LEN 32
@@ -246,7 +250,10 @@ struct TextBlock {
     u8 wordBionicBoundary[wordCount];
     u16 wordBionicSuffixX[wordCount];
   }
-  u16 wordGuideDotXOffset[wordCount];
+  u8 hasGuideDotMetadata;
+  if (hasGuideDotMetadata != 0) {
+    u16 wordGuideDotXOffset[wordCount];
+  }
   u8 wordBackgroundBlack[wordCount];
   BlockStyle blockStyle;
   bool textAlignDefined;
