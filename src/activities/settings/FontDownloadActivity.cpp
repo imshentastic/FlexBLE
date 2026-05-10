@@ -263,18 +263,27 @@ void FontDownloadActivity::loop() {
       return;
     }
 
-    buttonNavigator_.onNextRelease([this] {
-      if (selectedIndex_ < listItemCount() - 1) {
-        selectedIndex_++;
-        requestUpdate();
-      }
+    const int listSize = listItemCount();
+    const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
+
+    buttonNavigator_.onNextRelease([this, listSize] {
+      selectedIndex_ = ButtonNavigator::nextIndex(selectedIndex_, listSize);
+      requestUpdate();
     });
 
-    buttonNavigator_.onPreviousRelease([this] {
-      if (selectedIndex_ > 0) {
-        selectedIndex_--;
-        requestUpdate();
-      }
+    buttonNavigator_.onPreviousRelease([this, listSize] {
+      selectedIndex_ = ButtonNavigator::previousIndex(selectedIndex_, listSize);
+      requestUpdate();
+    });
+
+    buttonNavigator_.onNextContinuous([this, listSize, pageItems] {
+      selectedIndex_ = ButtonNavigator::nextPageIndex(selectedIndex_, listSize, pageItems);
+      requestUpdate();
+    });
+
+    buttonNavigator_.onPreviousContinuous([this, listSize, pageItems] {
+      selectedIndex_ = ButtonNavigator::previousPageIndex(selectedIndex_, listSize, pageItems);
+      requestUpdate();
     });
 
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
@@ -368,19 +377,22 @@ void FontDownloadActivity::render(RenderLock&&) {
             }
             return families_[familyIndexFromList(index)].name;
           },
-          nullptr, nullptr,
+          [this](int index) -> std::string {
+            if (index == 0) return "";
+            return families_[familyIndexFromList(index)].description;
+          },
+          nullptr,
           [this](int index) -> std::string {
             if (index == 0) return "";
             const auto& f = families_[familyIndexFromList(index)];
             if (f.hasUpdate) return tr(STR_UPDATE_AVAILABLE);
             if (f.installed) return tr(STR_INSTALLED);
-            return f.description;
+            return "";
           },
           true,
           [this](int index) -> bool {
             if (index == 0) return false;
             const auto& f = families_[familyIndexFromList(index)];
-            // Dim installed fonts, but not those with updates available
             return f.installed && !f.hasUpdate;
           });
 
