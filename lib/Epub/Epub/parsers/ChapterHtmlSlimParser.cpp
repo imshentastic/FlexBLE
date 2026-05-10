@@ -5,6 +5,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <MemoryBudget.h>
 #include <Utf8.h>
 #include <XmlParserUtils.h>
 #include <expat.h>
@@ -23,8 +24,6 @@
 constexpr size_t MIN_SIZE_FOR_POPUP = 10 * 1024;  // 10KB
 constexpr size_t PARSE_BUFFER_SIZE = 1024;
 constexpr size_t IMAGE_EXTRACT_CHUNK_SIZE = 1024;
-constexpr size_t MIN_FREE_HEAP_FOR_IMAGE_EXTRACT = 48 * 1024;
-constexpr size_t MIN_MAX_ALLOC_FOR_IMAGE_EXTRACT = 36 * 1024;
 
 static constexpr const char* const HEADER_TAGS[] = {"h1", "h2", "h3", "h4", "h5", "h6"};
 static constexpr const char* const BLOCK_TAGS[] = {"p", "li", "div", "br", "blockquote"};
@@ -753,11 +752,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         {
           const uint32_t freeHeap = ESP.getFreeHeap();
           const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
-          if (!self->lowMemoryImageFallback &&
-              (freeHeap < MIN_FREE_HEAP_FOR_IMAGE_EXTRACT || maxAllocHeap < MIN_MAX_ALLOC_FOR_IMAGE_EXTRACT)) {
+          LOG_DBG("EHP", "Heap before image extraction: free=%u maxAlloc=%u src=%s", freeHeap, maxAllocHeap,
+                  src.c_str());
+          if (!self->lowMemoryImageFallback && !MemoryBudget::hasHeapForEpubInlineImage("EHP", src.c_str())) {
             self->lowMemoryImageFallback = true;
-            LOG_ERR("EHP", "Low heap before image extraction (%u free, %u max alloc); suppressing inline images",
-                    freeHeap, maxAllocHeap);
           }
 
           if (self->lowMemoryImageFallback) {
@@ -789,19 +787,16 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
               }
 
               if (extractSuccess) {
+                LOG_DBG("EHP", "Heap after image extraction: free=%u maxAlloc=%u path=%s", ESP.getFreeHeap(),
+                        ESP.getMaxAllocHeap(), cachedImagePath.c_str());
                 // Get image dimensions
                 ImageDimensions dims = {0, 0};
                 ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(cachedImagePath);
                 if (decoder && decoder->getDimensions(cachedImagePath, dims)) {
                   LOG_DBG("EHP", "Image dimensions: %dx%d", dims.width, dims.height);
 
-                  const uint32_t postExtractFreeHeap = ESP.getFreeHeap();
-                  const uint32_t postExtractMaxAllocHeap = ESP.getMaxAllocHeap();
-                  if (postExtractFreeHeap < MIN_FREE_HEAP_FOR_IMAGE_EXTRACT ||
-                      postExtractMaxAllocHeap < MIN_MAX_ALLOC_FOR_IMAGE_EXTRACT) {
+                  if (!MemoryBudget::hasHeapForEpubInlineImage("EHP", cachedImagePath.c_str())) {
                     self->lowMemoryImageFallback = true;
-                    LOG_ERR("EHP", "Low heap after image extraction (%u free, %u max alloc); suppressing image",
-                            postExtractFreeHeap, postExtractMaxAllocHeap);
                     Storage.remove(cachedImagePath.c_str());
                     self->skipUntilDepth = self->depth;
                     self->depth += 1;
@@ -982,8 +977,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 Storage.remove(cachedImagePath.c_str());
                 const uint32_t postFailureFreeHeap = ESP.getFreeHeap();
                 const uint32_t postFailureMaxAllocHeap = ESP.getMaxAllocHeap();
-                if (!self->lowMemoryImageFallback && (postFailureFreeHeap < MIN_FREE_HEAP_FOR_IMAGE_EXTRACT ||
-                                                      postFailureMaxAllocHeap < MIN_MAX_ALLOC_FOR_IMAGE_EXTRACT)) {
+                if (!self->lowMemoryImageFallback &&
+                    !MemoryBudget::hasHeapForEpubInlineImage("EHP", cachedImagePath.c_str())) {
                   self->lowMemoryImageFallback = true;
                   LOG_ERR("EHP", "Disabling remaining image extraction after failure (%u free, %u max alloc)",
                           postFailureFreeHeap, postFailureMaxAllocHeap);
@@ -1758,8 +1753,10 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
       file.close();
       return false;
     }
+
   } while (!done);
-  LOG_DBG("EHP", "Time to parse and build pages: %lu ms", millis() - chapterStartTime);
+  LOG_DBG("EHP", "Time to parse and build pages: %lu ms (free=%u, maxAlloc=%u)", millis() - chapterStartTime,
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   destroyXmlParser(parser);
   file.close();

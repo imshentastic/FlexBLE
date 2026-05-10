@@ -1,5 +1,6 @@
 #include "EpubReaderActivity.h"
 
+#include <Arduino.h>
 #include <Epub/Page.h>
 #include <Epub/blocks/TextBlock.h>
 #include <FontCacheManager.h>
@@ -8,6 +9,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <MemoryBudget.h>
 #include <esp_system.h>
 
 #include <algorithm>
@@ -1254,7 +1256,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
   if (!section) {
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
-    LOG_DBG("ERS", "Loading file: %s, index: %d", filepath.c_str(), currentSpineIndex);
+    LOG_DBG("ERS", "Loading file: %s, index: %d (free=%u, maxAlloc=%u)", filepath.c_str(), currentSpineIndex,
+            ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer));
 
     if (!section->loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
@@ -1262,7 +1265,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                                   SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
                                   SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
                                   SETTINGS.bionicReadingEnabled, SETTINGS.guideReadingEnabled)) {
-      LOG_DBG("ERS", "Cache not found, building...");
+      LOG_DBG("ERS", "Cache not found, building... (free=%u, maxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
       GUI.drawPopup(renderer, tr(STR_INDEXING));
 
@@ -1279,6 +1282,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         showPendingSyncSaveError();
         return;
       }
+      LOG_DBG("ERS", "Cache build complete: pages=%u free=%u maxAlloc=%u", section->pageCount, ESP.getFreeHeap(),
+              ESP.getMaxAllocHeap());
 
       if (imagesWereSuppressed) {
         snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s",
@@ -1287,7 +1292,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
       }
     } else {
-      LOG_DBG("ERS", "Cache found, skipping build...");
+      LOG_DBG("ERS", "Cache found, skipping build... (pages=%u, free=%u, maxAlloc=%u)", section->pageCount,
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     }
 
     if (pendingPageJump.has_value()) {
@@ -1442,13 +1448,21 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
     return;
   }
 
-  LOG_DBG("ERS", "Silently indexing next chapter: %d", nextSpineIndex);
+  if (!MemoryBudget::hasHeapForOptionalEpubRebuild("ERS", "silent next-chapter indexing", nextSpineIndex)) {
+    return;
+  }
+
+  LOG_DBG("ERS", "Silently indexing next chapter: %d (free=%u, maxAlloc=%u)", nextSpineIndex, ESP.getFreeHeap(),
+          ESP.getMaxAllocHeap());
   if (!nextSection.createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
                                      SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
                                      SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
                                      SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
                                      SETTINGS.bionicReadingEnabled, SETTINGS.guideReadingEnabled)) {
     LOG_ERR("ERS", "Failed silent indexing for chapter: %d", nextSpineIndex);
+  } else {
+    LOG_DBG("ERS", "Silent indexing complete: chapter=%d pages=%u free=%u maxAlloc=%u", nextSpineIndex,
+            nextSection.pageCount, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 }
 
@@ -1806,7 +1820,12 @@ bool EpubReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gf
                                 SETTINGS.paragraphAlignment, viewportWidth, viewportHeight, SETTINGS.hyphenationEnabled,
                                 SETTINGS.embeddedStyle, SETTINGS.imageRendering, SETTINGS.bionicReadingEnabled,
                                 SETTINGS.guideReadingEnabled)) {
-    LOG_DBG("SLP", "EPUB: section cache not found for spine %d, rebuilding", spineIndex);
+    if (!MemoryBudget::hasHeapForOptionalEpubRebuild("SLP", "EPUB sleep-page cache rebuild", spineIndex)) {
+      return false;
+    }
+
+    LOG_DBG("SLP", "EPUB: section cache not found for spine %d, rebuilding (free=%u, maxAlloc=%u)", spineIndex,
+            ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     if (!section->createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
                                     SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
                                     SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
@@ -1815,6 +1834,8 @@ bool EpubReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gf
       LOG_ERR("SLP", "EPUB: failed to rebuild section cache for spine %d", spineIndex);
       return false;
     }
+    LOG_DBG("SLP", "EPUB: section cache rebuilt for spine %d (pages=%u, free=%u, maxAlloc=%u)", spineIndex,
+            section->pageCount, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 
   if (pageNumber < 0 || pageNumber >= section->pageCount) pageNumber = 0;

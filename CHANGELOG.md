@@ -6,6 +6,7 @@
 - Added the Lyra Carousel home theme.
 - Added a `Recent Books View` setting so the dedicated Recent Books screen can switch between the classic list and a 3x3 cover grid.
 - Added EPUB `<hr>` rendering so horizontal rules display as visible separators instead of being ignored.
+- Added EPUB heap diagnostics around section rebuilds, image extraction, page serialization, and sleep-cache rebuilds to make low-memory crashes easier to trace.
 - Added a per-session auto page turn interval picker with values from 5 to 120 seconds.
 - Added reader font coverage for block redactions, black-square ornaments, Greek category letters, and turned-comma punctuation (PR #104).
 - Added a file-browser Home/Back long-press action for toggling hidden files and folders.
@@ -28,6 +29,8 @@
 - Fixed EPUB list bullets so they stay attached to the first paragraph in `<li><p>...</p></li>` list items.
 - Fixed EPUB image scaling, low-memory image fallback, and thumbnail generation so image-heavy books are less likely to crash or reuse stale dimensions.
 - Fixed EPUB section rebuilds so image-heavy chapters use less temporary memory while laying out text after inline images.
+- Fixed EPUB low-memory stability by skipping optional silent next-chapter indexing and sleep-page cache rebuilds when heap is already tight.
+- Fixed EPUB image handling so shared memory budgets suppress inline images and decoder work earlier under heap pressure.
 - Fixed EPUB cache validation so Crossink rebuilds `book.bin`, `sections/*.bin`, and CSS rule caches written by other CrossPoint forks instead of treating matching version numbers as compatible.
 - Fixed EPUB CSS loading and page-cache handling so low-memory CSS parsing, truncated SD writes, invalid serialized strings, and bad temp-cache promotion fail safely.
 - Fixed reader prewarm behavior by skipping image decoding, keeping mixed-style font glyphs cached together, and avoiding section rebuilds for render-quality-only option changes.
