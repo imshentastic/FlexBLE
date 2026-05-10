@@ -3,6 +3,7 @@
 ## [v1.2.10]
 
 ### Added
+- Add a simulator smoke-test runner for catching crashes while opening common screens and driving EPUB reader menus
 - Add Lyra Carousel theme
 - Add a `Recent Books View` setting so the dedicated Recent Books screen can switch between the classic list and a 3x3 cover grid
 - Add real EPUB `<hr>` rendering so horizontal rules now display as visible separators instead of being ignored

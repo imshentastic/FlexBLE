@@ -34,6 +34,9 @@
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#ifdef SIMULATOR
+#include "simulator/SimulatorSmokeTest.h"
+#endif
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 
@@ -705,6 +708,10 @@ void loop() {
   const unsigned long activityStartTime = millis();
   activityManager.loop();
   const unsigned long activityDuration = millis() - activityStartTime;
+
+#ifdef SIMULATOR
+  runSimulatorSmokeTestTick();
+#endif
 
   const unsigned long loopDuration = millis() - loopStartTime;
   if (loopDuration > maxLoopDuration) {

@@ -1,5 +1,7 @@
 #include "MappedInputManager.h"
 
+#include <algorithm>
+
 #include "CrossPointSettings.h"
 #include "GlobalActions.h"
 
@@ -16,6 +18,10 @@ constexpr SideLayoutMap kSideLayouts[] = {
     {HalGPIO::BTN_UP, HalGPIO::BTN_DOWN},
     {HalGPIO::BTN_DOWN, HalGPIO::BTN_UP},
 };
+
+#ifdef SIMULATOR
+size_t buttonIndex(MappedInputManager::Button button) { return static_cast<size_t>(button); }
+#endif
 
 }  // namespace
 
@@ -62,6 +68,12 @@ bool MappedInputManager::shouldMirrorPowerAsConfirmHold() const {
 }
 
 bool MappedInputManager::wasPressed(const Button button) const {
+#ifdef SIMULATOR
+  if (simulatorPressed[buttonIndex(button)]) {
+    return true;
+  }
+#endif
+
   if (button == Button::Confirm) {
     if (mapButton(button, &HalGPIO::wasPressed)) {
       return true;
@@ -77,6 +89,12 @@ bool MappedInputManager::wasPressed(const Button button) const {
 }
 
 bool MappedInputManager::wasReleased(const Button button) const {
+#ifdef SIMULATOR
+  if (simulatorReleased[buttonIndex(button)]) {
+    return true;
+  }
+#endif
+
   if (button == Button::Back) {
     if (!mapButton(button, &HalGPIO::wasReleased)) {
       return false;
@@ -114,6 +132,12 @@ bool MappedInputManager::wasReleased(const Button button) const {
 }
 
 bool MappedInputManager::isPressed(const Button button) const {
+#ifdef SIMULATOR
+  if (simulatorHeld[buttonIndex(button)]) {
+    return true;
+  }
+#endif
+
   if (button == Button::Confirm) {
     if (mapButton(button, &HalGPIO::isPressed)) {
       return true;
@@ -131,11 +155,36 @@ bool MappedInputManager::isPressed(const Button button) const {
   return mapButton(button, &HalGPIO::isPressed);
 }
 
-bool MappedInputManager::wasAnyPressed() const { return gpio.wasAnyPressed(); }
+bool MappedInputManager::wasAnyPressed() const {
+#ifdef SIMULATOR
+  if (std::any_of(simulatorPressed.begin(), simulatorPressed.end(), [](bool pressed) { return pressed; })) {
+    return true;
+  }
+#endif
+  return gpio.wasAnyPressed();
+}
 
-bool MappedInputManager::wasAnyReleased() const { return gpio.wasAnyReleased(); }
+bool MappedInputManager::wasAnyReleased() const {
+#ifdef SIMULATOR
+  if (std::any_of(simulatorReleased.begin(), simulatorReleased.end(), [](bool released) { return released; })) {
+    return true;
+  }
+#endif
+  return gpio.wasAnyReleased();
+}
 
-unsigned long MappedInputManager::getHeldTime() const { return gpio.getHeldTime(); }
+unsigned long MappedInputManager::getHeldTime() const {
+  unsigned long heldTime = gpio.getHeldTime();
+#ifdef SIMULATOR
+  const unsigned long now = millis();
+  for (size_t i = 0; i < BUTTON_COUNT; i++) {
+    if (simulatorHeld[i] && simulatorPressStart[i] > 0) {
+      heldTime = std::max(heldTime, now - simulatorPressStart[i]);
+    }
+  }
+#endif
+  return heldTime;
+}
 
 MappedInputManager::Labels MappedInputManager::mapLabels(const char* back, const char* confirm, const char* previous,
                                                          const char* next) const {
@@ -175,3 +224,25 @@ int MappedInputManager::getPressedFrontButton() const {
   }
   return -1;
 }
+
+#ifdef SIMULATOR
+void MappedInputManager::simulatorInjectPress(Button button) {
+  const size_t idx = buttonIndex(button);
+  simulatorPressed[idx] = true;
+  simulatorReleased[idx] = false;
+  simulatorHeld[idx] = true;
+  simulatorPressStart[idx] = millis();
+}
+
+void MappedInputManager::simulatorInjectRelease(Button button) {
+  const size_t idx = buttonIndex(button);
+  simulatorPressed[idx] = false;
+  simulatorReleased[idx] = true;
+  simulatorHeld[idx] = false;
+}
+
+void MappedInputManager::simulatorClearInputFrame() {
+  simulatorPressed.fill(false);
+  simulatorReleased.fill(false);
+}
+#endif
