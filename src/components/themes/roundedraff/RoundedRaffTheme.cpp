@@ -5,7 +5,6 @@
 #include <I18n.h>
 
 #include <algorithm>
-#include <cctype>
 #include <string>
 #include <vector>
 
@@ -45,24 +44,6 @@ void drawScrollBar(const GfxRenderer& renderer, Rect rect, int itemCount, int pa
   const int thumbY = barY + (clampedStart * maxTravel) / maxStart;
 
   renderer.fillRect(barX, thumbY, barW, thumbH);
-}
-
-std::string sanitizeButtonLabel(std::string label) {
-  // Remove common directional prefixes/symbols (e.g. "<< Home", unsupported icon glyphs).
-  while (!label.empty()) {
-    const auto leadingByte = static_cast<unsigned char>(label[0]);
-    if (label.rfind("\xC2\xAB", 0) == 0 || label.rfind("\xC2\xBB", 0) == 0) {
-      label.erase(0, 2);
-    } else if (leadingByte < 0x80 && !std::isalnum(leadingByte)) {
-      label.erase(0, 1);
-    } else {
-      break;
-    }
-  }
-  while (!label.empty() && label[0] == ' ') {
-    label.erase(0, 1);
-  }
-  return label;
 }
 
 }  // namespace
@@ -435,11 +416,11 @@ void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, 
   const bool backDisabled = (btn1 == nullptr || btn1[0] == '\0');
   const int leftGroupX = sidePadding;
   const int rightGroupX = leftGroupX + groupWidth + groupGap;
-  const std::string backLabel = backDisabled ? "" : sanitizeButtonLabel(std::string(btn1));
+  const std::string backLabel = backDisabled ? "" : std::string(btn1);
   // Callers should provide the button labels. If a label is not specified, it should render empty.
-  const std::string selectText = (btn2 && btn2[0] != '\0') ? sanitizeButtonLabel(std::string(btn2)) : "";
-  const std::string upText = (btn3 && btn3[0] != '\0') ? sanitizeButtonLabel(std::string(btn3)) : "";
-  const std::string downText = (btn4 && btn4[0] != '\0') ? sanitizeButtonLabel(std::string(btn4)) : "";
+  const std::string selectText = (btn2 && btn2[0] != '\0') ? std::string(btn2) : "";
+  const std::string upText = (btn3 && btn3[0] != '\0') ? std::string(btn3) : "";
+  const std::string downText = (btn4 && btn4[0] != '\0') ? std::string(btn4) : "";
 
   // Ensure button hints always "win" visually even if other elements accidentally render into this area.
   renderer.fillRect(leftGroupX, hintY, groupWidth, hintHeight, false);

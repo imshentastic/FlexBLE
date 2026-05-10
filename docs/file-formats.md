@@ -118,6 +118,10 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 35
+
+Adds a per-`TextBlock` Bionic Reading metadata flag before the bionic boundary/suffix vectors. When no word in the block has a bionic split, the boundary and suffix vectors are omitted; guide-dot offsets and background bytes remain per-word.
+
 ### Version 34
 
 Adds a Crossink-owned cache magic before the version byte so `sections/*.bin` files written by upstream CrossPoint or other forks are rejected and rebuilt instead of being parsed as compatible Crossink section caches.
@@ -160,7 +164,7 @@ Bionic Reading words are now stored as a single merged TextBlock entry instead o
 
 ### Version 23
 
-Added `guideReadingEnabled` (bool) to the header after `focusReadingEnabled`. Guide Dots feature flag: when enabled, a middle dot (U+00B7) is inserted between words during layout (skipped for Justify alignment).
+Added `guideReadingEnabled` (bool) to the header after `bionicReadingEnabled`. Guide Dots feature flag: when enabled, a middle dot (U+00B7) is inserted between words during layout (skipped for Justify alignment).
 
 ### Version 22
 
@@ -175,7 +179,7 @@ import std.core;
 
 // === Configuration ===
 #define EXPECTED_MAGIC 0x535843FF
-#define EXPECTED_VERSION 34
+#define EXPECTED_VERSION 35
 #define MAX_STRING_LENGTH 65535
 #define MAX_WORD_STRING_LENGTH 4096
 #define FOOTNOTE_NUMBER_LEN 32
@@ -237,8 +241,11 @@ struct TextBlock {
   WordString words[wordCount];
   s16 wordXPos[wordCount];
   WordStyle wordStyle[wordCount];
-  u8 wordBionicBoundary[wordCount];
-  u16 wordBionicSuffixX[wordCount];
+  u8 hasBionicMetadata;
+  if (hasBionicMetadata != 0) {
+    u8 wordBionicBoundary[wordCount];
+    u16 wordBionicSuffixX[wordCount];
+  }
   u16 wordGuideDotXOffset[wordCount];
   u8 wordBackgroundBlack[wordCount];
   BlockStyle blockStyle;

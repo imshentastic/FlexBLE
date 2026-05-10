@@ -17,9 +17,11 @@ class TextBlock final : public Block {
   std::vector<EpdFontFamily::Style> wordStyles;
   // Per-word bionic boundary: N > 0 means the first N bytes of words[i] are rendered bold,
   // the remainder in the base style. 0 means no split (whole word uses wordStyles[i]).
+  // Empty when no word in the block has a bionic split.
   std::vector<uint8_t> wordBionicBoundary;
   // Pre-computed pixel offset from word start to the regular suffix, stored when boundary > 0.
   // Eliminates getTextAdvanceX from the render path. 0 when boundary == 0.
+  // Empty in lockstep with wordBionicBoundary.
   std::vector<uint16_t> wordBionicSuffixX;
   // Pre-computed pixel offset from word start to the guide dot that follows it. 0 = no dot.
   // Eliminates the guide dot as a separate TextBlock entry, saving ~12 bytes per inter-word gap.

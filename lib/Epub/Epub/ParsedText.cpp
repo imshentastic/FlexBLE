@@ -693,6 +693,9 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
           renderer.getSpaceAdvance(fontId, lastCodepoint(words[lastBreakAt + wordIdx - 1]),
                                    firstCodepoint(words[lastBreakAt + wordIdx]), wordStyles[lastBreakAt + wordIdx - 1]);
     } else if (wordIdx > 0 && continuesVec[lastBreakAt + wordIdx]) {
+      if (words[lastBreakAt + wordIdx] == " ") {
+        actualGapCount++;
+      }
       // Cross-boundary kerning for continuation words (e.g. nonbreaking spaces, attached punctuation)
       totalNaturalGaps +=
           renderer.getKerning(fontId, lastCodepoint(words[lastBreakAt + wordIdx - 1]),
@@ -734,6 +737,10 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
       advance +=
           renderer.getKerning(fontId, lastCodepoint(words[lastBreakAt + wordIdx]),
                               firstCodepoint(words[lastBreakAt + wordIdx + 1]), wordStyles[lastBreakAt + wordIdx]);
+      if (words[lastBreakAt + wordIdx] == " " && continuesVec[lastBreakAt + wordIdx] &&
+          blockStyle.alignment == CssTextAlign::Justify && !isLastLine) {
+        advance += justifyExtra;
+      }
       xpos += advance;
     } else {
       int gap = 0;
@@ -762,9 +769,18 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     }
   }
 
+  bool lineHasBionicSplit = false;
+  for (size_t i = 0; i < lineWordCount; i++) {
+    if (wordIsBionicSuffix[lastBreakAt + i]) {
+      lineHasBionicSplit = true;
+      break;
+    }
+  }
+
   // Merge bionic suffix tokens and guide dot tokens back into their preceding word entry so each
   // original word occupies one TextBlock slot. Both splits are recorded as per-word annotations
   // applied at render time, cutting the token count significantly when either feature is active.
+  // Bionic boundary/suffix vectors stay empty when this line has no bionic split.
   std::vector<std::string> outWords;
   std::vector<int16_t> outXPos;
   std::vector<EpdFontFamily::Style> outStyles;
@@ -775,8 +791,10 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   outWords.reserve(lineWordCount);
   outXPos.reserve(lineWordCount);
   outStyles.reserve(lineWordCount);
-  outBoundaries.reserve(lineWordCount);
-  outSuffixX.reserve(lineWordCount);
+  if (lineHasBionicSplit) {
+    outBoundaries.reserve(lineWordCount);
+    outSuffixX.reserve(lineWordCount);
+  }
   outGuideDotXOffset.reserve(lineWordCount);
   outBackgroundBlack.reserve(lineWordCount);
 
@@ -805,8 +823,10 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
           boundary > 0 ? static_cast<EpdFontFamily::Style>(lineWordStyles[i] & ~EpdFontFamily::BOLD)
                        : lineWordStyles[i];
       outStyles.push_back(storedStyle);
-      outBoundaries.push_back(boundary);
-      outSuffixX.push_back(suffixX);
+      if (lineHasBionicSplit) {
+        outBoundaries.push_back(boundary);
+        outSuffixX.push_back(suffixX);
+      }
       outGuideDotXOffset.push_back(0);  // filled in later if a guide dot follows
       outBackgroundBlack.push_back(lineWordBackgroundBlack[i]);
     }

@@ -13,9 +13,10 @@ constexpr uint16_t MAX_WORDS_PER_TEXT_BLOCK = 512;
 constexpr uint32_t MAX_SERIALIZED_WORD_BYTES = 4096;
 constexpr uint32_t SERIALIZED_TEXT_BLOCK_TAIL_BYTES =
     sizeof(EpdFontFamily::Style) + sizeof(bool) + sizeof(int16_t) * 7 + sizeof(bool);
-constexpr uint32_t SERIALIZED_WORD_METADATA_BYTES = sizeof(uint32_t) + sizeof(int16_t) + sizeof(EpdFontFamily::Style) +
-                                                    sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) +
-                                                    sizeof(uint8_t);
+constexpr uint32_t SERIALIZED_MIN_WORD_METADATA_BYTES =
+    sizeof(uint32_t) + sizeof(int16_t) + sizeof(EpdFontFamily::Style) + sizeof(uint16_t) + sizeof(uint8_t);
+constexpr uint32_t SERIALIZED_POST_WORD_MIN_METADATA_BYTES =
+    sizeof(int16_t) + sizeof(EpdFontFamily::Style) + sizeof(uint16_t) + sizeof(uint8_t);
 
 uint16_t measureBackgroundWidth(const GfxRenderer& renderer, const int fontId, const std::string& word,
                                 const EpdFontFamily::Style style) {
@@ -86,9 +87,11 @@ bool readBoundedString(FsFile& file, std::string& s) {
 
 void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int x, const int y) const {
   // Validate iterator bounds before rendering
+  const bool hasBionic = !wordBionicBoundary.empty();
   if (words.size() != wordXpos.size() || words.size() != wordStyles.size() ||
-      words.size() != wordBionicBoundary.size() || words.size() != wordBionicSuffixX.size() ||
-      words.size() != wordGuideDotXOffset.size() || words.size() != wordBackgroundBlack.size()) {
+      words.size() != wordGuideDotXOffset.size() || words.size() != wordBackgroundBlack.size() ||
+      (hasBionic && (words.size() != wordBionicBoundary.size() || words.size() != wordBionicSuffixX.size())) ||
+      (!hasBionic && !wordBionicSuffixX.empty())) {
     LOG_ERR("TXB",
             "Render skipped: size mismatch (words=%u, xpos=%u, styles=%u, boundary=%u, suffixX=%u, dotX=%u, bg=%u)\n",
             (uint32_t)words.size(), (uint32_t)wordXpos.size(), (uint32_t)wordStyles.size(),
@@ -100,7 +103,7 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
   for (size_t i = 0; i < words.size(); i++) {
     const int wordX = wordXpos[i] + x;
     const EpdFontFamily::Style currentStyle = wordStyles[i];
-    const uint8_t boundary = wordBionicBoundary[i];
+    const uint8_t boundary = hasBionic ? wordBionicBoundary[i] : 0;
 
     if (wordBackgroundBlack[i] != 0 && isWhitespaceOnlyBackgroundToken(words[i])) {
       const uint16_t backgroundWidth = measureBackgroundWidth(renderer, fontId, words[i], currentStyle);
@@ -178,9 +181,11 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
 }
 
 bool TextBlock::serialize(FsFile& file) const {
+  const bool hasBionic = !wordBionicBoundary.empty();
   if (words.size() != wordXpos.size() || words.size() != wordStyles.size() ||
-      words.size() != wordBionicBoundary.size() || words.size() != wordBionicSuffixX.size() ||
-      words.size() != wordGuideDotXOffset.size() || words.size() != wordBackgroundBlack.size()) {
+      words.size() != wordGuideDotXOffset.size() || words.size() != wordBackgroundBlack.size() ||
+      (hasBionic && (words.size() != wordBionicBoundary.size() || words.size() != wordBionicSuffixX.size())) ||
+      (!hasBionic && !wordBionicSuffixX.empty())) {
     LOG_ERR(
         "TXB",
         "Serialization failed: size mismatch (words=%u, xpos=%u, styles=%u, boundary=%u, suffixX=%u, dotX=%u, bg=%u)\n",
@@ -208,11 +213,16 @@ bool TextBlock::serialize(FsFile& file) const {
   for (auto s : wordStyles) {
     if (!serialization::tryWritePod(file, s)) return false;
   }
-  for (auto b : wordBionicBoundary) {
-    if (!serialization::tryWritePod(file, b)) return false;
+  if (!serialization::tryWritePod(file, static_cast<uint8_t>(hasBionic ? 1 : 0))) {
+    return false;
   }
-  for (auto sx : wordBionicSuffixX) {
-    if (!serialization::tryWritePod(file, sx)) return false;
+  if (hasBionic) {
+    for (auto b : wordBionicBoundary) {
+      if (!serialization::tryWritePod(file, b)) return false;
+    }
+    for (auto sx : wordBionicSuffixX) {
+      if (!serialization::tryWritePod(file, sx)) return false;
+    }
   }
   for (auto dx : wordGuideDotXOffset) {
     if (!serialization::tryWritePod(file, dx)) return false;
@@ -260,8 +270,8 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
     return nullptr;
   }
 
-  const uint32_t minimumRemainingBytes =
-      static_cast<uint32_t>(wc) * SERIALIZED_WORD_METADATA_BYTES + SERIALIZED_TEXT_BLOCK_TAIL_BYTES;
+  const uint32_t minimumRemainingBytes = static_cast<uint32_t>(wc) * SERIALIZED_MIN_WORD_METADATA_BYTES +
+                                         sizeof(uint8_t) + SERIALIZED_TEXT_BLOCK_TAIL_BYTES;
   const int remainingBeforeWords = file.available();
   if (remainingBeforeWords < 0 || static_cast<uint32_t>(remainingBeforeWords) < minimumRemainingBytes) {
     LOG_ERR("TXB", "Deserialization failed: truncated block metadata (%u words need at least %lu bytes, %d available)",
@@ -273,8 +283,6 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
   words.resize(wc);
   wordXpos.resize(wc);
   wordStyles.resize(wc);
-  wordBionicBoundary.resize(wc);
-  wordBionicSuffixX.resize(wc);
   wordGuideDotXOffset.resize(wc);
   wordBackgroundBlack.resize(wc);
   for (auto& w : words) {
@@ -283,10 +291,8 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
     }
   }
 
-  const uint32_t remainingMetadataBytes =
-      static_cast<uint32_t>(wc) * (sizeof(int16_t) + sizeof(EpdFontFamily::Style) + sizeof(uint8_t) + sizeof(uint16_t) +
-                                   sizeof(uint16_t) + sizeof(uint8_t)) +
-      SERIALIZED_TEXT_BLOCK_TAIL_BYTES;
+  const uint32_t remainingMetadataBytes = static_cast<uint32_t>(wc) * SERIALIZED_POST_WORD_MIN_METADATA_BYTES +
+                                          sizeof(uint8_t) + SERIALIZED_TEXT_BLOCK_TAIL_BYTES;
   const int remainingAfterWords = file.available();
   if (remainingAfterWords < 0 || static_cast<uint32_t>(remainingAfterWords) < remainingMetadataBytes) {
     LOG_ERR("TXB", "Deserialization failed: truncated post-word metadata (%lu bytes needed, %d available)",
@@ -300,11 +306,20 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
   for (auto& s : wordStyles) {
     if (!serialization::tryReadPod(file, s)) return nullptr;
   }
-  for (auto& b : wordBionicBoundary) {
-    if (!serialization::tryReadPod(file, b)) return nullptr;
+  uint8_t hasBionic = 0;
+  if (!serialization::tryReadPod(file, hasBionic) || hasBionic > 1) {
+    LOG_ERR("TXB", "Deserialization failed: invalid bionic metadata flag");
+    return nullptr;
   }
-  for (auto& sx : wordBionicSuffixX) {
-    if (!serialization::tryReadPod(file, sx)) return nullptr;
+  if (hasBionic) {
+    wordBionicBoundary.resize(wc);
+    wordBionicSuffixX.resize(wc);
+    for (auto& b : wordBionicBoundary) {
+      if (!serialization::tryReadPod(file, b)) return nullptr;
+    }
+    for (auto& sx : wordBionicSuffixX) {
+      if (!serialization::tryReadPod(file, sx)) return nullptr;
+    }
   }
   for (auto& dx : wordGuideDotXOffset) {
     if (!serialization::tryReadPod(file, dx)) return nullptr;
