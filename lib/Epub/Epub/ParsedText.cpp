@@ -756,19 +756,6 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     }
   }
 
-  // Build line data by moving from the original vectors using index range
-  std::vector<std::string> lineWords(std::make_move_iterator(words.begin() + lastBreakAt),
-                                     std::make_move_iterator(words.begin() + lineBreak));
-  std::vector<EpdFontFamily::Style> lineWordStyles(wordStyles.begin() + lastBreakAt, wordStyles.begin() + lineBreak);
-  std::vector<uint8_t> lineWordBackgroundBlack(wordBackgroundBlack.begin() + lastBreakAt,
-                                               wordBackgroundBlack.begin() + lineBreak);
-
-  for (auto& word : lineWords) {
-    if (containsSoftHyphen(word)) {
-      stripSoftHyphensInPlace(word);
-    }
-  }
-
   bool lineHasBionicSplit = false;
   bool lineHasGuideDot = false;
   for (size_t i = 0; i < lineWordCount; i++) {
@@ -807,10 +794,16 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   outBackgroundBlack.reserve(lineWordCount);
 
   for (size_t i = 0; i < lineWordCount; i++) {
-    if (wordIsBionicSuffix[lastBreakAt + i] && !outWords.empty()) {
+    const size_t sourceIndex = lastBreakAt + i;
+    std::string& sourceWord = words[sourceIndex];
+    if (containsSoftHyphen(sourceWord)) {
+      stripSoftHyphensInPlace(sourceWord);
+    }
+
+    if (wordIsBionicSuffix[sourceIndex] && !outWords.empty()) {
       // Bionic suffix: merge string into the preceding bold-prefix entry.
-      outWords.back() += lineWords[i];
-    } else if (wordIsGuideDot[lastBreakAt + i] && !outWords.empty()) {
+      outWords.back() += sourceWord;
+    } else if (wordIsGuideDot[sourceIndex] && !outWords.empty()) {
       // Guide dot: annotate the preceding word entry with the dot's pixel offset.
       // Offset is relative to that word's x so render can place it without extra data.
       if (lineHasGuideDot) {
@@ -820,18 +813,18 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
       // Normal word: check for a following bionic suffix to record the byte boundary.
       uint8_t boundary = 0;
       uint16_t suffixX = 0;
-      if (i + 1 < lineWordCount && wordIsBionicSuffix[lastBreakAt + i + 1]) {
-        boundary = static_cast<uint8_t>(std::min(lineWords[i].size(), size_t{255}));
+      if (i + 1 < lineWordCount && wordIsBionicSuffix[sourceIndex + 1]) {
+        boundary = static_cast<uint8_t>(std::min(sourceWord.size(), size_t{255}));
         // Suffix x offset = layout-time advance of the bold prefix, already known from xpos table.
         suffixX = static_cast<uint16_t>(lineXPos[i + 1] - lineXPos[i]);
       }
-      outWords.push_back(std::move(lineWords[i]));
+      outWords.push_back(std::move(sourceWord));
       outXPos.push_back(lineXPos[i]);
       // For bionic entries with a suffix, strip BOLD from the stored style.
       // Render re-applies it to the prefix portion only, via the boundary field.
       const EpdFontFamily::Style storedStyle =
-          boundary > 0 ? static_cast<EpdFontFamily::Style>(lineWordStyles[i] & ~EpdFontFamily::BOLD)
-                       : lineWordStyles[i];
+          boundary > 0 ? static_cast<EpdFontFamily::Style>(wordStyles[sourceIndex] & ~EpdFontFamily::BOLD)
+                       : wordStyles[sourceIndex];
       outStyles.push_back(storedStyle);
       if (lineHasBionicSplit) {
         outBoundaries.push_back(boundary);
@@ -840,7 +833,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
       if (lineHasGuideDot) {
         outGuideDotXOffset.push_back(0);  // filled in later if a guide dot follows
       }
-      outBackgroundBlack.push_back(lineWordBackgroundBlack[i]);
+      outBackgroundBlack.push_back(wordBackgroundBlack[sourceIndex]);
     }
   }
 
