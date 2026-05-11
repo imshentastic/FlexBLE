@@ -64,6 +64,18 @@ void SdCardFont::freeStyleKernLigatureData(PerStyle& s) {
   delete[] s.ligaturePairs;
   s.ligaturePairs = nullptr;
   s.kernLigLoaded = false;
+
+  s.stubData.ligaturePairs = nullptr;
+  s.stubData.ligaturePairCount = 0;
+  s.miniData.kernLeftClasses = nullptr;
+  s.miniData.kernRightClasses = nullptr;
+  s.miniData.kernMatrix = nullptr;
+  s.miniData.kernLeftEntryCount = 0;
+  s.miniData.kernRightEntryCount = 0;
+  s.miniData.kernLeftClassCount = 0;
+  s.miniData.kernRightClassCount = 0;
+  s.miniData.ligaturePairs = nullptr;
+  s.miniData.ligaturePairCount = 0;
 }
 
 void SdCardFont::freeStyleMiniKern(PerStyle& s) {
@@ -920,6 +932,18 @@ void SdCardFont::clearCache() {
   for (uint8_t i = 0; i < MAX_STYLES; i++) {
     if (!styles_[i].present) continue;
     freeStyleMiniData(styles_[i]);
+    applyGlyphMissCallback(i);
+  }
+}
+
+void SdCardFont::releaseForLowMemory() {
+  clearOverflow();
+  clearPersistentCache();
+
+  for (uint8_t i = 0; i < MAX_STYLES; i++) {
+    if (!styles_[i].present) continue;
+    freeStyleMiniData(styles_[i]);
+    freeStyleKernLigatureData(styles_[i]);
     applyGlyphMissCallback(i);
   }
 }
