@@ -3,7 +3,6 @@
 ## [v1.2.10]
 
 ### Added
-- Added the Lyra Carousel home theme.
 - Added a `Recent Books View` setting so the dedicated Recent Books screen can switch between the classic list and a 3x3 cover grid.
 - Added EPUB `<hr>` rendering so horizontal rules display as visible separators instead of being ignored.
 - Added EPUB heap diagnostics around section rebuilds, image extraction, page serialization, and sleep-cache rebuilds to make low-memory crashes easier to trace.
@@ -18,7 +17,6 @@
 - Allow the web file manager and WebDAV to browse dot-prefixed hidden files when hidden files are enabled, matching the device file browser.
 
 ### Fixed
-- Fixed a simulator crash when opening Reader Options.
 - Fixed RoundedRaff home-menu navigation so Settings remains reachable when the inline Continue Reading row is visible.
 - Fixed RoundedRaff keyboard and button-hint rendering so number-row symbols and UTF-8 labels no longer overlap or disappear.
 - Fixed WiFi scan/connect screens so users can back out while a scan or connection attempt is in progress.
