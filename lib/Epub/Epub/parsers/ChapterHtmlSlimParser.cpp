@@ -750,6 +750,13 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         LOG_DBG("EHP", "Found image: src=%s", src.c_str());
 
         {
+          const uint32_t releaseFreeBefore = ESP.getFreeHeap();
+          const uint32_t releaseMaxBefore = ESP.getMaxAllocHeap();
+          if (self->renderer.releaseSdCardFontForLowMemory(self->fontId)) {
+            LOG_DBG("EHP", "Released SD font caches before image extraction: free=%u->%u maxAlloc=%u->%u src=%s",
+                    releaseFreeBefore, ESP.getFreeHeap(), releaseMaxBefore, ESP.getMaxAllocHeap(), src.c_str());
+          }
+
           const uint32_t freeHeap = ESP.getFreeHeap();
           const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
           LOG_DBG("EHP", "Heap before image extraction: free=%u maxAlloc=%u src=%s", freeHeap, maxAllocHeap,

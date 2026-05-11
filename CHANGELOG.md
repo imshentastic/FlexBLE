@@ -21,6 +21,7 @@
 ### Fixed
 - Fixed RoundedRaff home-menu navigation so Settings remains reachable when the inline Continue Reading row is visible.
 - Reduced persistent SD-card font advance-cache memory so custom fonts leave more heap available for EPUB rendering.
+- Release optional SD-card font caches before EPUB image extraction so custom fonts and image-heavy chapters can coexist more reliably.
 - Fixed RoundedRaff keyboard and button-hint rendering so number-row symbols and UTF-8 labels no longer overlap or disappear.
 - Fixed WiFi scan/connect screens so users can back out while a scan or connection attempt is in progress.
 - Fixed folder delete long-press timing so deletion triggers after the hold delay instead of on release.

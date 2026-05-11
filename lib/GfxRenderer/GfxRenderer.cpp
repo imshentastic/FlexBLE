@@ -103,6 +103,14 @@ void GfxRenderer::ensureSdCardFontReady(int fontId, const char* utf8Text, uint8_
   }
 }
 
+bool GfxRenderer::releaseSdCardFontForLowMemory(int fontId) const {
+  auto it = sdCardFonts_.find(fontId);
+  if (it == sdCardFonts_.end()) return false;
+
+  it->second->releaseForLowMemory();
+  return true;
+}
+
 void GfxRenderer::begin() {
   frameBuffer = display.getFrameBuffer();
   if (!frameBuffer) {
