@@ -1,5 +1,6 @@
 #include "EpubReaderActivity.h"
 
+#include <BluetoothHIDManager.h>
 #include <Epub/Page.h>
 #include <Epub/blocks/TextBlock.h>
 #include <FontCacheManager.h>
@@ -229,6 +230,12 @@ void EpubReaderActivity::onEnter() {
 
 void EpubReaderActivity::onExit() {
   Activity::onExit();
+
+  // BLE is a reader-session-only feature: turn it off whenever the user leaves
+  // a book. The actual disable() is deferred to the next main-loop tick because
+  // we're holding the render lock here and NimBLE teardown can call back into
+  // the activity manager.
+  BluetoothHIDManager::getInstance().requestDisableLater();
 
   // Deactivate reader-specific front button mapping.
   mappedInput.setReaderMode(false);
