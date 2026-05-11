@@ -13,11 +13,13 @@
 #include <cmath>
 #include <cstdio>
 
+#include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "RecentBookProgress.h"
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
+#include "components/themes/lyra/LyraTheme.h"
 #include "fontIds.h"
 
 namespace {
@@ -25,6 +27,28 @@ constexpr int kCoverCornerRadius = 2;
 constexpr int kGridColumns = 3;
 constexpr float kCircleRadians = 6.2831853f;
 constexpr float kCircleRadiansPerPercent = kCircleRadians / 100.0f;
+constexpr int kLyraGridContentTop =
+    LyraMetrics::values.topPadding + LyraMetrics::values.headerHeight + LyraMetrics::values.verticalSpacing;
+constexpr int kLyraGridSpacing = LyraMetrics::values.verticalSpacing;
+
+void drawGridHeader(const GfxRenderer& renderer, const int pageWidth) {
+  const Rect rect{0, LyraMetrics::values.topPadding, pageWidth, LyraMetrics::values.headerHeight};
+  renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
+
+  const bool showBatteryPercentage =
+      SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
+  const int batteryX = rect.x + rect.width - 12 - LyraMetrics::values.batteryWidth;
+  GUI.drawBatteryRight(renderer,
+                       Rect{batteryX, rect.y + 5, LyraMetrics::values.batteryWidth, LyraMetrics::values.batteryHeight},
+                       showBatteryPercentage);
+
+  const int titleMaxWidth = rect.width - LyraMetrics::values.contentSidePadding * 3;
+  const std::string title =
+      renderer.truncatedText(UI_12_FONT_ID, tr(STR_MENU_RECENT_BOOKS), titleMaxWidth, EpdFontFamily::BOLD);
+  renderer.drawText(UI_12_FONT_ID, rect.x + LyraMetrics::values.contentSidePadding,
+                    rect.y + LyraMetrics::values.batteryBarHeight + 3, title.c_str(), true, EpdFontFamily::BOLD);
+  renderer.drawLine(rect.x, rect.y + rect.height - 3, rect.x + rect.width - 1, rect.y + rect.height - 3, 3, true);
+}
 
 void drawInlineProgressCircle(const GfxRenderer& renderer, const int x, const int y, const int size,
                               const float progressPercent) {
@@ -358,16 +382,16 @@ void RecentBooksGridActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_MENU_RECENT_BOOKS));
-
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  drawGridHeader(renderer, pageWidth);
+  constexpr int contentTop = kLyraGridContentTop;
   constexpr int titleStripHeight = 32;
   constexpr int titleGridGap = 16;
   constexpr int selectionPadding = 4;
   constexpr int selectionOutlineGap = 2;
   constexpr int selectionOuterInset = selectionPadding + selectionOutlineGap;
-  const int rowSpacing = metrics.verticalSpacing + 4;
-  const int totalGridWidth = kGridColumns * COVER_WIDTH + (kGridColumns - 1) * metrics.verticalSpacing;
+  constexpr int gridSpacing = kLyraGridSpacing;
+  constexpr int rowSpacing = gridSpacing + 4;
+  constexpr int totalGridWidth = kGridColumns * COVER_WIDTH + (kGridColumns - 1) * gridSpacing;
   const int startXOffset = (pageWidth - totalGridWidth) / 2;
 
   const int totalBooks = static_cast<int>(recentBooks.size());
@@ -416,7 +440,7 @@ void RecentBooksGridActivity::render(RenderLock&&) {
       const int bookIdx = pageStart + i;
       const int col = i % kGridColumns;
       const int row = i / kGridColumns;
-      const int x = startXOffset + col * (COVER_WIDTH + metrics.verticalSpacing);
+      const int x = startXOffset + col * (COVER_WIDTH + gridSpacing);
       const int y = contentTop + titleStripHeight + titleGridGap + row * (COVER_HEIGHT + rowSpacing);
 
       const int bx = x;
