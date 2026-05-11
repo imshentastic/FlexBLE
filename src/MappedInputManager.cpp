@@ -1,6 +1,7 @@
 #include "MappedInputManager.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "CrossPointSettings.h"
 #include "GlobalActions.h"
@@ -19,6 +20,59 @@ constexpr SideLayoutMap kSideLayouts[] = {
     {HalGPIO::BTN_DOWN, HalGPIO::BTN_UP},
 };
 
+bool isReaderLandscapeOrientation() {
+  return SETTINGS.orientation == CrossPointSettings::LANDSCAPE_CW ||
+         SETTINGS.orientation == CrossPointSettings::LANDSCAPE_CCW;
+}
+
+ButtonIndex invertFrontButtonPosition(const ButtonIndex button) {
+  switch (button) {
+    case HalGPIO::BTN_BACK:
+      return HalGPIO::BTN_RIGHT;
+    case HalGPIO::BTN_CONFIRM:
+      return HalGPIO::BTN_LEFT;
+    case HalGPIO::BTN_LEFT:
+      return HalGPIO::BTN_CONFIRM;
+    case HalGPIO::BTN_RIGHT:
+      return HalGPIO::BTN_BACK;
+    default:
+      return button;
+  }
+}
+
+ButtonIndex mapFrontButtonForReaderOrientation(const ButtonIndex button, const ButtonIndex leftButton,
+                                               const ButtonIndex rightButton, const bool readerMode) {
+  if (!readerMode) {
+    return button;
+  }
+
+  const auto orientationMode =
+      static_cast<CrossPointSettings::FRONT_BUTTON_ORIENTATION_AWARE>(SETTINGS.frontButtonOrientationAware);
+
+  if (orientationMode == CrossPointSettings::FRONT_ORIENTATION_AWARE_ALL_BUTTONS &&
+      SETTINGS.orientation == CrossPointSettings::INVERTED) {
+    return invertFrontButtonPosition(button);
+  }
+
+  if (orientationMode != CrossPointSettings::FRONT_ORIENTATION_AWARE_OFF && isReaderLandscapeOrientation()) {
+    if (button == leftButton) {
+      return rightButton;
+    }
+    if (button == rightButton) {
+      return leftButton;
+    }
+  }
+
+  return button;
+}
+
+SideLayoutMap mapSideLayoutForReaderOrientation(SideLayoutMap side, const bool readerMode) {
+  if (readerMode && SETTINGS.sideButtonOrientationAware && isReaderLandscapeOrientation()) {
+    std::swap(side.pageBack, side.pageForward);
+  }
+  return side;
+}
+
 #ifdef SIMULATOR
 size_t buttonIndex(MappedInputManager::Button button) { return static_cast<size_t>(button); }
 #endif
@@ -27,19 +81,27 @@ size_t buttonIndex(MappedInputManager::Button button) { return static_cast<size_
 
 bool MappedInputManager::mapButton(const Button button, bool (HalGPIO::*fn)(uint8_t) const) const {
   const auto sideLayout = static_cast<CrossPointSettings::SIDE_BUTTON_LAYOUT>(SETTINGS.sideButtonLayout);
-  const auto& side = kSideLayouts[sideLayout];
+  const auto side = mapSideLayoutForReaderOrientation(kSideLayouts[sideLayout], readerMode);
 
   const bool useReaderMapping = readerMode && SETTINGS.readerFrontButtonsEnabled;
+  const ButtonIndex btnBack = useReaderMapping ? SETTINGS.readerFrontButtonBack : SETTINGS.frontButtonBack;
+  const ButtonIndex btnConfirm = useReaderMapping ? SETTINGS.readerFrontButtonConfirm : SETTINGS.frontButtonConfirm;
+  const ButtonIndex btnLeft = useReaderMapping ? SETTINGS.readerFrontButtonLeft : SETTINGS.frontButtonLeft;
+  const ButtonIndex btnRight = useReaderMapping ? SETTINGS.readerFrontButtonRight : SETTINGS.frontButtonRight;
+  const ButtonIndex mappedBack = mapFrontButtonForReaderOrientation(btnBack, btnLeft, btnRight, readerMode);
+  const ButtonIndex mappedConfirm = mapFrontButtonForReaderOrientation(btnConfirm, btnLeft, btnRight, readerMode);
+  const ButtonIndex mappedLeft = mapFrontButtonForReaderOrientation(btnLeft, btnLeft, btnRight, readerMode);
+  const ButtonIndex mappedRight = mapFrontButtonForReaderOrientation(btnRight, btnLeft, btnRight, readerMode);
 
   switch (button) {
     case Button::Back:
-      return (gpio.*fn)(useReaderMapping ? SETTINGS.readerFrontButtonBack : SETTINGS.frontButtonBack);
+      return (gpio.*fn)(mappedBack);
     case Button::Confirm:
-      return (gpio.*fn)(useReaderMapping ? SETTINGS.readerFrontButtonConfirm : SETTINGS.frontButtonConfirm);
+      return (gpio.*fn)(mappedConfirm);
     case Button::Left:
-      return (gpio.*fn)(useReaderMapping ? SETTINGS.readerFrontButtonLeft : SETTINGS.frontButtonLeft);
+      return (gpio.*fn)(mappedLeft);
     case Button::Right:
-      return (gpio.*fn)(useReaderMapping ? SETTINGS.readerFrontButtonRight : SETTINGS.frontButtonRight);
+      return (gpio.*fn)(mappedRight);
     case Button::Up:
       // Side buttons remain fixed for Up/Down.
       return (gpio.*fn)(HalGPIO::BTN_UP);
@@ -189,17 +251,21 @@ unsigned long MappedInputManager::getHeldTime() const {
 MappedInputManager::Labels MappedInputManager::mapLabels(const char* back, const char* confirm, const char* previous,
                                                          const char* next) const {
   const bool useReaderMapping = readerMode && SETTINGS.readerFrontButtonsEnabled;
-  const uint8_t btnBack = useReaderMapping ? SETTINGS.readerFrontButtonBack : SETTINGS.frontButtonBack;
-  const uint8_t btnConfirm = useReaderMapping ? SETTINGS.readerFrontButtonConfirm : SETTINGS.frontButtonConfirm;
-  const uint8_t btnLeft = useReaderMapping ? SETTINGS.readerFrontButtonLeft : SETTINGS.frontButtonLeft;
-  const uint8_t btnRight = useReaderMapping ? SETTINGS.readerFrontButtonRight : SETTINGS.frontButtonRight;
+  const ButtonIndex btnBack = useReaderMapping ? SETTINGS.readerFrontButtonBack : SETTINGS.frontButtonBack;
+  const ButtonIndex btnConfirm = useReaderMapping ? SETTINGS.readerFrontButtonConfirm : SETTINGS.frontButtonConfirm;
+  const ButtonIndex btnLeft = useReaderMapping ? SETTINGS.readerFrontButtonLeft : SETTINGS.frontButtonLeft;
+  const ButtonIndex btnRight = useReaderMapping ? SETTINGS.readerFrontButtonRight : SETTINGS.frontButtonRight;
+  const ButtonIndex mappedBack = mapFrontButtonForReaderOrientation(btnBack, btnLeft, btnRight, readerMode);
+  const ButtonIndex mappedConfirm = mapFrontButtonForReaderOrientation(btnConfirm, btnLeft, btnRight, readerMode);
+  const ButtonIndex mappedLeft = mapFrontButtonForReaderOrientation(btnLeft, btnLeft, btnRight, readerMode);
+  const ButtonIndex mappedRight = mapFrontButtonForReaderOrientation(btnRight, btnLeft, btnRight, readerMode);
 
   // Build the label order based on the configured hardware mapping.
-  auto labelForHardware = [&](uint8_t hw) -> const char* {
-    if (hw == btnBack) return back;
-    if (hw == btnConfirm) return confirm;
-    if (hw == btnLeft) return previous;
-    if (hw == btnRight) return next;
+  auto labelForHardware = [&](ButtonIndex hw) -> const char* {
+    if (hw == mappedBack) return back;
+    if (hw == mappedConfirm) return confirm;
+    if (hw == mappedLeft) return previous;
+    if (hw == mappedRight) return next;
     return "";
   };
 
