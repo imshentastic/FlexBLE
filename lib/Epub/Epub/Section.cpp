@@ -194,11 +194,13 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
                                 const uint16_t viewportWidth, const uint16_t viewportHeight,
                                 const bool hyphenationEnabled, const bool embeddedStyle, const uint8_t imageRendering,
                                 const bool bionicReadingEnabled, const bool guideReadingEnabled,
-                                const std::function<void()>& popupFn, bool* imagesWereSuppressed) {
+                                const std::function<void()>& popupFn, bool* imagesWereSuppressed,
+                                bool* layoutAbortedForLowMemory) {
   const auto localPath = epub->getSpineItem(spineIndex).href;
   const auto tmpHtmlPath = epub->getCachePath() + "/.tmp_" + std::to_string(spineIndex) + ".html";
   const auto tmpSectionPath = filePath + ".tmp";
   pageCount = 0;
+  if (layoutAbortedForLowMemory) *layoutAbortedForLowMemory = false;
   LOG_DBG("SCT", "Create section start: spine=%d viewport=%ux%u image=%u bionic=%u guide=%u free=%u maxAlloc=%u",
           spineIndex, viewportWidth, viewportHeight, imageRendering, bionicReadingEnabled, guideReadingEnabled,
           ESP.getFreeHeap(), ESP.getMaxAllocHeap());
@@ -293,6 +295,7 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
           ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   if (imagesWereSuppressed) *imagesWereSuppressed = visitor.wasLowMemoryFallbackTriggered();
+  if (layoutAbortedForLowMemory) *layoutAbortedForLowMemory = visitor.wasLowMemoryAbortTriggered();
 
   Storage.remove(tmpHtmlPath.c_str());
   if (!success) {

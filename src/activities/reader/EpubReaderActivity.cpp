@@ -1267,6 +1267,13 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     GUI.drawPopup(renderer, tr(STR_SAVE_PROGRESS_FAILED));
   };
 
+  const auto showLowMemoryLayoutError = [this]() {
+    snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_EPUB_LAYOUT_MEMORY_TITLE));
+    snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), "%s", tr(STR_EPUB_LAYOUT_MEMORY_BODY));
+    APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
+    GUI.drawPopup(renderer, tr(STR_EPUB_LAYOUT_MEMORY_TITLE));
+  };
+
   // edge case handling for sub-zero spine index
   if (currentSpineIndex < 0) {
     currentSpineIndex = 0;
@@ -1332,14 +1339,25 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
 
       bool imagesWereSuppressed = false;
-      if (!section->createSectionFile(
-              SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(), SETTINGS.extraParagraphSpacing,
-              SETTINGS.forceParagraphIndents, SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
-              SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
-              SETTINGS.bionicReadingEnabled, SETTINGS.guideReadingEnabled, popupFn, &imagesWereSuppressed)) {
-        LOG_ERR("ERS", "Failed to persist page data to SD");
+      bool layoutAbortedForLowMemory = false;
+      if (!section->createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
+                                      SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
+                                      SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                                      SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
+                                      SETTINGS.bionicReadingEnabled, SETTINGS.guideReadingEnabled, popupFn,
+                                      &imagesWereSuppressed, &layoutAbortedForLowMemory)) {
+        if (layoutAbortedForLowMemory) {
+          LOG_ERR("ERS", "EPUB section layout aborted for low heap; file may be corrupted or badly formatted");
+        }
+        if (!layoutAbortedForLowMemory) {
+          LOG_ERR("ERS", "Failed to persist page data to SD");
+        }
         section.reset();
-        showPendingSyncSaveError();
+        if (layoutAbortedForLowMemory) {
+          showLowMemoryLayoutError();
+        } else {
+          showPendingSyncSaveError();
+        }
         return;
       }
       LOG_DBG("ERS", "Cache build complete: pages=%u free=%u maxAlloc=%u", section->pageCount, ESP.getFreeHeap(),

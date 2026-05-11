@@ -20,6 +20,10 @@ constexpr char SOFT_HYPHEN_UTF8[] = "\xC2\xAD";
 constexpr size_t SOFT_HYPHEN_BYTES = 2;
 constexpr size_t PATHOLOGICAL_TOKEN_MIN_BYTES = 128;
 constexpr size_t PATHOLOGICAL_TOKEN_SCAN_BYTES = 256;
+constexpr size_t SD_FONT_PREFLIGHT_JOIN_LIMIT = 4096;
+constexpr size_t SD_FONT_PREFLIGHT_SAMPLE_BYTES = 255;
+constexpr uint32_t SD_FONT_PREFLIGHT_MIN_FREE = 64 * 1024;
+constexpr uint32_t SD_FONT_PREFLIGHT_MIN_MAX_ALLOC = 32 * 1024;
 
 // Returns the first rendered codepoint of a word (skipping leading soft hyphens).
 uint32_t firstCodepoint(const std::string& word) {
@@ -303,20 +307,6 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
   // (advanceX only, no bitmaps) for all unique codepoints in this paragraph so
   // that calculateWordWidths() can measure text without on-demand SD I/O.
   if (renderer.isSdCardFont(fontId)) {
-    // Reserve upfront so the joined text allocates exactly once. Without this,
-    // paragraphs with many words trigger a chain of vector-like reallocations
-    // inside std::string during layout — visible in prewarm timings for SD fonts.
-    size_t totalSize = hyphenationEnabled ? 1 : 0;
-    if (!words.empty()) totalSize += words.size() - 1;  // inter-word spaces
-    for (const auto& w : words) totalSize += w.size();
-    std::string allText;
-    allText.reserve(totalSize);
-    for (size_t i = 0; i < words.size(); i++) {
-      if (i > 0) allText += ' ';
-      allText += words[i];
-    }
-    if (hyphenationEnabled) allText += '-';
-
     // Style mask: only ask the SD font to load advances for styles actually
     // used in this paragraph. Style index is the low two bits (regular/bold/
     // italic/bold-italic); the underline bit is irrelevant to advance metrics.
@@ -325,7 +315,43 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
       styleMask |= static_cast<uint8_t>(1u << (static_cast<uint8_t>(s) & 0x03));
     }
     if (styleMask == 0) styleMask = 0x01;  // defensive: regular only
-    renderer.ensureSdCardFontReady(fontId, allText.c_str(), styleMask);
+
+    // Reserve upfront so the joined text allocates exactly once. Without this,
+    // paragraphs with many words trigger a chain of vector-like reallocations
+    // inside std::string during layout — visible in prewarm timings for SD fonts.
+    size_t totalSize = hyphenationEnabled ? 1 : 0;
+    if (!words.empty()) totalSize += words.size() - 1;  // inter-word spaces
+    for (const auto& w : words) totalSize += w.size();
+
+    if (totalSize <= SD_FONT_PREFLIGHT_JOIN_LIMIT && ESP.getFreeHeap() >= SD_FONT_PREFLIGHT_MIN_FREE &&
+        ESP.getMaxAllocHeap() >= SD_FONT_PREFLIGHT_MIN_MAX_ALLOC) {
+      std::string allText;
+      allText.reserve(totalSize);
+      for (size_t i = 0; i < words.size(); i++) {
+        if (i > 0) allText += ' ';
+        allText += words[i];
+      }
+      if (hyphenationEnabled) allText += '-';
+      renderer.ensureSdCardFontReady(fontId, allText.c_str(), styleMask);
+    } else {
+      char sample[SD_FONT_PREFLIGHT_SAMPLE_BYTES + 1] = {};
+      size_t sampleLen = 0;
+      for (size_t i = 0; i < words.size() && sampleLen < SD_FONT_PREFLIGHT_SAMPLE_BYTES; i++) {
+        if (i > 0) sample[sampleLen++] = ' ';
+        const std::string& word = words[i];
+        for (size_t j = 0; j < word.size() && sampleLen < SD_FONT_PREFLIGHT_SAMPLE_BYTES; j++) {
+          sample[sampleLen++] = word[j];
+        }
+      }
+      if (hyphenationEnabled && sampleLen < SD_FONT_PREFLIGHT_SAMPLE_BYTES) {
+        sample[sampleLen++] = '-';
+      }
+      sample[sampleLen] = '\0';
+      if (sampleLen > 0 && ESP.getFreeHeap() >= SD_FONT_PREFLIGHT_MIN_MAX_ALLOC &&
+          ESP.getMaxAllocHeap() >= SD_FONT_PREFLIGHT_MIN_MAX_ALLOC) {
+        renderer.ensureSdCardFontReady(fontId, sample, styleMask);
+      }
+    }
   }
 
   const int pageWidth = viewportWidth;

@@ -34,6 +34,7 @@
 - Fixed EPUB low-memory stability by skipping optional silent next-chapter indexing and sleep-page cache rebuilds when heap is already tight.
 - Fixed EPUB image handling so shared memory budgets suppress inline images and decoder work earlier under heap pressure.
 - Fixed EPUB layout stability for books with very long base64-like text runs by avoiding expensive hyphenation fallback work.
+- Fixed EPUB section indexing so low-memory text layout fails safely with a malformed-book warning instead of aborting when custom font preflight or CSS-heavy chapters exhaust heap.
 - Fixed EPUB cache validation so Crossink rebuilds `book.bin`, `sections/*.bin`, and CSS rule caches written by other CrossPoint forks instead of treating matching version numbers as compatible.
 - Fixed EPUB CSS loading and page-cache handling so low-memory CSS parsing, truncated SD writes, invalid serialized strings, and bad temp-cache promotion fail safely.
 - Fixed a Home crash after clearing reading cache by skipping optional EPUB thumbnail rebuilds when the source EPUB cache is missing.
