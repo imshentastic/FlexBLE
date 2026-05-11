@@ -33,6 +33,7 @@
 - Fixed EPUB image handling so shared memory budgets suppress inline images and decoder work earlier under heap pressure.
 - Fixed EPUB cache validation so Crossink rebuilds `book.bin`, `sections/*.bin`, and CSS rule caches written by other CrossPoint forks instead of treating matching version numbers as compatible.
 - Fixed EPUB CSS loading and page-cache handling so low-memory CSS parsing, truncated SD writes, invalid serialized strings, and bad temp-cache promotion fail safely.
+- Fixed a Home crash after clearing reading cache by skipping optional EPUB thumbnail rebuilds when the source EPUB cache is missing.
 - Fixed reader prewarm behavior by skipping image decoding, keeping mixed-style font glyphs cached together, and avoiding section rebuilds for render-quality-only option changes.
 - Fixed a KOReader Sync crash when starting sync from inside an EPUB reader session.
 - Fixed concurrent render/storage crashes by serializing `GfxRenderer` scratch-buffer access, shared SPI bus access, and failed SPI lock cleanup.

@@ -413,8 +413,12 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + progress * progressIncrement);
-            if (!epub.load(true, true)) {
+            if (!epub.load(false, true)) {
               LOG_ERR("HOME", "carousel: failed to load EPUB cache for thumb generation: %s", book.path.c_str());
+              updateRecentBookCoverPath(book, "");
+              book.coverBmpPath = "";
+              coverRendered = false;
+              requestUpdate();
               progress++;
               continue;
             }
@@ -470,8 +474,12 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + progress * progressIncrement);
-            if (!epub.load(true, true)) {
+            if (!epub.load(false, true)) {
               LOG_ERR("HOME", "failed to load EPUB cache for thumb generation: %s", book.path.c_str());
+              updateRecentBookCoverPath(book, "");
+              book.coverBmpPath = "";
+              coverRendered = false;
+              requestUpdate();
               progress++;
               continue;
             }
