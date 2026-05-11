@@ -4,6 +4,7 @@
 
 ### Added
 - Added a `Recent Books View` setting so the dedicated Recent Books screen can switch between the classic list and a 3x3 cover grid.
+- Added separate orientation-aware controls for front and side reader buttons, with front-button modes for nav-only or all-button inversion.
 - Added orientation changes to the side-button long-press action, with Up rotating counterclockwise and Down rotating clockwise.
 - Added EPUB `<hr>` rendering so horizontal rules display as visible separators instead of being ignored.
 - Added EPUB heap diagnostics around section rebuilds, image extraction, page serialization, and sleep-cache rebuilds to make low-memory crashes easier to trace.
