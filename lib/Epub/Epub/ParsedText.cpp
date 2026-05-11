@@ -18,6 +18,8 @@ namespace {
 // Soft hyphen byte pattern used throughout EPUBs (UTF-8 for U+00AD).
 constexpr char SOFT_HYPHEN_UTF8[] = "\xC2\xAD";
 constexpr size_t SOFT_HYPHEN_BYTES = 2;
+constexpr size_t PATHOLOGICAL_TOKEN_MIN_BYTES = 128;
+constexpr size_t PATHOLOGICAL_TOKEN_SCAN_BYTES = 256;
 
 // Returns the first rendered codepoint of a word (skipping leading soft hyphens).
 uint32_t firstCodepoint(const std::string& word) {
@@ -42,6 +44,30 @@ uint32_t lastCodepoint(const std::string& word) {
 }
 
 bool containsSoftHyphen(const std::string& word) { return word.find(SOFT_HYPHEN_UTF8) != std::string::npos; }
+
+bool isBase64LikeChar(const char c) {
+  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=';
+}
+
+bool isPathologicalUnbrokenToken(const std::string& word) {
+  if (word.size() < PATHOLOGICAL_TOKEN_MIN_BYTES) {
+    return false;
+  }
+
+  const size_t scanBytes = std::min(word.size(), PATHOLOGICAL_TOKEN_SCAN_BYTES);
+  size_t base64LikeCount = 0;
+  for (size_t i = 0; i < scanBytes; ++i) {
+    const char c = word[i];
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+      return false;
+    }
+    if (isBase64LikeChar(c)) {
+      ++base64LikeCount;
+    }
+  }
+
+  return base64LikeCount * 100 >= scanBytes * 95;
+}
 
 // Removes every soft hyphen in-place so rendered glyphs match measured widths.
 void stripSoftHyphensInPlace(std::string& word) {
@@ -579,6 +605,10 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
   const std::string& word = words[wordIndex];
   const auto style = wordStyles[wordIndex];
 
+  if (allowFallbackBreaks && isPathologicalUnbrokenToken(word)) {
+    return splitPathologicalTokenAtIndex(wordIndex, availableWidth, renderer, fontId, wordWidths);
+  }
+
   // Collect candidate breakpoints (byte offsets and hyphen requirements).
   auto breakInfos = Hyphenator::breakOffsets(word, allowFallbackBreaks);
   if (breakInfos.empty()) {
@@ -652,6 +682,60 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
   // Update cached widths to reflect the new prefix/remainder pairing.
   wordWidths[wordIndex] = static_cast<uint16_t>(chosenWidth);
   const uint16_t remainderWidth = measureWordWidth(renderer, fontId, remainder, style);
+  wordWidths.insert(wordWidths.begin() + wordIndex + 1, remainderWidth);
+  return true;
+}
+
+bool ParsedText::splitPathologicalTokenAtIndex(const size_t wordIndex, const int availableWidth,
+                                               const GfxRenderer& renderer, const int fontId,
+                                               std::vector<uint16_t>& wordWidths) {
+  if (availableWidth <= 0 || wordIndex >= words.size() || wordIndex >= wordWidths.size()) {
+    return false;
+  }
+
+  const std::string& word = words[wordIndex];
+  if (word.size() < 2) {
+    return false;
+  }
+
+  const auto style = wordStyles[wordIndex];
+  size_t low = 1;
+  size_t high = std::min(word.size() - 1, PATHOLOGICAL_TOKEN_SCAN_BYTES);
+  size_t chosenOffset = 0;
+  int chosenWidth = -1;
+  std::string prefix;
+  prefix.reserve(high);
+
+  while (low <= high) {
+    const size_t mid = low + (high - low) / 2;
+    prefix.assign(word.data(), mid);
+    const int prefixWidth = measureWordWidth(renderer, fontId, prefix, style);
+    if (prefixWidth <= availableWidth) {
+      chosenOffset = mid;
+      chosenWidth = prefixWidth;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  if (chosenOffset == 0) {
+    return false;
+  }
+
+  std::string remainder = word.substr(chosenOffset);
+  words[wordIndex].resize(chosenOffset);
+  words.insert(words.begin() + wordIndex + 1, remainder);
+  wordStyles.insert(wordStyles.begin() + wordIndex + 1, style);
+  wordBackgroundBlack.insert(wordBackgroundBlack.begin() + wordIndex + 1, wordBackgroundBlack[wordIndex]);
+  wordIsBionicSuffix.insert(wordIsBionicSuffix.begin() + wordIndex + 1, false);
+  wordIsGuideDot.insert(wordIsGuideDot.begin() + wordIndex + 1, false);
+  wordContinues.insert(wordContinues.begin() + wordIndex + 1, false);
+
+  wordWidths[wordIndex] = static_cast<uint16_t>(chosenWidth);
+  const uint16_t remainderWidth = remainder.size() >= PATHOLOGICAL_TOKEN_MIN_BYTES
+                                      ? std::numeric_limits<uint16_t>::max()
+                                      : measureWordWidth(renderer, fontId, remainder, style);
   wordWidths.insert(wordWidths.begin() + wordIndex + 1, remainderWidth);
   return true;
 }
