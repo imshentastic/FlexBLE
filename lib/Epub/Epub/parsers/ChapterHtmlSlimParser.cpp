@@ -750,17 +750,18 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         LOG_DBG("EHP", "Found image: src=%s", src.c_str());
 
         {
-          const uint32_t releaseFreeBefore = ESP.getFreeHeap();
-          const uint32_t releaseMaxBefore = ESP.getMaxAllocHeap();
-          if (self->renderer.releaseSdCardFontForLowMemory(self->fontId)) {
+          const auto releaseHeapBefore = MemoryBudget::snapshot();
+          if (MemoryBudget::shouldReleaseSdFontCachesForEpubInlineImage(releaseHeapBefore) &&
+              self->renderer.releaseSdCardFontForLowMemory(self->fontId)) {
+            const auto releaseHeapAfter = MemoryBudget::snapshot();
             LOG_DBG("EHP", "Released SD font caches before image extraction: free=%u->%u maxAlloc=%u->%u src=%s",
-                    releaseFreeBefore, ESP.getFreeHeap(), releaseMaxBefore, ESP.getMaxAllocHeap(), src.c_str());
+                    releaseHeapBefore.freeHeap, releaseHeapAfter.freeHeap, releaseHeapBefore.maxAllocHeap,
+                    releaseHeapAfter.maxAllocHeap, src.c_str());
           }
 
-          const uint32_t freeHeap = ESP.getFreeHeap();
-          const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
-          LOG_DBG("EHP", "Heap before image extraction: free=%u maxAlloc=%u src=%s", freeHeap, maxAllocHeap,
-                  src.c_str());
+          const auto heapBeforeImage = MemoryBudget::snapshot();
+          LOG_DBG("EHP", "Heap before image extraction: free=%u maxAlloc=%u src=%s", heapBeforeImage.freeHeap,
+                  heapBeforeImage.maxAllocHeap, src.c_str());
           if (!self->lowMemoryImageFallback && !MemoryBudget::hasHeapForEpubInlineImage("EHP", src.c_str())) {
             self->lowMemoryImageFallback = true;
           }
