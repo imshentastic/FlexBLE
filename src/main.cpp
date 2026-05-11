@@ -733,6 +733,11 @@ void loop() {
   const bool userInputDetectedForBt = gpio.wasAnyPressed() || gpio.wasAnyReleased();
   btMgr.updateActivity();
   btMgr.checkAutoReconnect(userInputDetectedForBt);
+  // Drain deferred disable from EpubReaderActivity::onExit. We can't call
+  // disable() inline from onExit because the activity manager still holds
+  // the render lock during the transition; doing it here, after loop()
+  // returns, is safe.
+  btMgr.tryDisableIfRequested();
   const bool bleRecentActivity = btMgr.hasRecentActivity();
 
   renderer.setFadingFix(SETTINGS.fadingFix);

@@ -64,6 +64,18 @@ public:
   bool disable();
   bool isEnabled() const { return _enabled; }
 
+  // Deferred disable. EpubReaderActivity::onExit sets this; the main loop
+  // drains it after activityManager.loop() releases the render lock — calling
+  // disable() inline from onExit trips an assertion because NimBLE teardown
+  // can fire callbacks that call requestUpdateAndWait() while the lock is
+  // still held.
+  void requestDisableLater() { _disableLaterRequested = true; }
+  bool tryDisableIfRequested() {
+    if (!_disableLaterRequested) return false;
+    _disableLaterRequested = false;
+    return disable();
+  }
+
   // Scanning
   void startScan(uint32_t durationMs = 10000);
   void stopScan();
@@ -116,6 +128,7 @@ private:
   uint8_t mapKeycodeToButton(uint8_t keycode, ConnectedDevice* device);
 
   bool _enabled = false;
+  bool _disableLaterRequested = false;
   bool _scanning = false;
   std::vector<BluetoothDevice> _discoveredDevices;
   std::vector<ConnectedDevice> _connectedDevices;
