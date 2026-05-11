@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <BluetoothHIDManager.h>
 #include <Epub.h>
 #include <FontCacheManager.h>
 #include <FontDecompressor.h>
@@ -41,6 +42,10 @@ GfxRenderer renderer(display);
 ActivityManager activityManager(renderer, mappedInputManager);
 FontDecompressor fontDecompressor;
 FontCacheManager fontCacheManager(renderer.getFontMap());
+
+// Updated each main-loop iteration; read by the BLE HID manager via a
+// callback so it can decide whether to inject reader-only buttons.
+static bool gBluetoothReaderContext = false;
 
 // Fonts
 EpdFont lexenddeca14RegularFont(&lexenddeca_14_regular);
@@ -500,6 +505,16 @@ void enterDeepSleep() {
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
   APP_STATE.saveToFile();
 
+  // Disable BLE before deep sleep so the NimBLE host shuts down cleanly and
+  // the radio is released before the chip powers off. Idempotent if BLE was
+  // already off (reader exit path) — defensive against the auto-sleep timer
+  // firing while the user is still in a book with BLE on.
+  auto& btMgr = BluetoothHIDManager::getInstance();
+  if (btMgr.isEnabled()) {
+    LOG_INF("SLP", "Disabling Bluetooth before deep sleep");
+    btMgr.disable();
+  }
+
   if (SETTINGS.cycleScreensaverOnTap) {
     armSleepEntryTapIsr();
     activityManager.goToSleep();
@@ -637,6 +652,15 @@ void setup() {
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
 
+  {
+    auto& btMgr = BluetoothHIDManager::getInstance();
+    btMgr.setButtonInjector(
+        [](uint8_t buttonIndex, bool pressed) { gpio.setVirtualButtonState(buttonIndex, pressed); });
+    btMgr.setButtonActivityNotifier([](uint8_t buttonIndex) { gpio.updateVirtualButtonActivity(buttonIndex); });
+    btMgr.setReaderContextCallback([]() { return gBluetoothReaderContext; });
+    btMgr.setBondedDevice(SETTINGS.bleBondedDeviceAddr, SETTINGS.bleBondedDeviceName);
+  }
+
   const auto wakeupReason = gpio.getWakeupReason();
   switch (wakeupReason) {
     case HalGPIO::WakeupReason::PowerButton:
@@ -704,6 +728,18 @@ void loop() {
   gpio.update();
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 
+  gBluetoothReaderContext = activityManager.isReaderActivity();
+  auto& btMgr = BluetoothHIDManager::getInstance();
+  const bool userInputDetectedForBt = gpio.wasAnyPressed() || gpio.wasAnyReleased();
+  btMgr.updateActivity();
+  btMgr.checkAutoReconnect(userInputDetectedForBt);
+  // Drain deferred disable from EpubReaderActivity::onExit. We can't call
+  // disable() inline from onExit because the activity manager still holds
+  // the render lock during the transition; doing it here, after loop()
+  // returns, is safe.
+  btMgr.tryDisableIfRequested();
+  const bool bleRecentActivity = btMgr.hasRecentActivity();
+
   renderer.setFadingFix(SETTINGS.fadingFix);
 
   if (Serial && millis() - lastMemPrint >= 10000) {
@@ -732,7 +768,7 @@ void loop() {
   // Check for any user activity (button press or release) or active background work
   static unsigned long lastActivityTime = millis();
   if (gpio.wasAnyPressed() || gpio.wasAnyReleased() || halTiltSensor.hadActivity() ||
-      activityManager.preventAutoSleep()) {
+      activityManager.preventAutoSleep() || bleRecentActivity) {
     lastActivityTime = millis();         // Reset inactivity timer
     powerManager.setPowerSaving(false);  // Restore normal CPU frequency on user activity
   }
