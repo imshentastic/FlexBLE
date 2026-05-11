@@ -1270,6 +1270,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   const auto showLowMemoryLayoutError = [this]() {
     snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_EPUB_LAYOUT_MEMORY_TITLE));
     snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), "%s", tr(STR_EPUB_LAYOUT_MEMORY_BODY));
+    APP_STATE.pendingAlertGoHomeOnBack.store(true, std::memory_order_relaxed);
     APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
     GUI.drawPopup(renderer, tr(STR_EPUB_LAYOUT_MEMORY_TITLE));
   };
@@ -1367,6 +1368,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s",
                  tr(STR_LOW_MEMORY_IMAGES_TITLE));
         snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), "%s", tr(STR_LOW_MEMORY_IMAGES_BODY));
+        APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
         APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
       }
     } else {
@@ -1828,6 +1830,7 @@ void EpubReaderActivity::readFolderMoveTask(void* arg) {
     snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_MOVE_TO_READ_FAILED_TITLE));
     snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_MOVE_TO_READ_FAILED_BODY),
              params->title.c_str());
+    APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
     APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
     delete params;
     vTaskDelete(nullptr);
