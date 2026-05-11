@@ -141,6 +141,63 @@ void TxtReaderActivity::loop() {
     return;
   }
 
+  if (SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_ORIENTATION_CHANGE) {
+    const bool topReleased = mappedInput.wasReleased(MappedInputManager::Button::Up);
+    const bool bottomReleased = mappedInput.wasReleased(MappedInputManager::Button::Down);
+    if (sideButtonLongPressHandled && (topReleased || bottomReleased)) {
+      sideButtonLongPressHandled = false;
+      return;
+    }
+
+    const bool longPressReady = mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS;
+    const bool topLongPressed =
+        longPressReady && (mappedInput.isPressed(MappedInputManager::Button::Up) || topReleased);
+    const bool bottomLongPressed =
+        longPressReady && (mappedInput.isPressed(MappedInputManager::Button::Down) || bottomReleased);
+
+    if (!sideButtonLongPressHandled && (topLongPressed || bottomLongPressed)) {
+      sideButtonLongPressHandled = !(topReleased || bottomReleased);
+      SETTINGS.orientation = ReaderUtils::rotatedOrientation(SETTINGS.orientation, /*clockwise=*/bottomLongPressed);
+      SETTINGS.saveToFile();
+      {
+        RenderLock lock(*this);
+        ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+        pageOffsets.clear();
+        currentPageLines.clear();
+        initialized = false;
+      }
+      requestUpdate();
+      return;
+    }
+  }
+
+  if (SETTINGS.longPressButtonBehavior == CrossPointSettings::ORIENTATION_CHANGE) {
+    const bool leftReleased = mappedInput.wasReleased(MappedInputManager::Button::Left);
+    const bool rightReleased = mappedInput.wasReleased(MappedInputManager::Button::Right);
+    if (frontButtonLongPressHandled && (leftReleased || rightReleased)) {
+      frontButtonLongPressHandled = false;
+      return;
+    }
+
+    const bool longPressReady = mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS;
+    const bool prevLongPressed = longPressReady && mappedInput.isPressed(MappedInputManager::Button::Left);
+    const bool nextLongPressed = longPressReady && mappedInput.isPressed(MappedInputManager::Button::Right);
+    if (!frontButtonLongPressHandled && (prevLongPressed || nextLongPressed)) {
+      frontButtonLongPressHandled = true;
+      SETTINGS.orientation = ReaderUtils::rotatedOrientation(SETTINGS.orientation, /*clockwise=*/prevLongPressed);
+      SETTINGS.saveToFile();
+      {
+        RenderLock lock(*this);
+        ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+        pageOffsets.clear();
+        currentPageLines.clear();
+        initialized = false;
+      }
+      requestUpdate();
+      return;
+    }
+  }
+
   auto [prevTriggered, nextTriggered, fromSideBtn, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
   (void)fromSideBtn;
   (void)fromTilt;

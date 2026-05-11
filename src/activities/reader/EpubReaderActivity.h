@@ -43,6 +43,7 @@ class EpubReaderActivity final : public Activity {
   bool longPressMenuHandled = false;
   bool longPowerButtonHandled = false;
   bool sideButtonLongPressHandled = false;
+  bool frontButtonLongPressHandled = false;
   int pageLoadRetryCount = 0;
   enum class BookmarkFeedbackType : uint8_t {
     Added,

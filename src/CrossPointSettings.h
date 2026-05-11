@@ -104,6 +104,7 @@ class CrossPointSettings {
     SIDE_LONG_CHAPTER_SKIP = 0,
     SIDE_LONG_FONT_SIZE = 1,
     SIDE_LONG_OFF = 2,
+    SIDE_LONG_ORIENTATION_CHANGE = 3,
     SIDE_LONG_PRESS_COUNT
   };
 

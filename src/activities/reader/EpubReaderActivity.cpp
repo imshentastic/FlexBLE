@@ -462,10 +462,13 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-  // Side button long-press: change font size.
-  // Always uses Button::Up (increase) and Button::Down (decrease) to keep intuitive
-  // top=bigger / bottom=smaller regardless of the Prev/Next side layout setting.
-  if (SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_FONT_SIZE) {
+  // Side button long-press actions use raw Up/Down so the direction stays
+  // physical regardless of the Prev/Next side layout setting.
+  const bool sideLongPressChangesFont =
+      SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_FONT_SIZE;
+  const bool sideLongPressChangesOrientation =
+      SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_ORIENTATION_CHANGE;
+  if (sideLongPressChangesFont || sideLongPressChangesOrientation) {
     const bool topReleased = mappedInput.wasReleased(MappedInputManager::Button::Up);
     const bool bottomReleased = mappedInput.wasReleased(MappedInputManager::Button::Down);
     if (sideButtonLongPressHandled && (topReleased || bottomReleased)) {
@@ -481,15 +484,25 @@ void EpubReaderActivity::loop() {
 
     if (!sideButtonLongPressHandled && topLongPressed) {
       sideButtonLongPressHandled = !topReleased;
-      if (SETTINGS.changeReaderFontSize(/*larger=*/true)) {
-        reindexCurrentSection();
+      if (sideLongPressChangesFont) {
+        if (SETTINGS.changeReaderFontSize(/*larger=*/true)) {
+          reindexCurrentSection();
+        }
+      } else {
+        applyOrientation(ReaderUtils::rotatedOrientation(SETTINGS.orientation, /*clockwise=*/false));
+        requestUpdate();
       }
       return;
     }
     if (!sideButtonLongPressHandled && bottomLongPressed) {
       sideButtonLongPressHandled = !bottomReleased;
-      if (SETTINGS.changeReaderFontSize(/*larger=*/false)) {
-        reindexCurrentSection();
+      if (sideLongPressChangesFont) {
+        if (SETTINGS.changeReaderFontSize(/*larger=*/false)) {
+          reindexCurrentSection();
+        }
+      } else {
+        applyOrientation(ReaderUtils::rotatedOrientation(SETTINGS.orientation, /*clockwise=*/true));
+        requestUpdate();
       }
       return;
     }
@@ -503,6 +516,53 @@ void EpubReaderActivity::loop() {
   }
   if (executeLongPowerButtonAction()) {
     return;
+  }
+
+  const bool frontLongPressAction = SETTINGS.longPressButtonBehavior == CrossPointSettings::CHAPTER_SKIP ||
+                                    SETTINGS.longPressButtonBehavior == CrossPointSettings::ORIENTATION_CHANGE;
+  if (frontLongPressAction) {
+    const bool leftReleased = mappedInput.wasReleased(MappedInputManager::Button::Left);
+    const bool rightReleased = mappedInput.wasReleased(MappedInputManager::Button::Right);
+    if (frontButtonLongPressHandled && (leftReleased || rightReleased)) {
+      frontButtonLongPressHandled = false;
+      return;
+    }
+
+    const bool longPressReady = mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS;
+    const bool prevLongPressed = longPressReady && mappedInput.isPressed(MappedInputManager::Button::Left);
+    const bool nextLongPressed = longPressReady && mappedInput.isPressed(MappedInputManager::Button::Right);
+    if (!frontButtonLongPressHandled && (prevLongPressed || nextLongPressed)) {
+      frontButtonLongPressHandled = true;
+      if (SETTINGS.longPressButtonBehavior == CrossPointSettings::CHAPTER_SKIP) {
+        if (currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount()) {
+          if (nextLongPressed) {
+            onGoHome();
+          } else {
+            currentSpineIndex = epub->getSpineItemsCount() - 1;
+            nextPageNumber = 0;
+            pendingPageJump = std::numeric_limits<uint16_t>::max();
+            requestUpdate();
+          }
+          return;
+        }
+
+        {
+          RenderLock lock(*this);
+          nextPageNumber = 0;
+          currentSpineIndex = nextLongPressed ? currentSpineIndex + 1 : currentSpineIndex - 1;
+          section.reset();
+        }
+        requestUpdate();
+        return;
+      }
+
+      const uint8_t newOrientation = nextLongPressed
+                                         ? ReaderUtils::rotatedOrientation(SETTINGS.orientation, /*clockwise=*/false)
+                                         : ReaderUtils::rotatedOrientation(SETTINGS.orientation, /*clockwise=*/true);
+      applyOrientation(newOrientation);
+      requestUpdate();
+      return;
+    }
   }
 
   auto [prevTriggered, nextTriggered, fromSideBtn, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
@@ -791,17 +851,17 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
           return;
         }
 
-        // Release Epub and Section to free ~65KB RAM for the TLS handshake.
-        LOG_DBG("KOSync", "Releasing epub for sync (heap before: %u)", (unsigned)ESP.getFreeHeap());
+        // Release the heavy Section now. Keep Epub alive until onExit(), which still
+        // needs it for stats/cache cleanup before the sync activity starts.
+        LOG_DBG("KOSync", "Releasing section for sync (heap before: %u)", (unsigned)ESP.getFreeHeap());
         {
           RenderLock lock(*this);
           if (section) {
             nextPageNumber = section->currentPage;
           }
           section.reset();
-          epub.reset();
         }
-        LOG_DBG("KOSync", "Epub released (heap after: %u)", (unsigned)ESP.getFreeHeap());
+        LOG_DBG("KOSync", "Section released for sync (heap after: %u)", (unsigned)ESP.getFreeHeap());
 
         activityManager.replaceActivity(std::make_unique<KOReaderSyncActivity>(
             renderer, mappedInput, savedEpubPath, currentSpineIndex, currentPage, totalPages, std::move(localKoPos),
