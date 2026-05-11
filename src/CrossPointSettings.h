@@ -289,6 +289,17 @@ class CrossPointSettings {
   // Language setting (Language enum index, default 0 = EN)
   uint8_t language = 0;
 
+  // Bluetooth HID page-turner support. When on, the device scans, pairs, and
+  // listens to a BLE HID remote and translates its keys into virtual button
+  // presses (front buttons, side buttons) via HalGPIO::setVirtualButtonState.
+  uint8_t bluetoothEnabled = 0;
+  // Address (e.g. "AA:BB:CC:DD:EE:FF") and name of the last successfully bonded
+  // BLE HID device. Used for auto-reconnect on next boot.
+  char bleBondedDeviceAddr[18] = "";
+  char bleBondedDeviceName[32] = "";
+  // BLE address type (0 = public, 1 = random). Required by NimBLE on reconnect.
+  uint8_t bleBondedDeviceAddrType = 0;
+
   ~CrossPointSettings() = default;
 
   // Get singleton instance
