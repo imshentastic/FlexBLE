@@ -4,6 +4,7 @@
 #include <Logging.h>
 
 #include <algorithm>
+#include <cstring>
 
 #include "AppVersion.h"
 #include "ButtonRemapActivity.h"
@@ -47,6 +48,16 @@ void SettingsActivity::rebuildSettingsLists() {
     }
     LOG_ERR("SET", "Missing control setting definition for nameId=%d", static_cast<int>(nameId));
   };
+  auto addControlSettingByKey = [&](const char* key) {
+    const auto it = std::find_if(allSettings.begin(), allSettings.end(), [key](const auto& setting) {
+      return setting.key && std::strcmp(setting.key, key) == 0;
+    });
+    if (it != allSettings.end()) {
+      controlsSettings.push_back(*it);
+      return;
+    }
+    LOG_ERR("SET", "Missing control setting definition for key=%s", key);
+  };
 
   for (const auto& setting : allSettings) {
     if (setting.category == StrId::STR_NONE_OPT || setting.category == StrId::STR_CAT_CONTROLS) continue;
@@ -77,7 +88,7 @@ void SettingsActivity::rebuildSettingsLists() {
   });
 
   // Build controls settings with section headers in desired display order
-  const size_t expectedControlsSettingsCount = hasTiltPageTurnSetting ? 13 : 11;
+  const size_t expectedControlsSettingsCount = hasTiltPageTurnSetting ? 15 : 13;
   controlsSettings.reserve(expectedControlsSettingsCount);
   controlsSettings.push_back(SettingInfo::SectionHeader(StrId::STR_POWER_BUTTON));
   addControlSetting(StrId::STR_SHORT_PWR_BTN);
@@ -86,10 +97,12 @@ void SettingsActivity::rebuildSettingsLists() {
   controlsSettings.push_back(SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons));
   controlsSettings.push_back(
       SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS_READER, SettingAction::RemapFrontButtonsReader));
+  addControlSettingByKey("frontButtonOrientationAware");
   addControlSetting(StrId::STR_LONG_PRESS_BEHAVIOR);
   addControlSetting(StrId::STR_LONG_PRESS_MENU_ACTION);
   controlsSettings.push_back(SettingInfo::SectionHeader(StrId::STR_SIDE_BUTTONS));
   addControlSetting(StrId::STR_SIDE_BTN_LAYOUT);
+  addControlSettingByKey("sideButtonOrientationAware");
   addControlSetting(StrId::STR_SIDE_BTN_LONG_PRESS);
   if (hasTiltPageTurnSetting) {
     controlsSettings.push_back(SettingInfo::SectionHeader(StrId::STR_OTHER));
