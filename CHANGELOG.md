@@ -19,6 +19,7 @@
 - Allow the web file manager and WebDAV to browse dot-prefixed hidden files when hidden files are enabled, matching the device file browser.
 
 ### Fixed
+- Fixed X3 power-button wake filtering so a short tap does not wake the device when the configured wake action requires a long press.
 - Fixed RoundedRaff home-menu navigation so Settings remains reachable when the inline Continue Reading row is visible.
 - Reduced persistent SD-card font advance-cache memory so custom fonts leave more heap available for EPUB rendering.
 - Release optional SD-card font caches before EPUB image extraction only when heap is tight so custom fonts and image-heavy chapters can coexist more reliably without unnecessary cache rebuilds.
