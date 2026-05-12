@@ -19,6 +19,7 @@
 #include <memory>
 
 #include "../settings/KOReaderSettingsActivity.h"
+#include "BookSettingsDrawerActivity.h"
 #include "BookStatsActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -919,6 +920,34 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
       break;
     case CrossPointSettings::LONG_MENU_FILE_TRANSFER:
       openFileTransfer();
+      break;
+    case CrossPointSettings::LONG_MENU_BOOK_SETTINGS:
+      startActivityForResult(std::make_unique<BookSettingsDrawerActivity>(renderer, mappedInput),
+                             [this](const ActivityResult& result) {
+                               // Drawer consumed the Confirm release that closed it, so the reader's
+                               // own long-press-handled cleanup (line ~391) never fired. Clear the
+                               // flag here so the user's next short-press Confirm opens the regular
+                               // menu instead of being silently swallowed.
+                               longPressMenuHandled = false;
+
+                               // Only re-layout if the user actually changed something. The drawer
+                               // reports this via MenuResult.settingsChanged so a no-op visit
+                               // doesn't trigger a wasteful section rebuild.
+                               const auto* menu = std::get_if<MenuResult>(&result.data);
+                               if (menu && menu->settingsChanged) {
+                                 RenderLock lock(*this);
+                                 if (section) {
+                                   cachedSpineIndex = currentSpineIndex;
+                                   cachedChapterTotalPageCount = section->pageCount;
+                                   nextPageNumber = section->currentPage;
+                                 }
+                                 section.reset();
+                               }
+                               // No explicit requestUpdate() — ActivityManager's Pop path will
+                               // automatically requestUpdateAndWait(), and adding our own here
+                               // would cause the reader page to render twice (the dark→light
+                               // greyscale pass would fire twice in succession).
+                             });
       break;
     case CrossPointSettings::LONG_MENU_OFF:
     default:
