@@ -189,6 +189,7 @@ class CrossPointSettings {
     LONG_MENU_SCREENSHOT = 10,
     LONG_MENU_CYCLE_PAGE_TURN = 11,
     LONG_MENU_FILE_TRANSFER = 12,
+    LONG_MENU_BOOK_SETTINGS = 13,
     LONG_PRESS_MENU_ACTION_COUNT
   };
 
@@ -283,7 +284,7 @@ class CrossPointSettings {
   // Image rendering mode in EPUB reader
   uint8_t imageRendering = IMAGES_DISPLAY;
   // Long-press Confirm (menu button) quick action in reader (0 = off)
-  uint8_t longPressMenuAction = LONG_MENU_OFF;
+  uint8_t longPressMenuAction = LONG_MENU_BOOK_SETTINGS;
   // Tilt-based page turning (X3 only — requires QMI8658 IMU)
   uint8_t tiltPageTurn = TILT_OFF;
   // Language setting (Language enum index, default 0 = EN)
