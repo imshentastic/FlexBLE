@@ -1,6 +1,8 @@
 #include "EpubReaderActivity.h"
 
 #include <BluetoothHIDManager.h>
+#include "../boot_sleep/SleepActivity.h"
+
 #include <Epub/Page.h>
 #include <Epub/blocks/TextBlock.h>
 #include <FontCacheManager.h>
@@ -230,6 +232,11 @@ void EpubReaderActivity::onEnter() {
 
 void EpubReaderActivity::onExit() {
   Activity::onExit();
+
+  // Snapshot the framebuffer (still holding the last rendered reader page at
+  // this point) to SD so the deep-sleep cycle path can use it as the background
+  // behind transparent sleep PNGs without needing fonts or the EPUB parser.
+  SleepActivity::snapshotFramebufferForCycle();
 
   // BLE is a reader-session-only feature: turn it off whenever the user leaves
   // a book. The actual disable() is deferred to the next main-loop tick because
