@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 #include <HalStorage.h>
+#include <HalTiltSensor.h>
 #include <I18n.h>
 
 #include <algorithm>
@@ -344,10 +345,11 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
       break;
     }
   }
-  constexpr int sectionHeaderTopPadding = 15;
+  const int sectionHeaderTopPadding = halTiltSensor.isAvailable() ? 10 : 20;
   constexpr int sectionHeaderFontId = kTitleFontId;
+  constexpr int sectionHeaderUnderlineGap = 4;
   const int sectionHeaderLineHeight = renderer.getLineHeight(sectionHeaderFontId);
-  const int sectionHeaderRowHeight = sectionHeaderLineHeight;
+  const int sectionHeaderRowHeight = sectionHeaderLineHeight + sectionHeaderUnderlineGap;
   const int selectableRowGap = hasHeaderRows ? 0 : kSelectableRowGap;
   const auto visualRowHeight = [&](int index) { return isHeaderRow(index) ? sectionHeaderRowHeight : rowHeight; };
   int totalContentHeight = 0;
@@ -380,7 +382,7 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
                      [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
       const auto title = renderer.truncatedText(sectionHeaderFontId, label.c_str(), rowWidth - kInteractiveInsetX * 2,
                                                 EpdFontFamily::BOLD);
-      const int textY = rowY + (currentRowHeight - sectionHeaderLineHeight) / 2;
+      const int textY = rowY;
       renderer.drawText(sectionHeaderFontId, rowX + kInteractiveInsetX, textY, title.c_str(), true,
                         EpdFontFamily::BOLD);
       renderer.drawLine(rowX, rowY + currentRowHeight - 1, rowX + rowWidth, rowY + currentRowHeight - 1, true);

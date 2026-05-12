@@ -4,6 +4,7 @@
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
 #include <HalStorage.h>
+#include <HalTiltSensor.h>
 #include <I18n.h>
 
 #include <algorithm>
@@ -233,10 +234,11 @@ void LyraTheme::drawListWithMetrics(const GfxRenderer& renderer, Rect rect, int 
   int rowHeight = (rowSubtitle != nullptr) ? metrics.listWithSubtitleRowHeight : metrics.listRowHeight;
   if (itemCount <= 0) return;
   const auto isHeaderRow = [&isHeader](int index) { return isHeader != nullptr && isHeader(index); };
-  constexpr int sectionHeaderTopPadding = 15;
+  const int sectionHeaderTopPadding = halTiltSensor.isAvailable() ? 10 : 20;
   constexpr int sectionHeaderFontId = UI_10_FONT_ID;
+  constexpr int sectionHeaderUnderlineGap = 4;
   const int sectionHeaderLineHeight = renderer.getLineHeight(sectionHeaderFontId);
-  const int sectionHeaderRowHeight = sectionHeaderLineHeight;
+  const int sectionHeaderRowHeight = sectionHeaderLineHeight + sectionHeaderUnderlineGap;
   const auto visualRowHeight = [&](int index) { return isHeaderRow(index) ? sectionHeaderRowHeight : rowHeight; };
   int totalContentHeight = 0;
   for (int i = 0; i < itemCount; ++i) {
@@ -300,7 +302,7 @@ void LyraTheme::drawListWithMetrics(const GfxRenderer& renderer, Rect rect, int 
                      [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
       auto truncated = renderer.truncatedText(sectionHeaderFontId, label.c_str(),
                                               contentWidth - metrics.contentSidePadding * 2, EpdFontFamily::BOLD);
-      const int headerTextY = itemY + (currentRowHeight - sectionHeaderLineHeight) / 2;
+      const int headerTextY = itemY;
       renderer.drawText(sectionHeaderFontId, rect.x + metrics.contentSidePadding, headerTextY, truncated.c_str(), true,
                         EpdFontFamily::BOLD);
       renderer.drawLine(rect.x, itemY + currentRowHeight - 1, rect.x + contentWidth, itemY + currentRowHeight - 1,
