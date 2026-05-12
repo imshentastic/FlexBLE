@@ -5,6 +5,7 @@
 #include <I18n.h>
 
 #include <algorithm>
+#include <cctype>
 #include <string>
 #include <vector>
 
@@ -326,7 +327,6 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
   (void)rowIcon;
   (void)highlightValue;
   (void)rowDimmed;
-  (void)isHeader;
   const bool hasSubtitle = static_cast<bool>(rowSubtitle);
   const int titleLineHeight = renderer.getLineHeight(kTitleFontId);
   const int subtitleLineHeight = renderer.getLineHeight(kSubtitleFontId);
@@ -336,8 +336,29 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
   const int subtitleRowHeight =
       subtitleTopPadding + titleLineHeight + subtitleInterLineGap + subtitleLineHeight + subtitleBottomPadding;
   const int rowHeight = hasSubtitle ? subtitleRowHeight : RoundedRaffMetrics::values.listRowHeight;
-  const int rowStep = rowHeight + kSelectableRowGap;
-  const int pageItems = std::max(1, rect.height / rowStep);
+  const auto isHeaderRow = [&isHeader](int index) { return isHeader != nullptr && isHeader(index); };
+  bool hasHeaderRows = false;
+  for (int i = 0; i < itemCount; ++i) {
+    if (isHeaderRow(i)) {
+      hasHeaderRows = true;
+      break;
+    }
+  }
+  constexpr int sectionHeaderTopPadding = 15;
+  constexpr int sectionHeaderFontId = kTitleFontId;
+  const int sectionHeaderLineHeight = renderer.getLineHeight(sectionHeaderFontId);
+  const int sectionHeaderRowHeight = sectionHeaderLineHeight;
+  const int selectableRowGap = hasHeaderRows ? 0 : kSelectableRowGap;
+  const auto visualRowHeight = [&](int index) { return isHeaderRow(index) ? sectionHeaderRowHeight : rowHeight; };
+  int totalContentHeight = 0;
+  for (int i = 0; i < itemCount; ++i) {
+    if (i > 0) totalContentHeight += selectableRowGap;
+    if (i > 0 && isHeaderRow(i)) totalContentHeight += sectionHeaderTopPadding;
+    totalContentHeight += visualRowHeight(i);
+  }
+  const bool contentFits = totalContentHeight <= rect.height;
+  const int rowStep = rowHeight + selectableRowGap;
+  const int pageItems = contentFits ? std::max(1, itemCount) : std::max(1, rect.height / rowStep);
   const int pageStartIndex = std::max(0, selectedIndex / pageItems) * pageItems;
 
   const int sidePadding = kListSidePadding;
@@ -345,9 +366,29 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
   const int rowWidth = rect.width - sidePadding * 2;
 
   for (int i = pageStartIndex; i < itemCount && i < pageStartIndex + pageItems; i++) {
-    const int rowY = rect.y + (i % pageItems) * rowStep;
+    int rowY = rect.y;
+    for (int j = pageStartIndex; j < i; ++j) {
+      rowY += visualRowHeight(j) + selectableRowGap;
+      if (isHeaderRow(j + 1)) rowY += sectionHeaderTopPadding;
+    }
     const bool isSelected = i == selectedIndex;
-    renderer.fillRoundedRect(rowX, rowY, rowWidth, rowHeight, kRowRadius, isSelected ? Color::Black : Color::White);
+    const int currentRowHeight = visualRowHeight(i);
+
+    if (isHeaderRow(i)) {
+      std::string label = rowTitle(i);
+      std::transform(label.begin(), label.end(), label.begin(),
+                     [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+      const auto title = renderer.truncatedText(sectionHeaderFontId, label.c_str(), rowWidth - kInteractiveInsetX * 2,
+                                                EpdFontFamily::BOLD);
+      const int textY = rowY + (currentRowHeight - sectionHeaderLineHeight) / 2;
+      renderer.drawText(sectionHeaderFontId, rowX + kInteractiveInsetX, textY, title.c_str(), true,
+                        EpdFontFamily::BOLD);
+      renderer.drawLine(rowX, rowY + currentRowHeight - 1, rowX + rowWidth, rowY + currentRowHeight - 1, true);
+      continue;
+    }
+
+    renderer.fillRoundedRect(rowX, rowY, rowWidth, currentRowHeight, kRowRadius,
+                             isSelected ? Color::Black : Color::White);
 
     constexpr int kMinTitleWidth = 40;
     constexpr int kMinValueGap = kInteractiveInsetX;
@@ -361,8 +402,8 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
               renderer.truncatedText(kTitleFontId, valueText.c_str(), maxValueWidth, EpdFontFamily::REGULAR);
           const int valueW = renderer.getTextWidth(kTitleFontId, truncatedValue.c_str(), EpdFontFamily::REGULAR);
           renderer.drawText(kTitleFontId, rowX + rowWidth - kInteractiveInsetX - valueW,
-                            rowY + (rowHeight - renderer.getLineHeight(kTitleFontId)) / 2, truncatedValue.c_str(),
-                            !isSelected, EpdFontFamily::REGULAR);
+                            rowY + (currentRowHeight - renderer.getLineHeight(kTitleFontId)) / 2,
+                            truncatedValue.c_str(), !isSelected, EpdFontFamily::REGULAR);
           textAreaWidth = std::max(0, textAreaWidth - valueW - kMinValueGap);
         }
       }
@@ -374,7 +415,7 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
 
       if (subtitleRaw.empty()) {
         // If there is no subtitle/author, center title vertically in the full row.
-        const int centeredTitleY = rowY + (rowHeight - titleLineHeight) / 2;
+        const int centeredTitleY = rowY + (currentRowHeight - titleLineHeight) / 2;
         renderer.drawText(kTitleFontId, rowX + kInteractiveInsetX, centeredTitleY, title.c_str(), !isSelected,
                           EpdFontFamily::BOLD);
       } else {
@@ -390,8 +431,8 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
     } else {
       auto title = renderer.truncatedText(kTitleFontId, rowTitle(i).c_str(), textAreaWidth, EpdFontFamily::BOLD);
       renderer.drawText(kTitleFontId, rowX + kInteractiveInsetX,
-                        rowY + (rowHeight - renderer.getLineHeight(kTitleFontId)) / 2, title.c_str(), !isSelected,
-                        EpdFontFamily::BOLD);
+                        rowY + (currentRowHeight - renderer.getLineHeight(kTitleFontId)) / 2, title.c_str(),
+                        !isSelected, EpdFontFamily::BOLD);
     }
   }
 

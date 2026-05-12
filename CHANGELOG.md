@@ -14,6 +14,7 @@
 - Added simulator tools for testing sleep/wake behavior and smoke-testing common screens and EPUB reader menus.
 
 ### Changed
+- Reduced Controls settings section spacing so the grouped controls fit better on X3 screens.
 - Temporarily hid the Lyra Carousel theme option unless `CROSSINK_ENABLE_LYRA_CAROUSEL=1` is set at build time, and migrated existing disabled selections back to Lyra while the carousel remains experimental.
 - Made front reader long-press actions trigger when the hold delay is reached while normal page turns still trigger on release.
 - Use the fast EPUB spine/TOC indexing path for books with 300+ spine entries so heavily split books build `book.bin` faster on first open.

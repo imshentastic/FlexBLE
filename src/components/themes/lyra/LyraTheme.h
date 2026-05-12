@@ -79,6 +79,15 @@ class LyraTheme : public BaseTheme {
   bool showsFileIcons() const override { return true; }
 
  protected:
+  void drawListWithMetrics(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
+                           const std::function<std::string(int index)>& rowTitle,
+                           const std::function<std::string(int index)>& rowSubtitle,
+                           const std::function<UIIcon(int index)>& rowIcon,
+                           const std::function<std::string(int index)>& rowValue, bool highlightValue,
+                           const std::function<bool(int index)>& rowDimmed,
+                           const std::function<bool(int index)>& isHeader, const ThemeMetrics& metrics,
+                           bool invertSelectedRows) const;
+
   // Returns nullptr when the icon or requested bitmap size is not available.
   static const uint8_t* iconForName(UIIcon icon, uint32_t size);
 };
