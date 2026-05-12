@@ -103,9 +103,9 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .verticalSpacing = 10,
                                  .contentSidePadding = 20,
                                  .listRowHeight = 30,
-                                 .listWithSubtitleRowHeight = 65,
-                                 .menuRowHeight = 38,
-                                 .menuSpacing = 6,
+                                 .listWithSubtitleRowHeight = 50,
+                                 .menuRowHeight = 45,
+                                 .menuSpacing = 8,
                                  .tabSpacing = 10,
                                  .tabBarHeight = 50,
                                  .scrollBarWidth = 4,
@@ -147,7 +147,7 @@ class BaseTheme {
                         bool showPercentage = true) const;  // Right aligned (UI headers)
   virtual void fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t percentage) const;
   virtual void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
-                               const char* btn4) const;
+                               const char* btn4, bool allowInvertedText = false) const;
   virtual void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const;
   virtual void drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
                         const std::function<std::string(int index)>& rowTitle,
@@ -163,8 +163,8 @@ class BaseTheme {
   virtual void drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,
                           bool selected) const;
   virtual void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
-                                   const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                   bool& bufferRestored, std::function<bool()> storeCoverBuffer,
+                                   int selectorIndex, bool& coverRendered, bool& coverBufferStored,
+                                   bool& bufferRestored, const std::function<bool()>& storeCoverBuffer,
                                    const BookReadingStats* stats = nullptr, float progressPercent = -1.0f) const;
   virtual void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                               const std::function<std::string(int index)>& buttonLabel,
@@ -181,6 +181,8 @@ class BaseTheme {
                                const char* secondaryLabel = nullptr, KeyboardKeyType keyType = KeyboardKeyType::Normal,
                                bool inactiveSelection = false) const;
   virtual bool showsFileIcons() const { return false; }
+  virtual void drawCarouselBorder(GfxRenderer& renderer, Rect coverRect, const std::vector<RecentBook>& recentBooks,
+                                  int centerIdx, bool inCarouselRow) const {}
 
   // Shared constants and helpers for battery drawing (used by all themes)
   static constexpr int batteryPercentSpacing = 4;

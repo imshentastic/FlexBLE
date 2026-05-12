@@ -50,6 +50,7 @@ class FontDownloadActivity : public Activity {
   struct ManifestFile {
     std::string name;
     size_t size = 0;
+    uint32_t crc32 = 0;
   };
 
   struct ManifestFamily {
@@ -83,7 +84,11 @@ class FontDownloadActivity : public Activity {
   bool fetchAndParseManifest();
   void downloadFamily(ManifestFamily& family);
   void downloadAll();
+  static bool computeFileCrc32(const char* path, uint32_t& outCrc);
   bool isDownloadAllSelected() const { return selectedIndex_ == 0 && !families_.empty(); }
+  bool isSelectedFamilyDeletable() const;
+  void promptDeleteSelectedFamily();
+  void onDeleteConfirmationResult(const ActivityResult& result);
   int familyIndexFromList(int listIndex) const { return listIndex - 1; }
   int listItemCount() const { return families_.empty() ? 0 : static_cast<int>(families_.size()) + 1; }
   size_t totalUninstalledSize() const;

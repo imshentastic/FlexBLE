@@ -5,6 +5,7 @@
 #include <HalStorage.h>
 #include <JPEGDEC.h>
 #include <Logging.h>
+#include <MemoryBudget.h>
 
 #include <cstdlib>
 #include <new>
@@ -89,8 +90,7 @@ int32_t jpegSeek(JPEGFILE* pFile, int32_t pos) {
 
 // JPEGDEC object is ~17 KB due to internal decode buffers.
 // Heap-allocate on demand so memory is only used during active decode.
-constexpr size_t JPEG_DECODER_APPROX_SIZE = 20 * 1024;
-constexpr size_t MIN_FREE_HEAP_FOR_JPEG = JPEG_DECODER_APPROX_SIZE + 16 * 1024;
+constexpr uint32_t JPEG_DECODER_APPROX_SIZE = 20U * 1024U;
 
 // Choose JPEGDEC's built-in scale factor for coarse downscaling.
 // Returns the scale denominator (1, 2, 4, or 8) and sets jpegScaleOption.
@@ -199,7 +199,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
   // === Bilinear interpolation (upscale: fineScale > 1.0) ===
   // Smooths block boundaries that would otherwise create visible banding
   // on progressive JPEG DC-only decode (1/8 resolution upscaled to target).
-  if (fineScaleFPX > FP_ONE && fineScaleFPY > FP_ONE) {
+  if (fineScaleFPX > FP_ONE || fineScaleFPY > FP_ONE) {
     // Pre-compute safe X range where lx0 and lx0+1 are both in [0, validW-1].
     // Only the left/right edge pixels (typically 0-2 and 1-8 respectively) need clamping.
     int safeXStart = (int)(((int64_t)blockX * fineScaleFPX + FP_MASK) >> FP_SHIFT);
@@ -341,9 +341,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
 }  // namespace
 
 bool JpegToFramebufferConverter::getDimensionsStatic(const std::string& imagePath, ImageDimensions& out) {
-  size_t freeHeap = ESP.getFreeHeap();
-  if (freeHeap < MIN_FREE_HEAP_FOR_JPEG) {
-    LOG_ERR("JPG", "Not enough heap for JPEG decoder (%u free, need %u)", freeHeap, MIN_FREE_HEAP_FOR_JPEG);
+  if (!MemoryBudget::hasHeapForImageDecoder("JPG", "JPEG", JPEG_DECODER_APPROX_SIZE)) {
     return false;
   }
 
@@ -373,9 +371,7 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
                                                      const RenderConfig& config) {
   LOG_DBG("JPG", "Decoding JPEG: %s", imagePath.c_str());
 
-  size_t freeHeap = ESP.getFreeHeap();
-  if (freeHeap < MIN_FREE_HEAP_FOR_JPEG) {
-    LOG_ERR("JPG", "Not enough heap for JPEG decoder (%u free, need %u)", freeHeap, MIN_FREE_HEAP_FOR_JPEG);
+  if (!MemoryBudget::hasHeapForImageDecoder("JPG", "JPEG", JPEG_DECODER_APPROX_SIZE)) {
     return false;
   }
 
@@ -462,14 +458,22 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
   ctx.scaledSrcHeight = (srcHeight + jpegScaleDenom - 1) / jpegScaleDenom;
   ctx.dstWidth = destWidth;
   ctx.dstHeight = destHeight;
+  if (ctx.scaledSrcWidth <= 0 || ctx.scaledSrcHeight <= 0) {
+    LOG_ERR("JPG", "Invalid scaled JPEG dimensions: src=%dx%d scaled=%dx%d dst=%dx%d", srcWidth, srcHeight,
+            ctx.scaledSrcWidth, ctx.scaledSrcHeight, destWidth, destHeight);
+    jpeg->close();
+    delete jpeg;
+    return false;
+  }
+
   ctx.fineScaleFPX = (int32_t)((int64_t)destWidth * FP_ONE / ctx.scaledSrcWidth);
-  ctx.invScaleFPX = (int32_t)((int64_t)ctx.scaledSrcWidth * FP_ONE / destWidth);
   ctx.fineScaleFPY = (int32_t)((int64_t)destHeight * FP_ONE / ctx.scaledSrcHeight);
+  ctx.invScaleFPX = (int32_t)((int64_t)ctx.scaledSrcWidth * FP_ONE / destWidth);
   ctx.invScaleFPY = (int32_t)((int64_t)ctx.scaledSrcHeight * FP_ONE / destHeight);
 
-  LOG_DBG("JPG", "JPEG %dx%d -> %dx%d (scale %.2f, jpegScale 1/%d, fineScale %.2f)%s", srcWidth, srcHeight, destWidth,
-          destHeight, targetScale, jpegScaleDenom, (float)destWidth / ctx.scaledSrcWidth,
-          isProgressive ? " [progressive]" : "");
+  LOG_DBG("JPG", "JPEG %dx%d -> %dx%d (scale %.2f, jpegScale 1/%d, fineScale %.2fx%.2f)%s", srcWidth, srcHeight,
+          destWidth, destHeight, targetScale, jpegScaleDenom, (float)destWidth / ctx.scaledSrcWidth,
+          (float)destHeight / ctx.scaledSrcHeight, isProgressive ? " [progressive]" : "");
 
   // Set pixel type to 8-bit grayscale (must be after open())
   jpeg->setPixelType(EIGHT_BIT_GRAYSCALE);

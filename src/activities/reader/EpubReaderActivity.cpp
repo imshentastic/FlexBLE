@@ -1,5 +1,6 @@
 #include "EpubReaderActivity.h"
 
+#include <Arduino.h>
 #include <Epub/Page.h>
 #include <Epub/blocks/TextBlock.h>
 #include <FontCacheManager.h>
@@ -8,9 +9,10 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <MemoryBudget.h>
 #include <esp_system.h>
 
-#include <array>
+#include <algorithm>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -19,6 +21,7 @@
 #include "BookStatsActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "EpubReaderAutoPageTurnIntervalActivity.h"
 #include "EpubReaderBookmarkListActivity.h"
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderFootnotesActivity.h"
@@ -40,8 +43,9 @@
 namespace {
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
 constexpr unsigned long longPressMenuMs = 600;
-// seconds per page, ordered slowest to fastest; index 0 is unused (off state)
-constexpr std::array<int, 8> PAGE_TURN_INTERVALS_S = {0, 60, 45, 30, 20, 15, 10, 5};
+constexpr uint16_t DEFAULT_AUTO_PAGE_TURN_INTERVAL_S = 30;
+constexpr uint16_t MIN_AUTO_PAGE_TURN_INTERVAL_S = 5;
+constexpr uint16_t MAX_AUTO_PAGE_TURN_INTERVAL_S = 120;
 constexpr int MAX_PAGE_LOAD_RETRIES = 3;
 
 int clampPercent(int percent) {
@@ -52,6 +56,10 @@ int clampPercent(int percent) {
     return 100;
   }
   return percent;
+}
+
+uint16_t clampAutoPageTurnIntervalSeconds(const uint16_t seconds) {
+  return std::clamp(seconds, MIN_AUTO_PAGE_TURN_INTERVAL_S, MAX_AUTO_PAGE_TURN_INTERVAL_S);
 }
 
 }  // namespace
@@ -222,7 +230,7 @@ void EpubReaderActivity::onEnter() {
   // Save current epub as last opened epub and add to recent books
   APP_STATE.openEpubPath = epub->getPath();
   APP_STATE.saveToFile();
-  RECENT_BOOKS.addBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath());
+  RECENT_BOOKS.addOrUpdateBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath());
 
   // Trigger first update
   requestUpdate();
@@ -422,7 +430,6 @@ void EpubReaderActivity::loop() {
                              // Always apply orientation change even if the menu was cancelled
                              const auto& menu = std::get<MenuResult>(result.data);
                              applyOrientation(menu.orientation);
-                             toggleAutoPageTurn(menu.pageTurnOption);
                              if (menu.settingsChanged) {
                                RenderLock lock(*this);
                                if (section) {
@@ -455,10 +462,13 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-  // Side button long-press: change font size.
-  // Always uses Button::Up (increase) and Button::Down (decrease) to keep intuitive
-  // top=bigger / bottom=smaller regardless of the Prev/Next side layout setting.
-  if (SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_FONT_SIZE) {
+  // Side button long-press actions use raw Up/Down so the direction stays
+  // physical regardless of the Prev/Next side layout setting.
+  const bool sideLongPressChangesFont =
+      SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_FONT_SIZE;
+  const bool sideLongPressChangesOrientation =
+      SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_ORIENTATION_CHANGE;
+  if (sideLongPressChangesFont || sideLongPressChangesOrientation) {
     const bool topReleased = mappedInput.wasReleased(MappedInputManager::Button::Up);
     const bool bottomReleased = mappedInput.wasReleased(MappedInputManager::Button::Down);
     if (sideButtonLongPressHandled && (topReleased || bottomReleased)) {
@@ -474,15 +484,25 @@ void EpubReaderActivity::loop() {
 
     if (!sideButtonLongPressHandled && topLongPressed) {
       sideButtonLongPressHandled = !topReleased;
-      if (SETTINGS.changeReaderFontSize(/*larger=*/true)) {
-        reindexCurrentSection();
+      if (sideLongPressChangesFont) {
+        if (SETTINGS.changeReaderFontSize(/*larger=*/true)) {
+          reindexCurrentSection();
+        }
+      } else {
+        applyOrientation(ReaderUtils::rotatedOrientation(SETTINGS.orientation, /*clockwise=*/false));
+        requestUpdate();
       }
       return;
     }
     if (!sideButtonLongPressHandled && bottomLongPressed) {
       sideButtonLongPressHandled = !bottomReleased;
-      if (SETTINGS.changeReaderFontSize(/*larger=*/false)) {
-        reindexCurrentSection();
+      if (sideLongPressChangesFont) {
+        if (SETTINGS.changeReaderFontSize(/*larger=*/false)) {
+          reindexCurrentSection();
+        }
+      } else {
+        applyOrientation(ReaderUtils::rotatedOrientation(SETTINGS.orientation, /*clockwise=*/true));
+        requestUpdate();
       }
       return;
     }
@@ -496,6 +516,53 @@ void EpubReaderActivity::loop() {
   }
   if (executeLongPowerButtonAction()) {
     return;
+  }
+
+  const bool frontLongPressAction = SETTINGS.longPressButtonBehavior == CrossPointSettings::CHAPTER_SKIP ||
+                                    SETTINGS.longPressButtonBehavior == CrossPointSettings::ORIENTATION_CHANGE;
+  if (frontLongPressAction) {
+    const bool leftReleased = mappedInput.wasReleased(MappedInputManager::Button::Left);
+    const bool rightReleased = mappedInput.wasReleased(MappedInputManager::Button::Right);
+    if (frontButtonLongPressHandled && (leftReleased || rightReleased)) {
+      frontButtonLongPressHandled = false;
+      return;
+    }
+
+    const bool longPressReady = mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS;
+    const bool prevLongPressed = longPressReady && mappedInput.isPressed(MappedInputManager::Button::Left);
+    const bool nextLongPressed = longPressReady && mappedInput.isPressed(MappedInputManager::Button::Right);
+    if (!frontButtonLongPressHandled && (prevLongPressed || nextLongPressed)) {
+      frontButtonLongPressHandled = true;
+      if (SETTINGS.longPressButtonBehavior == CrossPointSettings::CHAPTER_SKIP) {
+        if (currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount()) {
+          if (nextLongPressed) {
+            onGoHome();
+          } else {
+            currentSpineIndex = epub->getSpineItemsCount() - 1;
+            nextPageNumber = 0;
+            pendingPageJump = std::numeric_limits<uint16_t>::max();
+            requestUpdate();
+          }
+          return;
+        }
+
+        {
+          RenderLock lock(*this);
+          nextPageNumber = 0;
+          currentSpineIndex = nextLongPressed ? currentSpineIndex + 1 : currentSpineIndex - 1;
+          section.reset();
+        }
+        requestUpdate();
+        return;
+      }
+
+      const uint8_t newOrientation = nextLongPressed
+                                         ? ReaderUtils::rotatedOrientation(SETTINGS.orientation, /*clockwise=*/false)
+                                         : ReaderUtils::rotatedOrientation(SETTINGS.orientation, /*clockwise=*/true);
+      applyOrientation(newOrientation);
+      requestUpdate();
+      return;
+    }
   }
 
   auto [prevTriggered, nextTriggered, fromSideBtn, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
@@ -784,17 +851,17 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
           return;
         }
 
-        // Release Epub and Section to free ~65KB RAM for the TLS handshake.
-        LOG_DBG("KOSync", "Releasing epub for sync (heap before: %u)", (unsigned)ESP.getFreeHeap());
+        // Release the heavy Section now. Keep Epub alive until onExit(), which still
+        // needs it for stats/cache cleanup before the sync activity starts.
+        LOG_DBG("KOSync", "Releasing section for sync (heap before: %u)", (unsigned)ESP.getFreeHeap());
         {
           RenderLock lock(*this);
           if (section) {
             nextPageNumber = section->currentPage;
           }
           section.reset();
-          epub.reset();
         }
-        LOG_DBG("KOSync", "Epub released (heap after: %u)", (unsigned)ESP.getFreeHeap());
+        LOG_DBG("KOSync", "Section released for sync (heap after: %u)", (unsigned)ESP.getFreeHeap());
 
         activityManager.replaceActivity(std::make_unique<KOReaderSyncActivity>(
             renderer, mappedInput, savedEpubPath, currentSpineIndex, currentPage, totalPages, std::move(localKoPos),
@@ -849,6 +916,8 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::AUTO_PAGE_TURN:
+      openAutoPageTurnIntervalPicker();
+      break;
     case EpubReaderMenuActivity::MenuAction::ROTATE_SCREEN:
     case EpubReaderMenuActivity::MenuAction::READER_OPTIONS:
       break;
@@ -876,6 +945,18 @@ void EpubReaderActivity::openFileTransfer() {
   }
 
   activityManager.goToFileTransfer(epub ? epub->getPath() : std::string{});
+}
+
+void EpubReaderActivity::openAutoPageTurnIntervalPicker(const bool ignoreInitialConfirmRelease) {
+  startActivityForResult(
+      std::make_unique<EpubReaderAutoPageTurnIntervalActivity>(renderer, mappedInput, getAutoPageTurnIntervalSeconds(),
+                                                               ignoreInitialConfirmRelease),
+      [this](const ActivityResult& result) {
+        if (!result.isCancelled) {
+          setAutoPageTurnIntervalSeconds(static_cast<uint16_t>(std::get<AutoPageTurnResult>(result.data).seconds));
+        }
+        requestUpdate();
+      });
 }
 
 void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS_MENU_ACTION action) {
@@ -924,17 +1005,18 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
       onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction::SCREENSHOT);
       break;
     case CrossPointSettings::LONG_MENU_CYCLE_PAGE_TURN:
-      // Cycle Off->5s->10s->15s->20s->30s->45s->60s->Off (indices: 0,7,6,5,4,3,2,1)
-      if (currentPageTurnOption == 0) {
-        currentPageTurnOption = static_cast<uint8_t>(PAGE_TURN_INTERVALS_S.size() - 1);
-      } else {
-        currentPageTurnOption--;
-      }
-      toggleAutoPageTurn(currentPageTurnOption);
-      requestUpdate();
+      openAutoPageTurnIntervalPicker(/*ignoreInitialConfirmRelease=*/true);
       break;
     case CrossPointSettings::LONG_MENU_FILE_TRANSFER:
       openFileTransfer();
+      break;
+    case CrossPointSettings::LONG_MENU_TOGGLE_TILT_PAGE_TURN:
+      if (halTiltSensor.isAvailable()) {
+        SETTINGS.tiltPageTurn = SETTINGS.tiltPageTurn == CrossPointSettings::TILT_OFF ? CrossPointSettings::TILT_NORMAL
+                                                                                      : CrossPointSettings::TILT_OFF;
+        SETTINGS.saveToFile();
+        halTiltSensor.clearPendingEvents();
+      }
       break;
     case CrossPointSettings::LONG_MENU_OFF:
     default:
@@ -978,6 +1060,9 @@ bool EpubReaderActivity::executeShortPowerButtonAction() {
       return true;
     case CrossPointSettings::SHORT_PWRBTN::FILE_TRANSFER:
       executeReaderQuickAction(CrossPointSettings::LONG_MENU_FILE_TRANSFER);
+      return true;
+    case CrossPointSettings::SHORT_PWRBTN::TOGGLE_TILT_PAGE_TURN:
+      executeReaderQuickAction(CrossPointSettings::LONG_MENU_TOGGLE_TILT_PAGE_TURN);
       return true;
     default:
       return false;
@@ -1038,6 +1123,9 @@ bool EpubReaderActivity::executeLongPowerButtonAction() {
       return true;
     case CrossPointSettings::SHORT_PWRBTN::FILE_TRANSFER:
       executeReaderQuickAction(CrossPointSettings::LONG_MENU_FILE_TRANSFER);
+      return true;
+    case CrossPointSettings::SHORT_PWRBTN::TOGGLE_TILT_PAGE_TURN:
+      executeReaderQuickAction(CrossPointSettings::LONG_MENU_TOGGLE_TILT_PAGE_TURN);
       return true;
     default:
       return false;
@@ -1114,15 +1202,23 @@ void EpubReaderActivity::applyOrientation(const uint8_t orientation) {
   }
 }
 
-void EpubReaderActivity::toggleAutoPageTurn(const uint8_t selectedPageTurnOption) {
-  currentPageTurnOption = selectedPageTurnOption;
-  if (selectedPageTurnOption == 0 || selectedPageTurnOption >= PAGE_TURN_INTERVALS_S.size()) {
+uint16_t EpubReaderActivity::getAutoPageTurnIntervalSeconds() const {
+  const uint16_t seconds = static_cast<uint16_t>(pageTurnDuration / 1000UL);
+  if (seconds == 0) {
+    return DEFAULT_AUTO_PAGE_TURN_INTERVAL_S;
+  }
+  return clampAutoPageTurnIntervalSeconds(seconds);
+}
+
+void EpubReaderActivity::setAutoPageTurnIntervalSeconds(uint16_t seconds) {
+  if (seconds == 0) {
     automaticPageTurnActive = false;
     return;
   }
 
+  seconds = clampAutoPageTurnIntervalSeconds(seconds);
   lastPageTurnTime = millis();
-  pageTurnDuration = static_cast<unsigned long>(PAGE_TURN_INTERVALS_S[selectedPageTurnOption]) * 1000UL;
+  pageTurnDuration = static_cast<unsigned long>(seconds) * 1000UL;
   automaticPageTurnActive = true;
 
   const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
@@ -1185,6 +1281,14 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     GUI.drawPopup(renderer, tr(STR_SAVE_PROGRESS_FAILED));
   };
 
+  const auto showLowMemoryLayoutError = [this]() {
+    snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_EPUB_LAYOUT_MEMORY_TITLE));
+    snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), "%s", tr(STR_EPUB_LAYOUT_MEMORY_BODY));
+    APP_STATE.pendingAlertGoHomeOnBack.store(true, std::memory_order_relaxed);
+    APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
+    GUI.drawPopup(renderer, tr(STR_EPUB_LAYOUT_MEMORY_TITLE));
+  };
+
   // edge case handling for sub-zero spine index
   if (currentSpineIndex < 0) {
     currentSpineIndex = 0;
@@ -1234,7 +1338,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
   if (!section) {
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
-    LOG_DBG("ERS", "Loading file: %s, index: %d", filepath.c_str(), currentSpineIndex);
+    LOG_DBG("ERS", "Loading file: %s, index: %d (free=%u, maxAlloc=%u)", filepath.c_str(), currentSpineIndex,
+            ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer));
 
     if (!section->loadSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
@@ -1242,32 +1347,47 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                                   SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
                                   SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
                                   SETTINGS.bionicReadingEnabled, SETTINGS.guideReadingEnabled)) {
-      LOG_DBG("ERS", "Cache not found, building...");
+      LOG_DBG("ERS", "Cache not found, building... (free=%u, maxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
       GUI.drawPopup(renderer, tr(STR_INDEXING));
 
       const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
 
       bool imagesWereSuppressed = false;
-      if (!section->createSectionFile(
-              SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(), SETTINGS.extraParagraphSpacing,
-              SETTINGS.forceParagraphIndents, SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
-              SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
-              SETTINGS.bionicReadingEnabled, SETTINGS.guideReadingEnabled, popupFn, &imagesWereSuppressed)) {
-        LOG_ERR("ERS", "Failed to persist page data to SD");
+      bool layoutAbortedForLowMemory = false;
+      if (!section->createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
+                                      SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
+                                      SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                                      SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
+                                      SETTINGS.bionicReadingEnabled, SETTINGS.guideReadingEnabled, popupFn,
+                                      &imagesWereSuppressed, &layoutAbortedForLowMemory)) {
+        if (layoutAbortedForLowMemory) {
+          LOG_ERR("ERS", "EPUB section layout aborted for low heap; file may be corrupted or badly formatted");
+        }
+        if (!layoutAbortedForLowMemory) {
+          LOG_ERR("ERS", "Failed to persist page data to SD");
+        }
         section.reset();
-        showPendingSyncSaveError();
+        if (layoutAbortedForLowMemory) {
+          showLowMemoryLayoutError();
+        } else {
+          showPendingSyncSaveError();
+        }
         return;
       }
+      LOG_DBG("ERS", "Cache build complete: pages=%u free=%u maxAlloc=%u", section->pageCount, ESP.getFreeHeap(),
+              ESP.getMaxAllocHeap());
 
       if (imagesWereSuppressed) {
         snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s",
                  tr(STR_LOW_MEMORY_IMAGES_TITLE));
         snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), "%s", tr(STR_LOW_MEMORY_IMAGES_BODY));
+        APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
         APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
       }
     } else {
-      LOG_DBG("ERS", "Cache found, skipping build...");
+      LOG_DBG("ERS", "Cache found, skipping build... (pages=%u, free=%u, maxAlloc=%u)", section->pageCount,
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     }
 
     if (pendingPageJump.has_value()) {
@@ -1422,13 +1542,21 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
     return;
   }
 
-  LOG_DBG("ERS", "Silently indexing next chapter: %d", nextSpineIndex);
+  if (!MemoryBudget::hasHeapForOptionalEpubRebuild("ERS", "silent next-chapter indexing", nextSpineIndex)) {
+    return;
+  }
+
+  LOG_DBG("ERS", "Silently indexing next chapter: %d (free=%u, maxAlloc=%u)", nextSpineIndex, ESP.getFreeHeap(),
+          ESP.getMaxAllocHeap());
   if (!nextSection.createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
                                      SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
                                      SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
                                      SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
                                      SETTINGS.bionicReadingEnabled, SETTINGS.guideReadingEnabled)) {
     LOG_ERR("ERS", "Failed silent indexing for chapter: %d", nextSpineIndex);
+  } else {
+    LOG_DBG("ERS", "Silent indexing complete: chapter=%d pages=%u free=%u maxAlloc=%u", nextSpineIndex,
+            nextSection.pageCount, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 }
 
@@ -1445,7 +1573,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   fcm->resetStats();
   const uint32_t heapBefore = esp_get_free_heap_size();
   auto scope = fcm->createPrewarmScope();
-  page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);  // scan pass
+  page->renderText(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);  // scan pass
   scope.endScanAndPrewarm();
   const uint32_t heapAfter = esp_get_free_heap_size();
   fcm->logStats("prewarm");
@@ -1716,6 +1844,7 @@ void EpubReaderActivity::readFolderMoveTask(void* arg) {
     snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_MOVE_TO_READ_FAILED_TITLE));
     snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), tr(STR_MOVE_TO_READ_FAILED_BODY),
              params->title.c_str());
+    APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
     APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
     delete params;
     vTaskDelete(nullptr);
@@ -1786,7 +1915,12 @@ bool EpubReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gf
                                 SETTINGS.paragraphAlignment, viewportWidth, viewportHeight, SETTINGS.hyphenationEnabled,
                                 SETTINGS.embeddedStyle, SETTINGS.imageRendering, SETTINGS.bionicReadingEnabled,
                                 SETTINGS.guideReadingEnabled)) {
-    LOG_DBG("SLP", "EPUB: section cache not found for spine %d, rebuilding", spineIndex);
+    if (!MemoryBudget::hasHeapForOptionalEpubRebuild("SLP", "EPUB sleep-page cache rebuild", spineIndex)) {
+      return false;
+    }
+
+    LOG_DBG("SLP", "EPUB: section cache not found for spine %d, rebuilding (free=%u, maxAlloc=%u)", spineIndex,
+            ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     if (!section->createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
                                     SETTINGS.extraParagraphSpacing, SETTINGS.forceParagraphIndents,
                                     SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
@@ -1795,6 +1929,8 @@ bool EpubReaderActivity::drawCurrentPageToBuffer(const std::string& filePath, Gf
       LOG_ERR("SLP", "EPUB: failed to rebuild section cache for spine %d", spineIndex);
       return false;
     }
+    LOG_DBG("SLP", "EPUB: section cache rebuilt for spine %d (pages=%u, free=%u, maxAlloc=%u)", spineIndex,
+            section->pageCount, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 
   if (pageNumber < 0 || pageNumber >= section->pageCount) pageNumber = 0;

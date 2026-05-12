@@ -21,6 +21,7 @@
 #include "RecentBooksStore.h"
 #include "XtcReaderChapterSelectionActivity.h"
 #include "components/UITheme.h"
+#include "components/themes/lyra/LyraCarouselTheme.h"
 #include "fontIds.h"
 
 void XtcReaderActivity::onEnter() {
@@ -41,7 +42,7 @@ void XtcReaderActivity::onEnter() {
   // Save current XTC as last opened book and add to recent books
   APP_STATE.openEpubPath = xtc->getPath();
   APP_STATE.saveToFile();
-  RECENT_BOOKS.addBook(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getThumbBmpPath());
+  RECENT_BOOKS.addOrUpdateBook(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getThumbBmpPath());
 
   // Trigger first update
   requestUpdate();
@@ -54,6 +55,15 @@ void XtcReaderActivity::onExit() {
 
   APP_STATE.readerActivityLoadCount = 0;
   APP_STATE.saveToFile();
+
+  // Generate carousel thumbnails while XTC is still loaded so the home screen
+  // can display the cover on the very first render without a loading popup.
+  if (xtc &&
+      static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_CAROUSEL) {
+    xtc->generateThumbBmp(LyraCarouselTheme::kCenterCoverW, LyraCarouselTheme::kCenterCoverH);
+    xtc->generateThumbBmp(LyraCarouselTheme::kSideCoverW, LyraCarouselTheme::kSideCoverH);
+  }
+
   xtc.reset();
 }
 
@@ -84,8 +94,6 @@ void XtcReaderActivity::loop() {
     return;
   }
 
-  // Front buttons fire on press when long-press chapter skip is disabled (faster response).
-  const bool frontUsePress = SETTINGS.longPressButtonBehavior == CrossPointSettings::OFF;
   // Side buttons fire on press only when long-press action is OFF.
   const bool sideUsePress = SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_OFF;
 
@@ -95,8 +103,7 @@ void XtcReaderActivity::loop() {
                                      : mappedInput.wasReleased(MappedInputManager::Button::PageBack);
   const bool sideNext = sideUsePress ? mappedInput.wasPressed(MappedInputManager::Button::PageForward)
                                      : mappedInput.wasReleased(MappedInputManager::Button::PageForward);
-  const bool frontPrev = frontUsePress ? mappedInput.wasPressed(MappedInputManager::Button::Left)
-                                       : mappedInput.wasReleased(MappedInputManager::Button::Left);
+  const bool frontPrev = mappedInput.wasReleased(MappedInputManager::Button::Left);
   const bool powerReleased = mappedInput.wasReleased(MappedInputManager::Button::Power);
   if (powerReleased && longPowerPageTurnHandled) {
     longPowerPageTurnHandled = false;
@@ -114,8 +121,44 @@ void XtcReaderActivity::loop() {
     longPowerPageTurnHandled = true;
   }
   const bool powerPageTurn = shortPowerTurn || longPowerTurn || timedLongPowerTurn;
-  const bool frontNext = frontUsePress ? (mappedInput.wasPressed(MappedInputManager::Button::Right) || powerPageTurn)
-                                       : (mappedInput.wasReleased(MappedInputManager::Button::Right) || powerPageTurn);
+  const bool frontNext = mappedInput.wasReleased(MappedInputManager::Button::Right) || powerPageTurn;
+
+  const bool frontLongPressAction = SETTINGS.longPressButtonBehavior == CrossPointSettings::CHAPTER_SKIP;
+  if (frontLongPressAction) {
+    const bool leftReleased = mappedInput.wasReleased(MappedInputManager::Button::Left);
+    const bool rightReleased = mappedInput.wasReleased(MappedInputManager::Button::Right);
+    if (frontButtonLongPressHandled && (leftReleased || rightReleased)) {
+      frontButtonLongPressHandled = false;
+      return;
+    }
+
+    const bool longPressReady = mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS;
+    const bool prevLongPressed = longPressReady && mappedInput.isPressed(MappedInputManager::Button::Left);
+    const bool nextLongPressed = longPressReady && mappedInput.isPressed(MappedInputManager::Button::Right);
+    if (!frontButtonLongPressHandled && (prevLongPressed || nextLongPressed)) {
+      frontButtonLongPressHandled = true;
+      if (currentPage >= xtc->getPageCount()) {
+        if (nextLongPressed) {
+          onGoHome();
+        } else {
+          currentPage = xtc->getPageCount() - 1;
+          requestUpdate();
+        }
+        return;
+      }
+
+      if (prevLongPressed) {
+        currentPage = currentPage >= 10 ? currentPage - 10 : 0;
+      } else {
+        currentPage += 10;
+        if (currentPage >= xtc->getPageCount()) {
+          currentPage = xtc->getPageCount();
+        }
+      }
+      requestUpdate();
+      return;
+    }
+  }
 
   const bool fromSideBtn = (sidePrev || sideNext) && !(frontPrev || frontNext);
   const bool fromTilt = tiltPrev || tiltNext;
@@ -123,6 +166,14 @@ void XtcReaderActivity::loop() {
   const bool nextTriggered = tiltNext || sideNext || frontNext;
 
   if (!prevTriggered && !nextTriggered) {
+    return;
+  }
+
+  // XTC pages are fixed-size bitmaps, so the orientation long-press action is
+  // consumed here instead of rotating/clipping the pre-rendered page image.
+  if (fromSideBtn &&
+      SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_PRESS::SIDE_LONG_ORIENTATION_CHANGE &&
+      mappedInput.getHeldTime() > ReaderUtils::SKIP_HOLD_MS) {
     return;
   }
 
@@ -337,6 +388,7 @@ void XtcReaderActivity::renderPage() {
       }
     }
 
+    // Display BW with conditional refresh based on pagesUntilFullRefresh
     ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
 
     // Pass 2: LSB buffer - mark DARK gray only (XTH value 1)
@@ -413,6 +465,7 @@ void XtcReaderActivity::renderPage() {
     renderStatusBarOverlay(StatusBarOverlayPosition::Bottom);
   }
 
+  // Display with appropriate refresh
   ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
 
   LOG_DBG("XTR", "Rendered page %lu/%lu (%u-bit)", currentPage + 1, xtc->getPageCount(), bitDepth);

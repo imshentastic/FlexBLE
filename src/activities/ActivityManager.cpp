@@ -15,6 +15,7 @@
 #include "home/FileBrowserActivity.h"
 #include "home/HomeActivity.h"
 #include "home/RecentBooksActivity.h"
+#include "home/RecentBooksGridActivity.h"
 #include "network/CrossPointWebServerActivity.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
@@ -107,7 +108,9 @@ void ActivityManager::loop() {
         }
 
         // Queue an update to ensure the popped activity gets re-rendered.
-        // This path does not require the redraw to complete before loop() continues.
+        // Do not block here: result handlers may transiently take RenderLock while
+        // reconciling state, and a synchronous wait at this point can trip the
+        // deadlock guard even though the queued repaint is sufficient.
         if (pendingAction == PendingAction::None) {
           lock.unlock();
           requestUpdate();
@@ -193,7 +196,11 @@ void ActivityManager::goToFileBrowser(std::string path) {
 }
 
 void ActivityManager::goToRecentBooks() {
-  replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
+  if (SETTINGS.recentBooksView == CrossPointSettings::RECENT_BOOKS_GRID) {
+    replaceActivity(std::make_unique<RecentBooksGridActivity>(renderer, mappedInput));
+  } else {
+    replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
+  }
 }
 
 void ActivityManager::goToBrowser() {
@@ -249,9 +256,12 @@ void ActivityManager::popActivity() {
 bool ActivityManager::preventAutoSleep() const { return currentActivity && currentActivity->preventAutoSleep(); }
 
 bool ActivityManager::isReaderActivity() const {
+  if (currentActivity && currentActivity->isReaderActivity()) {
+    return true;
+  }
+
   return std::any_of(stackActivities.begin(), stackActivities.end(),
-                     [](const auto& activity) { return activity->isReaderActivity(); }) ||
-         (currentActivity && currentActivity->isReaderActivity());
+                     [](const auto& activity) { return activity && activity->isReaderActivity(); });
 }
 
 bool ActivityManager::canSnapshotForSleepOverlay() const {

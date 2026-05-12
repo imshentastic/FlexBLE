@@ -30,8 +30,8 @@
 #include "util/StringUtils.h"
 
 namespace {
-// Folders/files to hide from the web interface file browser
-// Note: Items starting with "." are automatically hidden
+// Folders/files to hide from the web interface file browser.
+// Dot-prefixed items are hidden unless showHiddenFiles is enabled.
 constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
 constexpr uint16_t UDP_PORTS[] = {54982, 48123, 39001, 44044, 59678};
 constexpr uint16_t LOCAL_UDP_PORT = 8134;
@@ -94,7 +94,7 @@ bool isProtectedPath(const String& path) {
 
     String segment = path.substring(start, end);
 
-    if (segment.startsWith(".")) return true;
+    if (!SETTINGS.showHiddenFiles && segment.startsWith(".")) return true;
 
     for (const auto* item : HIDDEN_ITEMS) {
       if (segment.equals(item)) return true;

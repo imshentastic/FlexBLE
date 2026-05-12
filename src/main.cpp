@@ -34,6 +34,9 @@
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#ifdef SIMULATOR
+#include "simulator/SimulatorSmokeTest.h"
+#endif
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 
@@ -672,6 +675,14 @@ void loop() {
     screenshotComboActive = false;
   }
 
+#ifdef SIMULATOR
+  if (gpio.consumeSimulatorSleepRequest()) {
+    enterDeepSleep();
+    lastActivityTime = millis();
+    return;
+  }
+#endif
+
   const unsigned long sleepTimeoutMs = SETTINGS.getSleepTimeoutMs();
   if (millis() - lastActivityTime >= sleepTimeoutMs) {
     LOG_DBG("SLP", "Auto-sleep triggered after %lu ms of inactivity", sleepTimeoutMs);
@@ -697,6 +708,10 @@ void loop() {
   const unsigned long activityStartTime = millis();
   activityManager.loop();
   const unsigned long activityDuration = millis() - activityStartTime;
+
+#ifdef SIMULATOR
+  runSimulatorSmokeTestTick();
+#endif
 
   const unsigned long loopDuration = millis() - loopStartTime;
   if (loopDuration > maxLoopDuration) {

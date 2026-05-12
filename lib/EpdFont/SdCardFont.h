@@ -60,6 +60,11 @@ class SdCardFont {
   // preserves the persistent advance cache (reused across passes).
   void clearCache();
 
+  // Release optional resident caches before memory-heavy work such as EPUB
+  // image extraction. Keeps the font loaded and usable, but future layout or
+  // rendering may need to re-read font metadata from SD.
+  void releaseForLowMemory();
+
   // Drop the persistent advance cache. Call when unloading the SD font or
   // when font/size/family/glyph-table state changes.
   void clearPersistentCache();
@@ -207,7 +212,9 @@ class SdCardFont {
   // Bounded to ADVANCE_CACHE_LIMIT entries; persists across layout passes
   // (across calls to clearCache()) so repeated indexing of the same font
   // amortizes SD reads. Cleared only on font unload or clearPersistentCache().
-  static constexpr uint32_t ADVANCE_CACHE_LIMIT = 768;
+  // Keep this conservative: the cache is resident per style, so large caps
+  // quickly eat heap on the ESP32-C3.
+  static constexpr uint32_t ADVANCE_CACHE_LIMIT = 256;
   AdvanceEntry* advanceTable_[MAX_STYLES] = {};
   uint32_t advanceTableSize_[MAX_STYLES] = {};
   bool advanceTableLookup(uint8_t styleIdx, uint32_t codepoint, uint16_t* outAdvance) const;

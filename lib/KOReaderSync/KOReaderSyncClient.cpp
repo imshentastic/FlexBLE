@@ -15,6 +15,7 @@
 #include <esp_http_client.h>
 #endif
 
+#include <cstring>
 #include <ctime>
 #include <memory>
 
@@ -26,6 +27,52 @@ namespace {
 // Device identifier for CrossPoint reader
 constexpr char DEVICE_NAME[] = "CrossPoint";
 constexpr char DEVICE_ID[] = "crosspoint-reader";
+
+const char* classifyJsonBody(const char* body) {
+  if (!body || body[0] == '\0') return "empty response";
+
+  const char* cursor = body;
+  while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') {
+    cursor++;
+  }
+
+  if (*cursor == '\0') return "blank response";
+  if (*cursor == '<') return "HTML response";
+  if (*cursor != '{' && *cursor != '[') return "non-JSON response";
+  return "malformed JSON";
+}
+
+void logJsonParseFailure(const char* context, DeserializationError error, const char* body) {
+  char preview[97];
+  size_t i = 0;
+  if (body) {
+    for (; i < sizeof(preview) - 1 && body[i] != '\0'; i++) {
+      const char c = body[i];
+      preview[i] = (c == '\r' || c == '\n' || c == '\t') ? ' ' : c;
+    }
+  }
+  preview[i] = '\0';
+
+  LOG_ERR("KOSync", "%s JSON parse failed: %s (%s, preview=\"%s\")", context, error.c_str(), classifyJsonBody(body),
+          preview);
+}
+
+KOReaderSyncClient::Error validateAuthResponse(const char* body) {
+  JsonDocument doc;
+  const DeserializationError error = deserializeJson(doc, body ? body : "");
+  if (error) {
+    logJsonParseFailure("Auth", error, body);
+    return KOReaderSyncClient::JSON_ERROR;
+  }
+
+  const char* authorized = doc["authorized"] | "";
+  if (std::strcmp(authorized, "OK") != 0) {
+    LOG_ERR("KOSync", "Auth response missing authorized=OK");
+    return KOReaderSyncClient::INVALID_AUTH_RESPONSE;
+  }
+
+  return KOReaderSyncClient::OK;
+}
 
 // Cloudflare tunnels send a 3-cert Google Trust Services chain. During the TLS handshake
 // mbedTLS makes many small allocations that collectively consume ~48KB of heap. With only
@@ -158,11 +205,17 @@ KOReaderSyncClient::Error KOReaderSyncClient::authenticate() {
 
   const int httpCode = http.GET();
   lastHttpCode = httpCode;
-  http.end();
 
   LOG_DBG("KOSync", "Auth response: %d", httpCode);
 
-  if (httpCode == 200) return OK;
+  if (httpCode == 200) {
+    String responseBody = http.getString();
+    http.end();
+    return validateAuthResponse(responseBody.c_str());
+  }
+
+  http.end();
+
   if (httpCode == 401) return AUTH_FAILED;
   if (httpCode < 0) return NETWORK_ERROR;
   return SERVER_ERROR;
@@ -182,7 +235,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::authenticate() {
   LOG_DBG("KOSync", "Auth response: %d (err: %d)", httpCode, err);
 
   if (err != ESP_OK) return NETWORK_ERROR;
-  if (httpCode == 200) return OK;
+  if (httpCode == 200) return validateAuthResponse(buf.data);
   if (httpCode == 401) return AUTH_FAILED;
   return SERVER_ERROR;
 #endif
@@ -229,7 +282,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
     const DeserializationError error = deserializeJson(doc, responseBody);
 
     if (error) {
-      LOG_ERR("KOSync", "JSON parse failed: %s", error.c_str());
+      logJsonParseFailure("Get progress", error, responseBody.c_str());
       return JSON_ERROR;
     }
 
@@ -273,7 +326,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
     const DeserializationError error = deserializeJson(doc, buf.data);
 
     if (error) {
-      LOG_ERR("KOSync", "JSON parse failed: %s", error.c_str());
+      logJsonParseFailure("Get progress", error, buf.data);
       return JSON_ERROR;
     }
 
@@ -393,8 +446,10 @@ const char* KOReaderSyncClient::errorString(Error error) {
       return "JSON parse error";
     case NOT_FOUND:
       return "No progress found";
+    case INVALID_AUTH_RESPONSE:
+      return "Invalid auth response";
     case LOW_MEMORY:
-      return "Not enough memory for sync — please retry";
+      return "Not enough memory for sync - please retry";
     default:
       return "Unknown error";
   }
