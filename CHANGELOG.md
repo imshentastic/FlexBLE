@@ -1,53 +1,34 @@
 # Changelog
 
-## [v1.2.10]
+## [v1.2.10] - 2026-05-11
 
 ### Added
 - Added a `Recent Books View` setting so the dedicated Recent Books screen can switch between the classic list and a 3x3 cover grid.
-- Added separate orientation-aware controls for front and side reader buttons, with front-button modes for nav-only or all-button inversion.
-- Added `Tilt Page Turn` as a selectable reader shortcut for power-button short/long press and the front menu long-press action on devices with a tilt sensor.
-- Added orientation changes to the side-button long-press action, with Up rotating counterclockwise and Down rotating clockwise.
-- Added EPUB `<hr>` rendering so horizontal rules display as visible separators instead of being ignored.
-- Added EPUB heap diagnostics around section rebuilds, image extraction, page serialization, and sleep-cache rebuilds to make low-memory crashes easier to trace.
+- Added more flexible reader controls, including orientation-aware front/side button settings, nav-only or all-button front inversion, tilt page turn shortcuts, and side-button long-press rotation actions.
 - Added a per-session auto page turn interval picker with values from 5 to 120 seconds.
-- Added reader font coverage for block redactions, black-square ornaments, Greek category letters, and turned-comma punctuation (PR #104).
 - Added a file-browser Home/Back long-press action for toggling hidden files and folders.
+- Added EPUB rendering and diagnostics improvements, including visible `<hr>` separators and heap logs around section rebuilds, image extraction, page serialization, and sleep-cache rebuilds.
+- Added reader font coverage for block redactions, black-square ornaments, Greek category letters, and turned-comma punctuation (PR #104).
 - Added simulator tools for testing sleep/wake behavior and smoke-testing common screens and EPUB reader menus.
 
 ### Changed
 - Reduced Controls settings section spacing so the grouped controls fit better on X3 screens.
-- Temporarily hid the Lyra Carousel theme option unless `CROSSINK_ENABLE_LYRA_CAROUSEL=1` is set at build time, and migrated existing disabled selections back to Lyra while the carousel remains experimental.
 - Made front reader long-press actions trigger when the hold delay is reached while normal page turns still trigger on release.
-- Use the fast EPUB spine/TOC indexing path for books with 300+ spine entries so heavily split books build `book.bin` faster on first open.
-- Allow the web file manager and WebDAV to browse dot-prefixed hidden files when hidden files are enabled, matching the device file browser.
+- Used the fast EPUB spine/TOC indexing path for books with 300+ spine entries so heavily split books build `book.bin` faster on first open.
+- Allowed the web file manager and WebDAV to browse dot-prefixed hidden files when hidden files are enabled, matching the device file browser.
 
 ### Fixed
-- Fixed X3 power-button wake filtering so a short tap does not wake the device when the configured wake action requires a long press.
-- Fixed RoundedRaff home-menu navigation so Settings remains reachable when the inline Continue Reading row is visible.
-- Reduced persistent SD-card font advance-cache memory so custom fonts leave more heap available for EPUB rendering.
-- Release optional SD-card font caches before EPUB image extraction only when heap is tight so custom fonts and image-heavy chapters can coexist more reliably without unnecessary cache rebuilds.
-- Fixed RoundedRaff keyboard and button-hint rendering so number-row symbols and UTF-8 labels no longer overlap or disappear.
-- Fixed WiFi scan/connect screens so users can back out while a scan or connection attempt is in progress.
-- Fixed folder delete long-press timing so deletion triggers after the hold delay instead of on release.
-- Fixed missing-glyph rendering so compact UI fonts show a visible replacement symbol even when they do not include `U+FFFD`.
-- Fixed KOReader Sync authentication handling with better validation and clearer diagnostics when a server or proxy returns non-JSON content.
-- Fixed EPUB redaction and whitespace rendering by preserving whitespace-only XHTML text nodes and rendering simple black CSS backgrounds for inline spans.
-- Fixed EPUB list bullets so they stay attached to the first paragraph in `<li><p>...</p></li>` list items.
-- Fixed EPUB image scaling, low-memory image fallback, and thumbnail generation so image-heavy books are less likely to crash or reuse stale dimensions.
-- Fixed EPUB section rebuilds so image-heavy chapters use less temporary memory while laying out text after inline images.
-- Fixed EPUB low-memory stability by skipping optional silent next-chapter indexing and sleep-page cache rebuilds when heap is already tight.
-- Fixed EPUB image handling so shared memory budgets suppress inline images and decoder work earlier under heap pressure.
-- Fixed EPUB layout stability for books with very long base64-like text runs by avoiding expensive hyphenation fallback work.
-- Fixed EPUB section indexing so low-memory text layout fails safely with a malformed-book warning and Home exit path instead of aborting when custom font preflight or CSS-heavy chapters exhaust heap.
-- Fixed EPUB cache validation so Crossink rebuilds `book.bin`, `sections/*.bin`, and CSS rule caches written by other CrossPoint forks instead of treating matching version numbers as compatible.
-- Fixed EPUB CSS loading and page-cache handling so low-memory CSS parsing, truncated SD writes, invalid serialized strings, and bad temp-cache promotion fail safely.
+- Fixed reader button and shortcut behavior, including X3 power-button wake filtering, folder delete long-press timing, and WiFi scan/connect screens that could not be exited while work was in progress.
+- Fixed RoundedRaff home-menu, keyboard, and button-hint rendering issues so Settings remains reachable and compact labels no longer overlap or disappear.
+- Fixed font and glyph handling by reducing persistent SD-card font advance-cache memory, releasing optional font caches before image extraction only when heap is tight, and showing a visible replacement symbol when compact UI fonts lack `U+FFFD`.
+- Fixed KOReader Sync authentication diagnostics and an in-reader sync crash, including clearer handling when a server or proxy returns non-JSON content.
+- Fixed EPUB text rendering for redactions, whitespace-only XHTML text nodes, simple black CSS span backgrounds, list bullets in `<li><p>...</p></li>` items, and very long base64-like text runs.
+- Fixed EPUB image, thumbnail, and section-rebuild stability so image-heavy chapters use less temporary memory, scale images more reliably, avoid stale dimensions, and suppress optional image work earlier under heap pressure.
+- Fixed EPUB low-memory and cache safety by skipping optional next-chapter indexing and sleep-page cache rebuilds when heap is tight, failing safely with a malformed-book warning and Home exit path, rebuilding incompatible fork-written caches, and handling low-memory CSS parsing, truncated SD writes, invalid serialized strings, and failed temp-cache promotion.
 - Fixed a Home crash after clearing reading cache by skipping optional EPUB thumbnail rebuilds when the source EPUB cache is missing.
 - Fixed reader prewarm behavior by skipping image decoding, keeping mixed-style font glyphs cached together, and avoiding section rebuilds for render-quality-only option changes.
-- Fixed a KOReader Sync crash when starting sync from inside an EPUB reader session.
 - Fixed concurrent render/storage crashes by serializing `GfxRenderer` scratch-buffer access, shared SPI bus access, and failed SPI lock cleanup.
-- Fixed Recent Books, EPUB/XTC thumbnail caches, Lyra Carousel snapshots, and deleted-folder metadata so they stay in sync when cache files change or are removed.
-- Fixed XTC covers in the Recent Books grid so they fill cover slots instead of appearing letterboxed when the first page has a different aspect ratio.
-- Fixed Lyra Carousel cache handling so grid-sized thumbnails are not reused as carousel covers and SD snapshots are skipped after low-RAM frame-cache fallback.
+- Fixed Recent Books, EPUB/XTC thumbnail caches, deleted-folder metadata, and XTC cover scaling so cached book data stays in sync and grid covers fill their slots correctly.
 - Fixed simulator build configuration so SDL2 and simulator-provided network/OTA shims compile cleanly.
 
 ## [v1.2.9.1] - 2026-05-03
