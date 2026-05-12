@@ -290,6 +290,12 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     };
     // Only show tilt page turn setting when the QMI8658 IMU is present (X3).
     if (halTiltSensor.isAvailable()) {
+      for (auto& setting : v) {
+        if (setting.nameId == StrId::STR_SHORT_PWR_BTN || setting.nameId == StrId::STR_LONG_PRESS_ACTION ||
+            setting.nameId == StrId::STR_LONG_PRESS_MENU_ACTION) {
+          setting.enumValues.push_back(StrId::STR_TILT_PAGE_TURN);
+        }
+      }
       for (auto it = v.begin(); it != v.end(); ++it) {
         if (it->nameId == StrId::STR_SHORT_PWR_BTN) {
           v.insert(it + 1, SettingInfo::Enum(StrId::STR_TILT_PAGE_TURN, &CrossPointSettings::tiltPageTurn,

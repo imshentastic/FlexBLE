@@ -163,6 +163,7 @@ Map the **Power** or **Menu** button short/long-press action to one of the follo
 - Take Screenshot (takes a screenshot)
 - Auto Page Turn (cycles through the page turn intervals: **Off → 5s → 10s → 15s → 20s → 30s → 45s → 60s → Off →**)
 - File Transfer (opens the File Transfer menu)
+- Tilt Page Turn (turns tilt-based page turning on/off on supported devices)
 
 ### Reading stats
 
