@@ -8,22 +8,61 @@
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "SdCardFontGlobals.h"
 #include "SettingsList.h"
+#include "activities/settings/FontDownloadActivity.h"
+#include "activities/settings/FontSelectionActivity.h"
+#include "activities/settings/StatusBarSettingsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+
+namespace {
+uint8_t enumDisplayIndexForRawValue(const SettingInfo& setting, uint8_t rawValue) {
+  if (setting.enumRawValues.empty()) {
+    return rawValue;
+  }
+
+  auto it = std::find(setting.enumRawValues.begin(), setting.enumRawValues.end(), rawValue);
+  if (it == setting.enumRawValues.end()) {
+    return 0;
+  }
+  return static_cast<uint8_t>(std::distance(setting.enumRawValues.begin(), it));
+}
+
+uint8_t enumRawValueForDisplayIndex(const SettingInfo& setting, uint8_t displayIndex) {
+  if (setting.enumRawValues.empty()) {
+    return displayIndex;
+  }
+  if (displayIndex >= setting.enumRawValues.size()) {
+    return setting.enumRawValues.front();
+  }
+  return setting.enumRawValues[displayIndex];
+}
+}  // namespace
 
 void ReaderOptionsActivity::onEnter() {
   Activity::onEnter();
 
+  rebuildSettingsList();
+  requestUpdate();
+}
+
+void ReaderOptionsActivity::rebuildSettingsList() {
   settings.clear();
-  const auto allSettings = getSettingsList();
-  settings.reserve(allSettings.size());
+  sdFontSystem.refreshIfDirty();
+  const auto allSettings = getSettingsList(&sdFontSystem.registry());
+  settings.reserve(allSettings.size() + 2);
   std::copy_if(allSettings.begin(), allSettings.end(), std::back_inserter(settings),
-               [](const auto& s) { return s.category == StrId::STR_CAT_READER && s.type != SettingType::ACTION; });
+               [](const auto& s) { return s.category == StrId::STR_CAT_READER; });
+
+  const auto fontSizeSetting = std::find_if(settings.begin(), settings.end(),
+                                            [](const auto& setting) { return setting.nameId == StrId::STR_FONT_SIZE; });
+  const auto manageFontsSetting = SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts);
+  settings.insert(fontSizeSetting == settings.end() ? settings.end() : fontSizeSetting + 1, manageFontsSetting);
+  settings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
+
   settingsCount = static_cast<int>(settings.size());
   selectedIndex = 0;
-
-  requestUpdate();
 }
 
 void ReaderOptionsActivity::onExit() { Activity::onExit(); }
@@ -37,13 +76,47 @@ void ReaderOptionsActivity::toggleCurrentSetting() {
     SETTINGS.*(setting.valuePtr) = !cur;
   } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
     const uint8_t cur = SETTINGS.*(setting.valuePtr);
-    SETTINGS.*(setting.valuePtr) = (cur + 1) % static_cast<uint8_t>(setting.enumValues.size());
+    const uint8_t currentIndex = enumDisplayIndexForRawValue(setting, cur);
+    const uint8_t nextIndex = (currentIndex + 1) % static_cast<uint8_t>(setting.enumValues.size());
+    SETTINGS.*(setting.valuePtr) = enumRawValueForDisplayIndex(setting, nextIndex);
+  } else if (setting.type == SettingType::ENUM && setting.valueGetter && setting.valueSetter) {
+    if (setting.nameId == StrId::STR_FONT_FAMILY) {
+      startActivityForResult(std::make_unique<FontSelectionActivity>(renderer, mappedInput, &sdFontSystem.registry()),
+                             [this](const ActivityResult&) {
+                               SETTINGS.saveToFile();
+                               sdFontSystem.refreshIfDirty();
+                               rebuildSettingsList();
+                               requestUpdate();
+                             });
+      return;
+    }
+    const uint8_t totalValues = setting.enumStringValues.empty()
+                                    ? static_cast<uint8_t>(setting.enumValues.size())
+                                    : static_cast<uint8_t>(setting.enumStringValues.size());
+    const uint8_t cur = setting.valueGetter();
+    setting.valueSetter((cur + 1) % totalValues);
   } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
     const int8_t cur = SETTINGS.*(setting.valuePtr);
     if (cur + setting.valueRange.step > setting.valueRange.max) {
       SETTINGS.*(setting.valuePtr) = setting.valueRange.min;
     } else {
       SETTINGS.*(setting.valuePtr) = cur + setting.valueRange.step;
+    }
+  } else if (setting.type == SettingType::ACTION) {
+    if (setting.action == SettingAction::DownloadFonts) {
+      startActivityForResult(std::make_unique<FontDownloadActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) {
+                               SETTINGS.saveToFile();
+                               sdFontSystem.refreshIfDirty();
+                               rebuildSettingsList();
+                               requestUpdate();
+                             });
+      return;
+    }
+    if (setting.action == SettingAction::CustomiseStatusBar) {
+      startActivityForResult(std::make_unique<StatusBarSettingsActivity>(renderer, mappedInput),
+                             [](const ActivityResult&) { SETTINGS.saveToFile(); });
+      return;
     }
   }
 }
@@ -102,7 +175,17 @@ void ReaderOptionsActivity::render(RenderLock&&) {
         if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
           valueText = SETTINGS.*(setting.valuePtr) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
         } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
-          valueText = I18N.get(setting.enumValues[SETTINGS.*(setting.valuePtr)]);
+          const uint8_t value = SETTINGS.*(setting.valuePtr);
+          const uint8_t displayValue = enumDisplayIndexForRawValue(setting, value);
+          const uint8_t safeValue = displayValue < setting.enumValues.size() ? displayValue : 0;
+          valueText = I18N.get(setting.enumValues[safeValue]);
+        } else if (setting.type == SettingType::ENUM && setting.valueGetter) {
+          const uint8_t value = setting.valueGetter();
+          if (!setting.enumStringValues.empty() && value < setting.enumStringValues.size()) {
+            valueText = setting.enumStringValues[value];
+          } else if (value < setting.enumValues.size()) {
+            valueText = I18N.get(setting.enumValues[value]);
+          }
         } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
           valueText = std::to_string(SETTINGS.*(setting.valuePtr));
         }

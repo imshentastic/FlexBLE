@@ -8,6 +8,7 @@
 ### Changed
 - Hardened deep sleep entry by shutting WiFi down before waiting for the power button to be released.
 - Raised the web file-transfer filename limit from 100 to 150 bytes so longer uploaded filenames are preserved.
+- Made the in-reader Reader Options menu include the same Reader settings and actions as Settings > Reader.
 
 ### Fixed
 - Fixed inline EPUB images disappearing in landscape when their bottom edge slightly overlaps the screen margin.
