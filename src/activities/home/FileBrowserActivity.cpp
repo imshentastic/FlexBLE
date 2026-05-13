@@ -8,12 +8,12 @@
 
 #include <algorithm>
 
-#include "../util/ConfirmationActivity.h"
 #include "BookmarkStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "FileBrowserActionActivity.h"
 #include "MappedInputManager.h"
+#include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 

@@ -5,9 +5,9 @@
 #include <string>
 #include <vector>
 
-#include "../Activity.h"
 #include "ControlsOptionsActivity.h"
 #include "ReaderOptionsActivity.h"
+#include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
 class EpubReaderMenuActivity final : public Activity {

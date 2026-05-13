@@ -8,7 +8,7 @@
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
-#include "SdCardFontGlobals.h"
+#include "SdCardFontSystem.h"
 #include "SettingsList.h"
 #include "activities/settings/FontDownloadActivity.h"
 #include "activities/settings/FontSelectionActivity.h"

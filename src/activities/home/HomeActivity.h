@@ -4,10 +4,10 @@
 #include <optional>
 #include <vector>
 
-#include "../Activity.h"
-#include "../reader/BookReadingStats.h"
-#include "../reader/GlobalReadingStats.h"
 #include "./FileBrowserActivity.h"
+#include "activities/Activity.h"
+#include "activities/reader/BookReadingStats.h"
+#include "activities/reader/GlobalReadingStats.h"
 #include "util/ButtonNavigator.h"
 
 struct RecentBook;

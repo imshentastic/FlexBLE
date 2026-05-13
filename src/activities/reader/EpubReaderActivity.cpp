@@ -34,7 +34,7 @@
 #include "QrDisplayActivity.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
-#include "SdCardFontGlobals.h"
+#include "SdCardFontSystem.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
@@ -432,7 +432,7 @@ void EpubReaderActivity::loop() {
                              const auto& menu = std::get<MenuResult>(result.data);
                              applyOrientation(menu.orientation);
                              if (menu.settingsChanged) {
-                               ensureSdFontLoaded();
+                               sdFontSystem.ensureLoaded(renderer);
                                RenderLock lock(*this);
                                if (section) {
                                  cachedSpineIndex = currentSpineIndex;
@@ -929,7 +929,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
 
 void EpubReaderActivity::reindexCurrentSection() {
   SETTINGS.saveToFile();
-  ensureSdFontLoaded();
+  sdFontSystem.ensureLoaded(renderer);
   {
     RenderLock lock(*this);
     GUI.drawPopup(renderer, tr(STR_INDEXING));
