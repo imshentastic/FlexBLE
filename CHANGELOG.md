@@ -14,6 +14,7 @@
 ### Fixed
 - Fixed inline EPUB images disappearing in landscape when their bottom edge slightly overlaps the screen margin.
 - Fixed the SD-card font picker reopening immediately after selecting a font from Settings > Reader > Font Family.
+- Fixed in-reader font-size changes for SD card fonts not working
 
 ## [v1.2.10] - 2026-05-11
 
