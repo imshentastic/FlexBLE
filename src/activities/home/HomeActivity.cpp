@@ -1491,69 +1491,10 @@ void HomeActivity::renderCarouselFrame(int bookIdx, int slotIdx) {
 }
 
 void HomeActivity::updateSlidingWindowCache(int centerIdx, int bookCount) {
-  const auto start = millis();
-  if (!carouselFramesReady) return;
-  if (gCarouselCache.frameCount <= 1 || bookCount <= 1) return;
-  if (gCarouselCache.frameCount >= bookCount) return;
-  if (gCarouselCache.frameCount < kCarouselFrameCount) {
-    // In degraded memory mode we may only have 2 frame slots. Proactively
-    // rendering the missing adjacent frame here keeps the render task busy for
-    // ~1.5s while input continues to change on the main task, which has proven
-    // unstable on hardware. Fall back to rendering frames on demand instead of
-    // background-filling them.
-    gCarouselCache.lastCenterIdx = centerIdx;
-    return;
-  }
-  int renderedCount = 0;
-
-  const int prevIdx = (centerIdx + bookCount - 1) % bookCount;
-  const int nextIdx = (centerIdx + 1) % bookCount;
-
-  // Fill both adjacent slots. Called once for prev, once for next.
-  // Prefers uninitialized slots (book index -1) over evicting valid frames.
-  // When eviction is required, removes the slot furthest from center.
-  auto renderMissing = [&](int missingIdx) {
-    if (gCarouselCache.findFrameSlot(missingIdx) >= 0) return;
-
-    // Prefer an uninitialized slot so we don't evict a valid neighbor.
-    for (int i = 0; i < kCarouselFrameCount; ++i) {
-      if (gCarouselCache.frames[i] && gCarouselCache.frameBookIdx[i] < 0) {
-        if (!loadCarouselFrameFromDisk(gCarouselCache.keyHash, bookCount, missingIdx, i)) {
-          renderCarouselFrame(missingIdx, i);
-        }
-        renderedCount++;
-        return;
-      }
-    }
-
-    // No free slot: evict the one furthest from center (skip center/prev/next).
-    int evictSlot = -1, maxDist = -1;
-    for (int i = 0; i < kCarouselFrameCount; ++i) {
-      if (!gCarouselCache.frames[i]) continue;
-      const int b = gCarouselCache.frameBookIdx[i];
-      if (b == centerIdx || b == prevIdx || b == nextIdx) continue;
-      const int diff = std::abs(b - centerIdx);
-      const int dist = std::min(diff, bookCount - diff);
-      if (dist > maxDist) {
-        maxDist = dist;
-        evictSlot = i;
-      }
-    }
-    if (evictSlot >= 0) {
-      LOG_DBG("HOME", "carousel: evict slot %d (book %d) -> book %d", evictSlot, gCarouselCache.frameBookIdx[evictSlot],
-              missingIdx);
-      if (!loadCarouselFrameFromDisk(gCarouselCache.keyHash, bookCount, missingIdx, evictSlot)) {
-        renderCarouselFrame(missingIdx, evictSlot);
-      }
-      renderedCount++;
-    }
-  };
-
-  renderMissing(prevIdx);
-  renderMissing(nextIdx);
-  gCarouselCache.lastCenterIdx = centerIdx;
-  LOG_DBG("HOME", "carousel: updateSlidingWindowCache center=%d rendered=%d took %lums", centerIdx, renderedCount,
-          millis() - start);
+  (void)centerIdx;
+  (void)bookCount;
+  // The current carousel cache keeps one frame in RAM; other frames are paged
+  // from the SD snapshot cache on demand in render().
 }
 
 void HomeActivity::onSelectBook(const std::string& path) {

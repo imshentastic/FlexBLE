@@ -97,8 +97,8 @@ reading_font_id BITTER_20_FONT_ID \
   ./bitter_20_regular.h ./bitter_20_bold.h ./bitter_20_bolditalic.h ./bitter_20_italic.h
 
 # UI fonts — no emoji variant
-echo "#define UI_10_FONT_ID ($(hash_files ./ubuntu_10_regular.h ./ubuntu_10_bold.h))"
-echo "#define UI_12_FONT_ID ($(hash_files ./ubuntu_12_regular.h ./ubuntu_12_bold.h))"
+echo "#define UI_10_FONT_ID ($(hash_files ./inter_10_regular.h ./inter_10_bold.h))"
+echo "#define UI_12_FONT_ID ($(hash_files ./inter_12_regular.h ./inter_12_bold.h))"
 echo "#define SMALL_FONT_ID ($(hash_files ./inter_8_regular.h))"
 
 echo ""

@@ -114,8 +114,8 @@
 #else
 #define BITTER_20_FONT_ID (1701313611)
 #endif
-#define UI_10_FONT_ID (22918846)
-#define UI_12_FONT_ID (1635686837)
+#define UI_10_FONT_ID (1449607355)
+#define UI_12_FONT_ID (-837600088)
 #define SMALL_FONT_ID (1002091607)
 
 // Font ID 0 is reserved as the "not found" sentinel.

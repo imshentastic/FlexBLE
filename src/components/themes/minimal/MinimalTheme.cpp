@@ -221,10 +221,10 @@ void MinimalTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const std:
     const int slotWidth = nextSlotX - slotX;
     const auto& tab = tabs[i];
     const auto fontStyle = tab.selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
-    const int textWidth = renderer.getTextWidth(UI_12_FONT_ID, tab.label, fontStyle);
+    const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, tab.label, fontStyle);
     const int textX = slotX + (slotWidth - textWidth) / 2;
-    const int textY = rect.y + (rect.height - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
-    renderer.drawText(UI_12_FONT_ID, textX, textY, tab.label, true, fontStyle);
+    const int textY = rect.y + (rect.height - renderer.getLineHeight(UI_10_FONT_ID)) / 2;
+    renderer.drawText(UI_10_FONT_ID, textX, textY, tab.label, true, fontStyle);
   }
 }
 
