@@ -5,6 +5,9 @@
 ### Added
 - Added a custom sleep timer picker so `Time to Sleep` can be set from 1 to 30 minutes instead of cycling fixed presets.
 
+### Changed
+- Hardened deep sleep entry by shutting WiFi down before waiting for the power button to be released.
+
 ### Fixed
 - Fixed inline EPUB images disappearing in landscape when their bottom edge slightly overlaps the screen margin.
 
