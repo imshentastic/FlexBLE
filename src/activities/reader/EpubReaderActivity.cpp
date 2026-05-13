@@ -21,7 +21,6 @@
 #include "BookStatsActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
-#include "EpubReaderAutoPageTurnIntervalActivity.h"
 #include "EpubReaderBookmarkListActivity.h"
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderFootnotesActivity.h"
@@ -36,6 +35,7 @@
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "activities/util/ConfirmationActivity.h"
+#include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/ScreenshotUtil.h"
@@ -949,11 +949,14 @@ void EpubReaderActivity::openFileTransfer() {
 
 void EpubReaderActivity::openAutoPageTurnIntervalPicker(const bool ignoreInitialConfirmRelease) {
   startActivityForResult(
-      std::make_unique<EpubReaderAutoPageTurnIntervalActivity>(renderer, mappedInput, getAutoPageTurnIntervalSeconds(),
-                                                               ignoreInitialConfirmRelease),
+      std::make_unique<IntervalSelectionActivity>(
+          renderer, mappedInput, "EpubReaderAutoPageTurnInterval", StrId::STR_AUTO_TURN_INTERVAL_SECONDS,
+          StrId::STR_AUTO_TURN_STEP_HINT, getAutoPageTurnIntervalSeconds(), MIN_AUTO_PAGE_TURN_INTERVAL_S,
+          MAX_AUTO_PAGE_TURN_INTERVAL_S, 1, 5, StrId::STR_NONE_OPT, /*readerActivity=*/true,
+          /*allowPowerAsConfirm=*/true, ignoreInitialConfirmRelease),
       [this](const ActivityResult& result) {
         if (!result.isCancelled) {
-          setAutoPageTurnIntervalSeconds(static_cast<uint16_t>(std::get<AutoPageTurnResult>(result.data).seconds));
+          setAutoPageTurnIntervalSeconds(static_cast<uint16_t>(std::get<IntervalResult>(result.data).value));
         }
         requestUpdate();
       });

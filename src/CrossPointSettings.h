@@ -287,7 +287,8 @@ class CrossPointSettings {
   uint8_t lineSpacing = NORMAL;
   uint8_t paragraphAlignment = JUSTIFIED;
   // Auto-sleep timeout setting (default 10 minutes)
-  uint8_t sleepTimeout = SLEEP_10_MIN;
+  uint8_t sleepTimeout = SLEEP_10_MIN;  // legacy enum retained for binary/JSON migration
+  uint8_t sleepTimeoutMinutes = 10;
   // E-ink refresh frequency (default 15 pages)
   uint8_t refreshFrequency = REFRESH_15;
   uint8_t hyphenationEnabled = 0;
@@ -336,6 +337,8 @@ class CrossPointSettings {
 
   static constexpr uint16_t POWER_BUTTON_WAKE_SHORT_MS = 10;
   static constexpr uint16_t POWER_BUTTON_LONG_PRESS_MS = 400;
+  static constexpr uint8_t MIN_SLEEP_TIMEOUT_MINUTES = 1;
+  static constexpr uint8_t MAX_SLEEP_TIMEOUT_MINUTES = 30;
 
   uint16_t getPowerButtonWakeDuration() const {
     return (shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP) ? POWER_BUTTON_WAKE_SHORT_MS
@@ -364,6 +367,7 @@ class CrossPointSettings {
 
   static void validateFrontButtonMapping(CrossPointSettings& settings);
   static void validateReaderFrontButtonMapping(CrossPointSettings& settings);
+  static uint8_t sleepTimeoutEnumToMinutes(uint8_t legacyValue);
 
  private:
   bool loadFromBinaryFile();
