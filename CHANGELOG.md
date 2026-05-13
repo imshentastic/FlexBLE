@@ -5,6 +5,9 @@
 ### Added
 - Added a custom sleep timer picker so `Time to Sleep` can be set from 1 to 30 minutes instead of cycling fixed presets.
 
+### Fixed
+- Fixed inline EPUB images disappearing in landscape when their bottom edge slightly overlaps the screen margin.
+
 ## [v1.2.10] - 2026-05-11
 
 ### Added
