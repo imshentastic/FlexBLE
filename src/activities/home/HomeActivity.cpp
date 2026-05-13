@@ -34,7 +34,7 @@
 
 namespace {
 constexpr uint32_t CAROUSEL_CACHE_MAGIC = 0x43434152;  // "CCAR"
-constexpr uint16_t CAROUSEL_CACHE_VERSION = 1;
+constexpr uint16_t CAROUSEL_CACHE_VERSION = 2;
 constexpr char CAROUSEL_CACHE_PATH[] = "/.crosspoint/home_carousel_cache.bin";
 constexpr char CAROUSEL_CACHE_TMP_PATH[] = "/.crosspoint/home_carousel_cache.tmp";
 

@@ -55,7 +55,11 @@ constexpr int kMenuLabelTopGap = 3;
 constexpr int kMenuLabelBottomGap = 4;
 constexpr int kMenuRowDrop = 31;
 
-constexpr int kStatsToProgressGap = 6;
+constexpr int kFooterWidthExtra = 120;
+constexpr int kFooterTopGap = 10;
+constexpr int kFooterLabelToBarGap = 3;
+constexpr int kFooterProgressBarHeight = 5;
+constexpr int kFooterPercentTopGap = 2;
 
 constexpr int kCornerRadius = 6;
 constexpr int kThinOutlineW = 1;    // always-visible outline around centre cover
@@ -152,6 +156,21 @@ void fillPerspectiveSilhouette(const GfxRenderer& renderer, int x, int y, int wi
     const int columnHeight = (width <= 1) ? leftHeight : (leftHeight + ((rightHeight - leftHeight) * dx) / (width - 1));
     const int top = y + (maxHeight - columnHeight) / 2;
     renderer.fillRect(x + dx, top, 1, columnHeight, true);
+  }
+}
+
+void formatCompactReadingTime(uint32_t seconds, char* buf, size_t len) {
+  if (seconds < 60) {
+    snprintf(buf, len, "%s", tr(STR_STATS_LESS_THAN_MIN));
+    return;
+  }
+
+  const uint32_t hours = seconds / 3600;
+  const uint32_t minutes = (seconds % 3600) / 60;
+  if (hours == 0) {
+    snprintf(buf, len, "%lum", static_cast<unsigned long>(minutes));
+  } else {
+    snprintf(buf, len, "%luh %lum", static_cast<unsigned long>(hours), static_cast<unsigned long>(minutes));
   }
 }
 
@@ -383,41 +402,37 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
       dotX += kDotSize + kDotGap;
     }
 
-    // Lyra-style per-book stats, centered below the cover.
-    const int statsLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
-    const int progressLineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+    // Minimal-style reading progress footer below the cover.
+    constexpr int footerLabelFontId = UI_10_FONT_ID;
+    const int footerLabelLineHeight = renderer.getLineHeight(footerLabelFontId);
     const bool hasStats = (stats != nullptr && stats->sessionCount > 0);
     const bool hasProgress = progressPercent >= 0.0f;
-    constexpr int footerTopPad = 2;
-    int infoY = dotsY + kDotSize + 8 + footerTopPad;
+    int infoY = dotsY + kDotSize + kFooterTopGap;
+    const int footerMaxWidth = std::max(0, screenW - 2 * LyraCarouselMetrics::values.contentSidePadding);
+    const int footerWidth = std::min(footerMaxWidth, centerCoverSlotRect.width + kFooterWidthExtra);
+    const int footerX = textCenterX - footerWidth / 2;
 
     if (hasStats) {
       char buf[48];
-      char statLine[64];
-      BookReadingStats::formatDuration(stats->totalReadingSeconds, buf, sizeof(buf));
-      snprintf(statLine, sizeof(statLine), "%s%s", tr(STR_STATS_TOTAL_TIME), buf);
-      const int totalTimeW = renderer.getTextWidth(SMALL_FONT_ID, statLine);
-      renderer.drawText(SMALL_FONT_ID, textCenterX - totalTimeW / 2, infoY, statLine, true);
-      infoY += statsLineHeight + kStatsToProgressGap;
+      formatCompactReadingTime(stats->totalReadingSeconds, buf, sizeof(buf));
+      const auto timeLabel = renderer.truncatedText(footerLabelFontId, buf, footerWidth, EpdFontFamily::REGULAR);
+      renderer.drawText(footerLabelFontId, footerX, infoY, timeLabel.c_str(), true, EpdFontFamily::REGULAR);
     }
 
     if (hasProgress) {
-      constexpr int progressBarHeight = 4;
-      constexpr int progressTopPad = 2;
-      const int progressBarWidth = centerCoverSlotRect.width;
-      const int filledWidth =
-          std::clamp(static_cast<int>((progressPercent / 100.0f) * progressBarWidth), 0, progressBarWidth);
+      const int progressBarY = infoY + (hasStats ? footerLabelLineHeight + kFooterLabelToBarGap : 0);
+      const float clampedProgress = std::clamp(progressPercent, 0.0f, 100.0f);
+      const int filledWidth = std::clamp(static_cast<int>((clampedProgress / 100.0f) * footerWidth), 0, footerWidth);
       char progressLabel[16];
-      snprintf(progressLabel, sizeof(progressLabel), "%.0f%%", progressPercent);
-      const int progressLabelW = renderer.getTextWidth(UI_10_FONT_ID, progressLabel, EpdFontFamily::BOLD);
-      renderer.drawText(UI_10_FONT_ID, textCenterX - progressLabelW / 2, infoY + progressTopPad, progressLabel, true,
-                        EpdFontFamily::BOLD);
-      const int progressBarX = textCenterX - progressBarWidth / 2;
-      const int progressBarY = infoY + progressTopPad + progressLineHeight + 2;
-      renderer.drawRect(progressBarX, progressBarY, progressBarWidth, progressBarHeight, true);
+      snprintf(progressLabel, sizeof(progressLabel), "%.0f%%", clampedProgress);
+      renderer.fillRectDither(footerX, progressBarY, footerWidth, kFooterProgressBarHeight, Color::LightGray);
       if (filledWidth > 0) {
-        renderer.fillRect(progressBarX, progressBarY, filledWidth, progressBarHeight, true);
+        renderer.fillRect(footerX, progressBarY, filledWidth, kFooterProgressBarHeight, true);
       }
+      const int progressLabelW = renderer.getTextWidth(footerLabelFontId, progressLabel, EpdFontFamily::REGULAR);
+      const int progressLabelY = progressBarY + kFooterProgressBarHeight + kFooterPercentTopGap;
+      renderer.drawText(footerLabelFontId, footerX + footerWidth - progressLabelW, progressLabelY, progressLabel, true,
+                        EpdFontFamily::REGULAR);
     }
 
     coverBufferStored = storeCoverBuffer();
