@@ -55,7 +55,6 @@ constexpr int kMenuLabelTopGap = 3;
 constexpr int kMenuLabelBottomGap = 4;
 constexpr int kMenuRowDrop = 31;
 
-constexpr int kFooterWidthExtra = 120;
 constexpr int kFooterTopGap = 10;
 constexpr int kFooterLabelToBarGap = 3;
 constexpr int kFooterProgressBarHeight = 5;
@@ -409,8 +408,8 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     const bool hasProgress = progressPercent >= 0.0f;
     int infoY = dotsY + kDotSize + kFooterTopGap;
     const int footerMaxWidth = std::max(0, screenW - 2 * LyraCarouselMetrics::values.contentSidePadding);
-    const int footerWidth = std::min(footerMaxWidth, centerCoverSlotRect.width + kFooterWidthExtra);
-    const int footerX = textCenterX - footerWidth / 2;
+    const int footerWidth = std::min(footerMaxWidth, centerCoverRect.width);
+    const int footerX = centerCoverRect.x + (centerCoverRect.width - footerWidth) / 2;
 
     if (hasStats) {
       char buf[48];
