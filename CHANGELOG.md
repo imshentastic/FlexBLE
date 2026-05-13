@@ -1,8 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [v1.2.11] - Unreleased
 
 ### Added
+- Added new personal theme: "Minimal"
+- Added new theme "Lyra Carousel" with added stats
 - Added a custom sleep timer picker so `Time to Sleep` can be set from 1 to 30 minutes instead of cycling fixed presets.
 - Added an in-reader Controls shortcut so you can customize your buttons without leaving the book.
 
@@ -19,7 +21,6 @@
 ## [v1.2.10] - 2026-05-11
 
 ### Added
-- Added a Minimal theme with a simplified home screen, direct Browse/Settings/Read actions, and a compact home menu.
 - Added a `Recent Books View` setting so the dedicated Recent Books screen can switch between the classic list and a 3x3 cover grid.
 - Added more flexible reader controls, including orientation-aware front/side button settings, nav-only or all-button front inversion, tilt page turn shortcuts, and side-button long-press rotation actions.
 - Added a per-session auto page turn interval picker with values from 5 to 120 seconds.
