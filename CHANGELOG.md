@@ -4,6 +4,7 @@
 
 ### Added
 - Added a custom sleep timer picker so `Time to Sleep` can be set from 1 to 30 minutes instead of cycling fixed presets.
+- Added an in-reader Controls shortcut so you can customize your buttons without leaving the book.
 
 ### Changed
 - Hardened deep sleep entry by shutting WiFi down before waiting for the power button to be released.
@@ -28,6 +29,7 @@
 ### Changed
 - Reduced Controls settings section spacing so the grouped controls fit better on X3 screens.
 - Made front reader long-press actions trigger when the hold delay is reached while normal page turns still trigger on release.
+
 - Used the fast EPUB spine/TOC indexing path for books with 300+ spine entries so heavily split books build `book.bin` faster on first open.
 - Allowed the web file manager and WebDAV to browse dot-prefixed hidden files when hidden files are enabled, matching the device file browser.
 

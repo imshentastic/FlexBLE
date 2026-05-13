@@ -920,6 +920,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     case EpubReaderMenuActivity::MenuAction::ROTATE_SCREEN:
     case EpubReaderMenuActivity::MenuAction::READER_OPTIONS:
+    case EpubReaderMenuActivity::MenuAction::CONTROLS_OPTIONS:
       break;
   }
 }

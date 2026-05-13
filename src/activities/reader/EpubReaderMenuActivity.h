@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "../Activity.h"
+#include "ControlsOptionsActivity.h"
 #include "ReaderOptionsActivity.h"
 #include "util/ButtonNavigator.h"
 
@@ -26,6 +27,7 @@ class EpubReaderMenuActivity final : public Activity {
     READING_STATS,
     TOGGLE_COMPLETED,
     READER_OPTIONS,
+    CONTROLS_OPTIONS,
     BOOKMARK_TOGGLE,
     VIEW_BOOKMARKS,
     DELETE_BOOKMARKS

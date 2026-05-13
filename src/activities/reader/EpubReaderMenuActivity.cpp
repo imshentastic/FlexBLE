@@ -79,11 +79,12 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
                                                                                      bool isCurrentPageBookmarked,
                                                                                      bool isBookCompleted) {
   std::vector<MenuItem> items;
-  constexpr size_t baseItemCount = 13;
+  constexpr size_t baseItemCount = 14;
   const size_t totalItemCount = baseItemCount + (hasFootnotes ? 1u : 0u) + (hasBookmarks ? 2u : 0u);
   items.reserve(totalItemCount);
   items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
   items.push_back({MenuAction::READER_OPTIONS, StrId::STR_READER_OPTIONS});
+  items.push_back({MenuAction::CONTROLS_OPTIONS, StrId::STR_CAT_CONTROLS});
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
   }
@@ -142,6 +143,18 @@ void EpubReaderMenuActivity::loop() {
                                settingsChanged = settingsChanged || haveReaderLayoutSettingsChanged(before);
                                pendingOrientation = SETTINGS.orientation;  // sync in case orientation changed
                                requestUpdate();
+                             });
+      return;
+    }
+
+    if (selectedAction == MenuAction::CONTROLS_OPTIONS) {
+      startActivityForResult(std::make_unique<ControlsOptionsActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) {
+                               ActivityResult result;
+                               result.isCancelled = true;
+                               result.data = MenuResult{-1, pendingOrientation, settingsChanged};
+                               setResult(std::move(result));
+                               finish();
                              });
       return;
     }
