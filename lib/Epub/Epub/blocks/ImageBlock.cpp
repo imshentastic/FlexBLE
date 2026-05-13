@@ -37,6 +37,7 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
 
   uint16_t cachedWidth, cachedHeight;
   if (cacheFile.read(&cachedWidth, 2) != 2 || cacheFile.read(&cachedHeight, 2) != 2) {
+    cacheFile.close();
     return false;
   }
 
@@ -46,6 +47,7 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   if (widthDiff > 1 || heightDiff > 1) {
     LOG_ERR("IMG", "Cache dimension mismatch: %dx%d vs %dx%d", cachedWidth, cachedHeight, expectedWidth,
             expectedHeight);
+    cacheFile.close();
     return false;
   }
 
@@ -55,11 +57,29 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
 
   LOG_DBG("IMG", "Loading from cache: %s (%dx%d)", cachePath.c_str(), cachedWidth, cachedHeight);
 
+  const int screenWidth = renderer.getScreenWidth();
+  const int screenHeight = renderer.getScreenHeight();
+  int clipXStart = 0;
+  int clipYStart = 0;
+  int clipXEnd = cachedWidth;
+  int clipYEnd = cachedHeight;
+  if (x < 0) clipXStart = -x;
+  if (y < 0) clipYStart = -y;
+  if (screenWidth - x < clipXEnd) clipXEnd = screenWidth - x;
+  if (screenHeight - y < clipYEnd) clipYEnd = screenHeight - y;
+
+  if (clipXStart >= clipXEnd || clipYStart >= clipYEnd) {
+    LOG_DBG("IMG", "Cached image is outside screen after clipping");
+    cacheFile.close();
+    return true;
+  }
+
   // Read and render row by row to minimize memory usage
   const int bytesPerRow = (cachedWidth + 3) / 4;  // 2 bits per pixel, 4 pixels per byte
   uint8_t* rowBuffer = (uint8_t*)malloc(bytesPerRow);
   if (!rowBuffer) {
     LOG_ERR("IMG", "Failed to allocate row buffer");
+    cacheFile.close();
     return false;
   }
 
@@ -70,12 +90,16 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
     if (cacheFile.read(rowBuffer, bytesPerRow) != bytesPerRow) {
       LOG_ERR("IMG", "Cache read error at row %d", row);
       free(rowBuffer);
+      cacheFile.close();
       return false;
     }
 
+    if (row < clipYStart) continue;
+    if (row >= clipYEnd) break;
+
     const int destY = y + row;
     pw.beginRow(destY);
-    for (int col = 0; col < cachedWidth; col++) {
+    for (int col = clipXStart; col < clipXEnd; col++) {
       const int byteIdx = col >> 2;            // col / 4
       const int bitShift = 6 - (col & 3) * 2;  // MSB first within byte
       uint8_t pixelValue = (rowBuffer[byteIdx] >> bitShift) & 0x03;
@@ -85,6 +109,7 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   }
 
   free(rowBuffer);
+  cacheFile.close();
   LOG_DBG("IMG", "Cache render complete");
   return true;
 }
@@ -97,12 +122,19 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   const int screenWidth = renderer.getScreenWidth();
   const int screenHeight = renderer.getScreenHeight();
 
-  // Bounds check render position using logical screen dimensions
-  if (x < 0 || y < 0 || x + width > screenWidth || y + height > screenHeight) {
+  if (width <= 0 || height <= 0) {
+    LOG_ERR("IMG", "Invalid image size: %dx%d", width, height);
+    return;
+  }
+
+  // Reject only fully off-screen images. Decoders and cache rendering clip
+  // partially visible images to the logical screen bounds.
+  if (x >= screenWidth || y >= screenHeight || x + width <= 0 || y + height <= 0) {
     LOG_ERR("IMG", "Invalid render position: (%d,%d) size (%dx%d) screen (%dx%d)", x, y, width, height, screenWidth,
             screenHeight);
     return;
   }
+  const bool fullyOnScreen = x >= 0 && y >= 0 && x + width <= screenWidth && y + height <= screenHeight;
 
   // Try to render from cache first
   std::string cachePath = getCachePath(imagePath);
@@ -136,7 +168,9 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   config.useDithering = true;
   config.performanceMode = false;
   config.useExactDimensions = true;  // Use pre-calculated dimensions to avoid rounding mismatches
-  config.cachePath = cachePath;      // Enable caching during decode
+  if (fullyOnScreen) {
+    config.cachePath = cachePath;  // Enable caching during decode
+  }
 
   ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(imagePath);
   if (!decoder) {

@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Added a custom sleep timer picker so `Time to Sleep` can be set from 1 to 30 minutes instead of cycling fixed presets.
+
+### Changed
+- Hardened deep sleep entry by shutting WiFi down before waiting for the power button to be released.
+- Raised the web file-transfer filename limit from 100 to 150 bytes so longer uploaded filenames are preserved.
+
+### Fixed
+- Fixed inline EPUB images disappearing in landscape when their bottom edge slightly overlaps the screen margin.
+
 ## [v1.2.10] - 2026-05-11
 
 ### Added
