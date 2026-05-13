@@ -289,7 +289,7 @@ namespace {
 class CarouselCache {
  public:
   uint8_t* frames[HomeActivity::kCarouselFrameCount] = {};
-  int frameBookIdx[HomeActivity::kCarouselFrameCount] = {-1, -1, -1};
+  int frameBookIdx[HomeActivity::kCarouselFrameCount] = {-1};
   int frameCount = 0;
   int lastCenterIdx = -1;
   std::string key;
@@ -980,8 +980,8 @@ bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
     return showedProgressPopup;
   }
 
-  // Pre-render current, next, and prev so the first navigation in either
-  // direction is always a cache hit, but now they come from the SD snapshot.
+  // Keep only the current frame in RAM; adjacent frames come from the SD
+  // snapshot on demand instead of occupying another framebuffer-sized slot.
   const int selectedBookIdx = (selectorIndex < bookCount) ? selectorIndex : lastCarouselBookIndex;
   const int initialBookIdx = (selectedBookIdx >= 0 && selectedBookIdx < bookCount) ? selectedBookIdx : 0;
   auto loadOrRender = [&](int bookIdx, int slot) {
@@ -1010,9 +1010,8 @@ bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
   coverBufferStored = false;
 
   // Persist the freshly-rendered carousel snapshot back to SD after Home is
-  // already visible so later reader->Home returns can bootstrap from disk
-  // instead of live-rendering covers again. If RAM already forced a reduced
-  // frame cache, skip the optional SD snapshot work and avoid more heap churn.
+  // already visible so later reader->Home returns and carousel navigation can
+  // bootstrap from disk instead of live-rendering covers again.
   if (!diskCacheValid && gCarouselCache.frameCount > 0) {
     if (hasFullFrameCache) {
       const bool cacheBuilt = buildCarouselCacheFile(newKey, newKeyHash, bookCount, showProgressPopup);
