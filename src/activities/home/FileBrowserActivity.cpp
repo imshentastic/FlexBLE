@@ -355,7 +355,14 @@ void FileBrowserActivity::loop() {
   }
 
   const int pathReserved = renderer.getLineHeight(SMALL_FONT_ID) + UITheme::getInstance().getMetrics().verticalSpacing;
-  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false, pathReserved);
+  int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false, pathReserved);
+  if (GUI.usesCompactFileBrowserRows()) {
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+    const int contentHeight =
+        renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing - pathReserved;
+    pageItems = std::max(1, contentHeight / GUI.compactFileBrowserRowHeight(renderer));
+  }
 
   if (!files.empty()) {
     const std::string& entry = files[selectorIndex];
@@ -521,9 +528,13 @@ void FileBrowserActivity::render(RenderLock&&) {
     const char* emptyMsg = (mode == Mode::PickFirmware) ? tr(STR_NO_BIN_FILES) : tr(STR_NO_FILES_FOUND);
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, emptyMsg);
   } else {
+    const bool compactFileRows = GUI.usesCompactFileBrowserRows();
+    const std::function<std::string(int)> compactRowMarker =
+        compactFileRows ? [this](int index) { return files[index].back() == '/' ? "folder" : ""; }
+                        : std::function<std::string(int)>{};
     GUI.drawList(
         renderer, Rect{0, contentTop, pageWidth, contentHeight}, files.size(), selectorIndex,
-        [this](int index) { return getFileName(files[index]); }, nullptr,
+        [this](int index) { return getFileName(files[index]); }, compactRowMarker,
         [this](int index) { return UITheme::getFileIcon(files[index]); },
         [this](int index) {
           const std::string extension = getFileExtension(files[index]);

@@ -30,6 +30,7 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/themes/lyra/LyraCarouselTheme.h"
+#include "components/themes/minimal/MinimalTheme.h"
 #include "fontIds.h"
 
 namespace {
@@ -191,6 +192,43 @@ std::vector<HomeMenuItem> buildHomeMenuItems(bool hasOpdsServers, bool hasReadin
   items.push_back({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
   items.push_back({tr(STR_SETTINGS_TITLE), Settings, HomeMenuAction::Settings});
   return items;
+}
+
+std::vector<HomeMenuItem> buildMinimalMenuItems(bool hasOpdsServers, bool hasReadingStats, bool hasBookmarks) {
+  std::vector<HomeMenuItem> items = {
+      {tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks},
+  };
+
+  if (hasOpdsServers) {
+    items.push_back({tr(STR_OPDS_BROWSER), Library, HomeMenuAction::OpdsBrowser});
+  }
+  if (hasBookmarks) {
+    items.push_back({tr(STR_BOOKMARKS), BookmarkIcon, HomeMenuAction::Bookmarks});
+  }
+  if (hasReadingStats) {
+    items.push_back({tr(STR_READING_STATS), Chart, HomeMenuAction::ReadingStats});
+  }
+
+  items.push_back({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
+  return items;
+}
+
+bool isMinimalTheme() {
+  return static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::MINIMAL;
+}
+
+bool isAnyFrontButtonPressed(const MappedInputManager& mappedInput) {
+  return mappedInput.isFrontButtonPressed(HalGPIO::BTN_BACK) ||
+         mappedInput.isFrontButtonPressed(HalGPIO::BTN_CONFIRM) ||
+         mappedInput.isFrontButtonPressed(HalGPIO::BTN_LEFT) || mappedInput.isFrontButtonPressed(HalGPIO::BTN_RIGHT);
+}
+
+int minimalHomeNavCount(const bool hasCurrentBook) { return hasCurrentBook ? 4 : 3; }
+
+int minimalHomeCoverWidth(int coverHeight) { return static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 5); }
+
+std::string minimalHomeCoverPath(const RecentBook& book, int coverHeight) {
+  return UITheme::getCoverThumbPath(book.coverBmpPath, minimalHomeCoverWidth(coverHeight), coverHeight);
 }
 
 void appendCarouselCoverStateToKey(std::string& key, const RecentBook& book) {
@@ -382,6 +420,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
 
   const bool isCarouselTheme =
       static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_CAROUSEL;
+  const bool isMinimal = isMinimalTheme();
   const size_t recentBookCount = recentBooks.size();
   // Tracks which book indices had a thumbnail generated this pass.
   std::vector<char> bookUpdated(recentBookCount, false);
@@ -465,8 +504,10 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
         }
       } else {
         // Non-carousel: generate height-keyed thumbnail
-        std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
-        if (!Storage.exists(coverPath.c_str())) {
+        const bool useMinimalThumb = isMinimal && FsHelpers::hasEpubExtension(book.path);
+        const std::string coverPath = useMinimalThumb ? minimalHomeCoverPath(book, coverHeight)
+                                                      : UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
+        if (coverPath.empty() || !Storage.exists(coverPath.c_str())) {
           if (FsHelpers::hasEpubExtension(book.path)) {
             Epub epub(book.path, "/.crosspoint");
             if (!showingLoading) {
@@ -483,7 +524,9 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               progress++;
               continue;
             }
-            bool success = epub.generateThumbBmp(0, coverHeight);
+            const bool success = useMinimalThumb
+                                     ? epub.generateThumbBmp(minimalHomeCoverWidth(coverHeight), coverHeight)
+                                     : epub.generateThumbBmp(0, coverHeight);
             if (!success) {
               updateRecentBookCoverPath(book, "");
               book.coverBmpPath = "";
@@ -574,6 +617,10 @@ void HomeActivity::onEnter() {
 
   selectorIndex = 0;
   lastCarouselBookIndex = 0;
+  minimalMenuOpen = false;
+  minimalSuppressInitialFrontRelease = isMinimalTheme();
+  minimalMenuIndex = 0;
+  minimalHomeNavIndex = -1;
   carouselFramesReady = false;
   carouselWarmupPending = isCarouselTheme;
 
@@ -1027,6 +1074,143 @@ bool HomeActivity::preRenderCarouselFrames(bool showProgressPopup) {
 }
 
 void HomeActivity::loop() {
+  if (isMinimalTheme()) {
+    const int pressedFrontButton = mappedInput.getPressedFrontButton();
+    const int releasedFrontButton = mappedInput.getReleasedFrontButton();
+
+    if (minimalSuppressInitialFrontRelease) {
+      if (releasedFrontButton >= 0) {
+        minimalSuppressInitialFrontRelease = false;
+        return;
+      }
+      if (!isAnyFrontButtonPressed(mappedInput)) {
+        minimalSuppressInitialFrontRelease = false;
+      }
+    }
+
+    if (minimalMenuOpen) {
+      const auto menuItems = buildMinimalMenuItems(hasOpdsServers, hasReadingStats, hasBookmarks);
+      const int menuCount = static_cast<int>(menuItems.size());
+      if (menuCount <= 0) {
+        minimalMenuOpen = false;
+        minimalHomeNavIndex = -1;
+        requestUpdate();
+        return;
+      }
+
+      if (minimalMenuIndex >= menuCount) {
+        minimalMenuIndex = menuCount - 1;
+      }
+
+      buttonNavigator.onPreviousPress([this, menuCount] {
+        minimalMenuIndex = ButtonNavigator::previousIndex(minimalMenuIndex, menuCount);
+        requestUpdate();
+      });
+      buttonNavigator.onNextPress([this, menuCount] {
+        minimalMenuIndex = ButtonNavigator::nextIndex(minimalMenuIndex, menuCount);
+        requestUpdate();
+      });
+      if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+        minimalMenuOpen = false;
+        minimalHomeNavIndex = -1;
+        requestUpdate();
+        return;
+      }
+      if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+        switch (menuItems[minimalMenuIndex].action) {
+          case HomeMenuAction::BrowseFiles:
+            onFileBrowserOpen();
+            break;
+          case HomeMenuAction::RecentBooks:
+            onRecentsOpen();
+            break;
+          case HomeMenuAction::OpdsBrowser:
+            onOpdsBrowserOpen();
+            break;
+          case HomeMenuAction::ReadingStats:
+            onReadingStatsOpen();
+            break;
+          case HomeMenuAction::Bookmarks:
+            onBookmarksOpen();
+            break;
+          case HomeMenuAction::FileTransfer:
+            onFileTransferOpen();
+            break;
+          case HomeMenuAction::ContinueReading:
+          case HomeMenuAction::Settings:
+            break;
+        }
+      }
+      return;
+    }
+
+    const int homeNavCount = minimalHomeNavCount(!recentBooks.empty());
+    if (minimalHomeNavIndex >= homeNavCount) {
+      minimalHomeNavIndex = homeNavCount - 1;
+    }
+
+    if (mappedInput.wasPressed(MappedInputManager::Button::Up)) {
+      minimalHomeNavIndex = minimalHomeNavIndex < 0 ? homeNavCount - 1
+                                                    : ButtonNavigator::previousIndex(minimalHomeNavIndex, homeNavCount);
+      requestUpdate();
+      return;
+    }
+    if (mappedInput.wasPressed(MappedInputManager::Button::Down)) {
+      minimalHomeNavIndex = minimalHomeNavIndex < 0 ? 0 : ButtonNavigator::nextIndex(minimalHomeNavIndex, homeNavCount);
+      requestUpdate();
+      return;
+    }
+
+    auto activateMinimalHomeNav = [this](int index) {
+      switch (index) {
+        case 0:
+          minimalMenuOpen = true;
+          minimalMenuIndex = 0;
+          requestUpdate();
+          break;
+        case 1:
+          onFileBrowserOpen();
+          break;
+        case 2:
+          onSettingsOpen();
+          break;
+        case 3:
+          onContinueReading();
+          break;
+      }
+    };
+
+    if (releasedFrontButton == HalGPIO::BTN_BACK) {
+      minimalHomeNavIndex = 0;
+      activateMinimalHomeNav(minimalHomeNavIndex);
+      return;
+    }
+    if (releasedFrontButton == HalGPIO::BTN_CONFIRM) {
+      minimalHomeNavIndex = 1;
+      activateMinimalHomeNav(minimalHomeNavIndex);
+      return;
+    }
+    if (releasedFrontButton == HalGPIO::BTN_LEFT) {
+      minimalHomeNavIndex = 2;
+      activateMinimalHomeNav(minimalHomeNavIndex);
+      return;
+    }
+    if (releasedFrontButton == HalGPIO::BTN_RIGHT) {
+      if (!recentBooks.empty()) {
+        minimalHomeNavIndex = 3;
+        activateMinimalHomeNav(minimalHomeNavIndex);
+      }
+      return;
+    }
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      if (minimalHomeNavIndex >= 0) {
+        activateMinimalHomeNav(minimalHomeNavIndex);
+      }
+      return;
+    }
+    return;
+  }
+
   const bool isCarousel =
       static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_CAROUSEL;
   const int previousHighlightedBookIdx = getHighlightedBookIndex();
@@ -1135,6 +1319,54 @@ void HomeActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
+
+  if (isMinimalTheme()) {
+    renderer.clearScreen();
+
+    if (minimalMenuOpen) {
+      GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding}, nullptr);
+      const auto menuItems = buildMinimalMenuItems(hasOpdsServers, hasReadingStats, hasBookmarks);
+      GUI.drawButtonMenu(
+          renderer, Rect{0, metrics.homeTopPadding, pageWidth, pageHeight - metrics.homeTopPadding},
+          static_cast<int>(menuItems.size()), minimalMenuIndex,
+          [&menuItems](int index) { return std::string(menuItems[index].label); },
+          [&menuItems](int index) { return menuItems[index].icon; });
+      const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+      GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+      renderer.displayBuffer();
+      return;
+    }
+
+    bool bufferRestored = coverBufferStored && restoreCoverBuffer();
+    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding}, nullptr);
+
+    GUI.drawRecentBookCover(
+        renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight}, recentBooks, selectorIndex,
+        coverRendered, coverBufferStored, bufferRestored, std::bind(&HomeActivity::storeCoverBuffer, this),
+        hasAnyBookStats(currentBookStats) ? &currentBookStats : nullptr, currentBookProgressPercent);
+
+    const int homeNavCount = minimalHomeNavCount(!recentBooks.empty());
+    if (minimalHomeNavIndex >= homeNavCount) {
+      minimalHomeNavIndex = homeNavCount - 1;
+    }
+    MinimalTheme::setHomeButtonHintSelection(minimalHomeNavIndex);
+    GUI.drawButtonHints(renderer, tr(STR_MENU), tr(STR_BROWSE), tr(STR_SETTINGS_TITLE),
+                        recentBooks.empty() ? "" : tr(STR_READ));
+
+    renderer.displayBuffer();
+
+    if (!firstRenderDone) {
+      firstRenderDone = true;
+      requestUpdate();
+      return;
+    }
+
+    if (!recentsLoaded && !recentsLoading) {
+      recentsLoading = true;
+      loadRecentCovers(metrics.homeCoverHeight);
+    }
+    return;
+  }
 
   // Fast path: pre-rendered frames ready — memcpy + border overlay
   if (carouselFramesReady) {

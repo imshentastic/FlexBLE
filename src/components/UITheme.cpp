@@ -15,6 +15,7 @@
 #include "components/themes/lyra/Lyra3CoversTheme.h"
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "components/themes/lyra/LyraTheme.h"
+#include "components/themes/minimal/MinimalTheme.h"
 #include "components/themes/roundedraff/RoundedRaffTheme.h"
 
 namespace {
@@ -22,6 +23,16 @@ constexpr char kWidthPlaceholder[] = "[WIDTH]";
 constexpr char kHeightPlaceholder[] = "[HEIGHT]";
 constexpr size_t kWidthPlaceholderLength = sizeof(kWidthPlaceholder) - 1;
 constexpr size_t kHeightPlaceholderLength = sizeof(kHeightPlaceholder) - 1;
+
+std::string addBmpSuffix(const std::string& path, const char* suffix) {
+  const size_t extPos = path.rfind(".bmp");
+  if (extPos == std::string::npos) {
+    return path + suffix;
+  }
+  std::string suffixedPath = path;
+  suffixedPath.insert(extPos, suffix);
+  return suffixedPath;
+}
 }  // namespace
 
 UITheme UITheme::instance;
@@ -69,6 +80,11 @@ void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
       currentTheme = std::make_unique<LyraTheme>();
       currentMetrics = &LyraMetrics::values;
 #endif
+      break;
+    case CrossPointSettings::UI_THEME::MINIMAL:
+      LOG_DBG("UI", "Using Minimal theme");
+      currentTheme = std::make_unique<MinimalTheme>();
+      currentMetrics = &MinimalMetrics::values;
       break;
     default:
       LOG_ERR("UI", "Unknown theme %d, falling back to Classic", static_cast<int>(type));

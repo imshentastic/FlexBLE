@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 
 #include "AppVersion.h"
 #include "ButtonRemapActivity.h"
@@ -29,6 +30,30 @@
 
 const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER,
                                                               StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM};
+
+namespace {
+uint8_t enumDisplayIndexForRawValue(const SettingInfo& setting, uint8_t rawValue) {
+  if (setting.enumRawValues.empty()) {
+    return rawValue;
+  }
+
+  auto it = std::find(setting.enumRawValues.begin(), setting.enumRawValues.end(), rawValue);
+  if (it == setting.enumRawValues.end()) {
+    return 0;
+  }
+  return static_cast<uint8_t>(std::distance(setting.enumRawValues.begin(), it));
+}
+
+uint8_t enumRawValueForDisplayIndex(const SettingInfo& setting, uint8_t displayIndex) {
+  if (setting.enumRawValues.empty()) {
+    return displayIndex;
+  }
+  if (displayIndex >= setting.enumRawValues.size()) {
+    return setting.enumRawValues.front();
+  }
+  return setting.enumRawValues[displayIndex];
+}
+}  // namespace
 
 void SettingsActivity::rebuildSettingsLists() {
   displaySettings.clear();
@@ -80,9 +105,11 @@ void SettingsActivity::rebuildSettingsLists() {
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
-  // Insert "Manage Fonts" right after the font family setting so users discover it naturally
-  readerSettings.insert(readerSettings.begin() + 1,
-                        SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
+  const auto fontSizeSetting = std::find_if(readerSettings.begin(), readerSettings.end(),
+                                            [](const auto& setting) { return setting.nameId == StrId::STR_FONT_SIZE; });
+  const auto manageFontsSetting = SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts);
+  readerSettings.insert(fontSizeSetting == readerSettings.end() ? readerSettings.end() : fontSizeSetting + 1,
+                        manageFontsSetting);
   readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
 
   const bool hasTiltPageTurnSetting = std::any_of(allSettings.begin(), allSettings.end(), [](const auto& setting) {
@@ -260,7 +287,9 @@ void SettingsActivity::toggleCurrentSetting() {
     SETTINGS.*(setting.valuePtr) = !currentValue;
   } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
     const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
-    SETTINGS.*(setting.valuePtr) = (currentValue + 1) % static_cast<uint8_t>(setting.enumValues.size());
+    const uint8_t currentIndex = enumDisplayIndexForRawValue(setting, currentValue);
+    const uint8_t nextIndex = (currentIndex + 1) % static_cast<uint8_t>(setting.enumValues.size());
+    SETTINGS.*(setting.valuePtr) = enumRawValueForDisplayIndex(setting, nextIndex);
   } else if (setting.type == SettingType::ENUM && setting.valueGetter && setting.valueSetter) {
     if (setting.nameId == StrId::STR_FONT_FAMILY) {
       // Launch font selection submenu instead of cycling
@@ -385,7 +414,8 @@ void SettingsActivity::render(RenderLock&&) {
           valueText = value ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
         } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
           const uint8_t value = SETTINGS.*(setting.valuePtr);
-          const uint8_t safeValue = value < setting.enumValues.size() ? value : 0;
+          const uint8_t displayValue = enumDisplayIndexForRawValue(setting, value);
+          const uint8_t safeValue = displayValue < setting.enumValues.size() ? displayValue : 0;
           valueText = I18N.get(setting.enumValues[safeValue]);
         } else if (setting.type == SettingType::ENUM && setting.valueGetter) {
           const uint8_t value = setting.valueGetter();

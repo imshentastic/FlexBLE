@@ -8,6 +8,7 @@
 #include <Logging.h>
 #include <ObfuscationUtils.h>
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 
@@ -66,6 +67,23 @@ void applyLegacyStatusBarSettings(CrossPointSettings& settings) {
       settings.statusBarBattery = 1;
       break;
   }
+}
+
+bool isEnumRawValueAllowed(const SettingInfo& info, uint8_t value) {
+  if (info.enumRawValues.empty()) {
+    return value < info.enumValues.size();
+  }
+  return std::find(info.enumRawValues.begin(), info.enumRawValues.end(), value) != info.enumRawValues.end();
+}
+
+uint8_t defaultEnumRawValue(const SettingInfo& info, uint8_t fieldDefault) {
+  if (isEnumRawValueAllowed(info, fieldDefault)) {
+    return fieldDefault;
+  }
+  if (!info.enumRawValues.empty()) {
+    return info.enumRawValues.front();
+  }
+  return 0;
 }
 
 // ---- CrossPointState ----
@@ -220,7 +238,10 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
       const uint8_t fieldDefault = s.*(info.valuePtr);  // struct-initializer default, read before we overwrite it
       uint8_t v = doc[info.key] | fieldDefault;
       if (info.type == SettingType::ENUM) {
-        v = clamp(v, (uint8_t)info.enumValues.size(), fieldDefault);
+        if (!isEnumRawValueAllowed(info, v)) {
+          v = defaultEnumRawValue(info, fieldDefault);
+          if (needsResave) *needsResave = true;
+        }
       } else if (info.type == SettingType::TOGGLE) {
         v = clamp(v, (uint8_t)2, fieldDefault);
       } else if (info.type == SettingType::VALUE) {
