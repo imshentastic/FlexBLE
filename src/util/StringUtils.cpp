@@ -2,9 +2,53 @@
 
 #include <Utf8.h>
 
-namespace StringUtils {
+#include <algorithm>
+#include <cctype>
 
-std::string sanitizeFilename(const std::string& name, size_t maxBytes) {
+namespace {
+
+constexpr size_t MAX_EXTENSION_BYTES = 16;
+
+bool isInvalidFilenameCodepoint(uint32_t cp) {
+  return cp == '/' || cp == '\\' || cp == ':' || cp == '*' || cp == '?' || cp == '"' || cp == '<' || cp == '>' ||
+         cp == '|';
+}
+
+std::string trimFilenameEdges(const std::string& name) {
+  size_t start = 0;
+  while (start < name.size() && (name[start] == ' ' || name[start] == '.')) {
+    start++;
+  }
+
+  size_t end = name.size();
+  while (end > start && (name[end - 1] == ' ' || name[end - 1] == '.')) {
+    end--;
+  }
+
+  return name.substr(start, end - start);
+}
+
+size_t findSafeExtensionStart(const std::string& name) {
+  const size_t dot = name.find_last_of('.');
+  if (dot == std::string::npos || dot == 0 || dot + 1 >= name.size()) {
+    return std::string::npos;
+  }
+
+  const size_t extensionBytes = name.size() - dot;
+  if (extensionBytes > MAX_EXTENSION_BYTES) {
+    return std::string::npos;
+  }
+
+  for (size_t i = dot + 1; i < name.size(); i++) {
+    if (!std::isalnum(static_cast<unsigned char>(name[i]))) {
+      return std::string::npos;
+    }
+  }
+
+  return dot;
+}
+
+std::string sanitizeFilenamePart(const std::string& name, size_t maxBytes) {
   std::string result;
   result.reserve(std::min(name.size(), maxBytes));
 
@@ -20,8 +64,7 @@ std::string sanitizeFilename(const std::string& name, size_t maxBytes) {
     const auto* cpStart = text;
     uint32_t cp = utf8NextCodepoint(&text);
 
-    if (cp == '/' || cp == '\\' || cp == ':' || cp == '*' || cp == '?' || cp == '"' || cp == '<' || cp == '>' ||
-        cp == '|') {
+    if (isInvalidFilenameCodepoint(cp)) {
       // Replace illegal and control characters with '_'
       if (result.length() + 1 > maxBytes) break;
       result += '_';
@@ -41,6 +84,30 @@ std::string sanitizeFilename(const std::string& name, size_t maxBytes) {
   }
 
   return result.empty() ? "book" : result;
+}
+
+}  // namespace
+
+namespace StringUtils {
+
+std::string sanitizeFilename(const std::string& name, size_t maxBytes) {
+  const std::string trimmedName = trimFilenameEdges(name);
+  const size_t extensionStart = findSafeExtensionStart(trimmedName);
+  if (extensionStart != std::string::npos) {
+    const std::string extension = trimmedName.substr(extensionStart);
+    if (extension.size() < maxBytes) {
+      const size_t baseBudget = maxBytes - extension.size();
+      std::string base = sanitizeFilenamePart(trimmedName.substr(0, extensionStart), baseBudget);
+      if (base.size() > baseBudget) {
+        base.resize(baseBudget);
+      }
+      if (!base.empty()) {
+        return base + extension;
+      }
+    }
+  }
+
+  return sanitizeFilenamePart(name, maxBytes);
 }
 
 }  // namespace StringUtils
