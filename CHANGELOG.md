@@ -17,6 +17,8 @@
 
 ### Fixed
 - Fixed inline EPUB images disappearing in landscape when their bottom edge slightly overlaps the screen margin.
+- Reduced unnecessary low-memory image suppression for JPEG-heavy EPUB chapters and added CSS heap diagnostics during chapter rebuilds.
+- Allowed wider inline JPEG images in EPUBs to render when they still fit the total pixel and heap safety limits.
 - Fixed the SD-card font picker reopening immediately after selecting a font from Settings > Reader > Font Family.
 - Fixed in-reader font-size changes for SD card fonts not working
 
