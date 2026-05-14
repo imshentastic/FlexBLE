@@ -5,6 +5,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Xtc.h>
 
 #include <algorithm>
 
@@ -30,6 +31,10 @@ bool isSleepImageFile(const std::string& path) {
 bool hasFileMetadata(const std::string& path) {
   return FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) || FsHelpers::hasTxtExtension(path) ||
          FsHelpers::hasMarkdownExtension(path);
+}
+
+bool hasClearableBookCache(const std::string& path) {
+  return FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path);
 }
 
 std::string buildFullPath(std::string basepath, const std::string& entry) {
@@ -168,6 +173,16 @@ void FileBrowserActivity::clearFileMetadata(const std::string& fullPath) {
   LOG_DBG("FileBrowser", "Cleared metadata for: %s", fullPath.c_str());
 }
 
+bool FileBrowserActivity::clearBookCache(const std::string& fullPath) {
+  if (FsHelpers::hasEpubExtension(fullPath)) {
+    return Epub(fullPath, "/.crosspoint").clearCache();
+  }
+  if (FsHelpers::hasXtcExtension(fullPath)) {
+    return Xtc(fullPath, "/.crosspoint").clearCache();
+  }
+  return false;
+}
+
 void FileBrowserActivity::promptDeleteFile(const std::string& fullPath, const std::string& entry) {
   auto handler = [this, fullPath](const ActivityResult& res) {
     if (res.isCancelled) {
@@ -275,8 +290,11 @@ bool FileBrowserActivity::isPinnedSleepFavorite(const std::string& fullPath) con
 void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool ignoreInitialConfirmRelease) {
   const std::string fullPath = buildFullPath(basepath, entry);
   std::vector<FileBrowserActionActivity::MenuItem> items;
-  items.reserve(2);
+  items.reserve(3);
   items.push_back({FileBrowserAction::Delete, StrId::STR_DELETE});
+  if (hasClearableBookCache(fullPath)) {
+    items.push_back({FileBrowserAction::DeleteCache, StrId::STR_DELETE_CACHE});
+  }
 
   const bool canPinFavorite = isSleepFolderPath(basepath) && isSleepImageFile(entry);
   if (canPinFavorite) {
@@ -298,6 +316,12 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
         switch (action) {
           case FileBrowserAction::Delete:
             promptDeleteFile(fullPath, entry);
+            return;
+          case FileBrowserAction::DeleteCache:
+            if (!clearBookCache(fullPath)) {
+              LOG_ERR("FileBrowser", "Failed to clear book cache for: %s", fullPath.c_str());
+            }
+            requestUpdate();
             return;
           case FileBrowserAction::PinFavorite:
             if (FsHelpers::hasPngExtension(fullPath)) {

@@ -8,6 +8,7 @@
 - Added a custom sleep timer picker so `Time to Sleep` can be set from 1 to 30 minutes instead of cycling fixed presets.
 - Added an in-reader Controls shortcut so you can customize your buttons without leaving the book.
 - Added bookmark cleanup shortcuts: hold Select on a bookmark to delete it, or hold Open on a book in Bookmarks to clear that book's bookmark list.
+- Added a File Browser long-press action for deleting an EPUB or XTC book's cache
 
 ### Changed
 - Hardened deep sleep entry by shutting WiFi down before waiting for the power button to be released.

@@ -16,6 +16,7 @@ class FileBrowserActivity final : public Activity {
  private:
   // Deletion
   void clearFileMetadata(const std::string& fullPath);
+  bool clearBookCache(const std::string& fullPath);
   void promptDeleteFile(const std::string& fullPath, const std::string& entry);
   void promptDeleteDirectory(const std::string& fullPath, const std::string& entry,
                              bool ignoreInitialConfirmRelease = false);
