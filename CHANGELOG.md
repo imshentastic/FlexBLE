@@ -8,6 +8,7 @@
 - Added a custom sleep timer picker so `Time to Sleep` can be set from 1 to 30 minutes instead of cycling fixed presets.
 - Added an in-reader Controls shortcut so you can customize your buttons without leaving the book.
 - Added bookmark cleanup shortcuts: hold Select on a bookmark to delete it, or hold Open on a book in Bookmarks to clear that book's bookmark list.
+- Added a confirmation message after deleting a book's cache from the reader or File Browser.
 - Added a File Browser long-press action for deleting an EPUB or XTC book's cache
 - Added a File Browser long-press action for marking EPUB books as finished or unfinished.
 
@@ -18,8 +19,11 @@
 
 ### Fixed
 - Fixed inline EPUB images disappearing in landscape when their bottom edge slightly overlaps the screen margin.
+- Reduced unnecessary low-memory image suppression for JPEG-heavy EPUB chapters and added CSS heap diagnostics during chapter rebuilds.
+- Allowed wider inline JPEG images in EPUBs to render when they still fit the total pixel and heap safety limits.
 - Fixed the SD-card font picker reopening immediately after selecting a font from Settings > Reader > Font Family.
 - Fixed in-reader font-size changes for SD card fonts not working
+- Fixed in-reader SD-card font changes not always rebuilding the current EPUB page layout.
 
 ## [v1.2.10] - 2026-05-11
 

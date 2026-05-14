@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <MemoryBudget.h>
 #include <Serialization.h>
 
 #include "Epub/css/CssParser.h"
@@ -275,7 +276,16 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
   if (embeddedStyle) {
     cssParser = epub->getCssParser();
     if (cssParser) {
-      if (!cssParser->loadFromCache()) {
+      const auto cssHeapBefore = MemoryBudget::snapshot();
+      const bool cssLoaded = cssParser->loadFromCache();
+      const auto cssHeapAfter = MemoryBudget::snapshot();
+      LOG_DBG("SCT", "CSS cache load: ok=%u rules=%u free=%u->%u delta=%d maxAlloc=%u->%u delta=%d",
+              cssLoaded ? 1U : 0U, static_cast<unsigned>(cssParser->ruleCount()), cssHeapBefore.freeHeap,
+              cssHeapAfter.freeHeap,
+              static_cast<int32_t>(cssHeapAfter.freeHeap) - static_cast<int32_t>(cssHeapBefore.freeHeap),
+              cssHeapBefore.maxAllocHeap, cssHeapAfter.maxAllocHeap,
+              static_cast<int32_t>(cssHeapAfter.maxAllocHeap) - static_cast<int32_t>(cssHeapBefore.maxAllocHeap));
+      if (!cssLoaded) {
         LOG_ERR("SCT", "Failed to load CSS from cache");
       }
     }
