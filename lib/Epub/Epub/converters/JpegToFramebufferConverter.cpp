@@ -404,7 +404,7 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
     return false;
   }
 
-  if (!validateImageDimensions(srcWidth, srcHeight, "JPEG")) {
+  if (!validateImageDimensions(srcWidth, srcHeight, "JPEG", MAX_JPEG_SOURCE_WIDTH)) {
     jpeg->close();
     delete jpeg;
     return false;
