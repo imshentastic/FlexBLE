@@ -3,6 +3,8 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include <cstring>
+
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -24,6 +26,7 @@ struct ReaderLayoutSettingsSnapshot {
   uint8_t forceParagraphIndents;
   uint8_t bionicReadingEnabled;
   uint8_t guideReadingEnabled;
+  char sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName)] = {};
 
   bool operator==(const ReaderLayoutSettingsSnapshot& other) const {
     return fontFamily == other.fontFamily && fontSize == other.fontSize && lineSpacing == other.lineSpacing &&
@@ -32,13 +35,14 @@ struct ReaderLayoutSettingsSnapshot {
            hyphenationEnabled == other.hyphenationEnabled && imageRendering == other.imageRendering &&
            extraParagraphSpacing == other.extraParagraphSpacing &&
            forceParagraphIndents == other.forceParagraphIndents && bionicReadingEnabled == other.bionicReadingEnabled &&
-           guideReadingEnabled == other.guideReadingEnabled;
+           guideReadingEnabled == other.guideReadingEnabled &&
+           std::strncmp(sdFontFamilyName, other.sdFontFamilyName, sizeof(sdFontFamilyName)) == 0;
   }
   bool operator!=(const ReaderLayoutSettingsSnapshot& other) const { return !(*this == other); }
 };
 
 ReaderLayoutSettingsSnapshot captureReaderLayoutSettings() {
-  return {
+  ReaderLayoutSettingsSnapshot snapshot{
       SETTINGS.fontFamily,
       SETTINGS.fontSize,
       SETTINGS.lineSpacing,
@@ -53,6 +57,9 @@ ReaderLayoutSettingsSnapshot captureReaderLayoutSettings() {
       SETTINGS.bionicReadingEnabled,
       SETTINGS.guideReadingEnabled,
   };
+  std::strncpy(snapshot.sdFontFamilyName, SETTINGS.sdFontFamilyName, sizeof(snapshot.sdFontFamilyName) - 1);
+  snapshot.sdFontFamilyName[sizeof(snapshot.sdFontFamilyName) - 1] = '\0';
+  return snapshot;
 }
 
 bool haveReaderLayoutSettingsChanged(const ReaderLayoutSettingsSnapshot& before) {

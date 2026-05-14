@@ -22,6 +22,7 @@
 - Allowed wider inline JPEG images in EPUBs to render when they still fit the total pixel and heap safety limits.
 - Fixed the SD-card font picker reopening immediately after selecting a font from Settings > Reader > Font Family.
 - Fixed in-reader font-size changes for SD card fonts not working
+- Fixed in-reader SD-card font changes not always rebuilding the current EPUB page layout.
 
 ## [v1.2.10] - 2026-05-11
 
