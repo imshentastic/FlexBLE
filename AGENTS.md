@@ -37,6 +37,7 @@ Project: Open-source e-reader firmware for Xteink X4 (ESP32-C3).
 6. Prefer `constexpr` for compile-time constants.
 7. Reserve `std::vector` capacity before push loops.
 8. Debounce persistent writes. Do not write progress on every page turn.
+9. `new` is not nothrow on ESP32. With exceptions disabled, bare `new` calls `abort()` on allocation failure instead of returning `nullptr`. Use `new (std::nothrow)` or `makeUniqueNoThrow<T>()` from `lib/Memory/Memory.h` for fallible allocations.
 
 ## HAL And Platform Rules
 
