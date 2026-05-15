@@ -159,7 +159,9 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
 #ifndef OMIT_SMALL_FONT
                               StrId::STR_SMALL,
 #endif
+#ifndef OMIT_MEDIUM_FONT
                               StrId::STR_MEDIUM,
+#endif
                               StrId::STR_LARGE,
 #ifndef OMIT_XLARGE_FONT
                               StrId::STR_X_LARGE,

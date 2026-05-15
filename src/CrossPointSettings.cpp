@@ -61,6 +61,12 @@ bool isReaderFontSizeAvailable(const CrossPointSettings::FONT_SIZE size) {
 #else
       return true;
 #endif
+    case CrossPointSettings::MEDIUM:
+#ifdef OMIT_MEDIUM_FONT
+      return false;
+#else
+      return true;
+#endif
     case CrossPointSettings::EXTRA_LARGE:
 #ifdef OMIT_XLARGE_FONT
       return false;
@@ -73,11 +79,17 @@ bool isReaderFontSizeAvailable(const CrossPointSettings::FONT_SIZE size) {
 #else
       return true;
 #endif
-    case CrossPointSettings::MEDIUM:
     case CrossPointSettings::LARGE:
     default:
       return true;
   }
+}
+
+CrossPointSettings::FONT_SIZE firstAvailableReaderFontSize() {
+  for (const CrossPointSettings::FONT_SIZE size : READER_FONT_SIZE_STORAGE_ORDER) {
+    if (isReaderFontSizeAvailable(size)) return size;
+  }
+  return CrossPointSettings::LARGE;
 }
 
 // Convert legacy front button layout into explicit logical->hardware mapping.
@@ -454,7 +466,7 @@ CrossPointSettings::FONT_SIZE CrossPointSettings::getEffectiveReaderFontSize() c
     if (fontSize == stored) return size;
     stored++;
   }
-  return MEDIUM;
+  return firstAvailableReaderFontSize();
 }
 
 bool CrossPointSettings::changeReaderFontSize(const bool larger) {
@@ -507,10 +519,15 @@ int CrossPointSettings::getReaderFontId() const {
         case SMALL:
           return LEXENDDECA_12_FONT_ID;
 #endif
+#ifndef OMIT_MEDIUM_FONT
         case MEDIUM:
         default:
           return LEXENDDECA_14_FONT_ID;
+#endif
         case LARGE:
+#ifdef OMIT_MEDIUM_FONT
+        default:
+#endif
           return LEXENDDECA_16_FONT_ID;
 #ifndef OMIT_XLARGE_FONT
         case EXTRA_LARGE:
@@ -535,10 +552,15 @@ int CrossPointSettings::getReaderFontId() const {
         case SMALL:
           return CHAREINK_12_FONT_ID;
 #endif
+#ifndef OMIT_MEDIUM_FONT
         case MEDIUM:
         default:
           return CHAREINK_14_FONT_ID;
+#endif
         case LARGE:
+#ifdef OMIT_MEDIUM_FONT
+        default:
+#endif
           return CHAREINK_16_FONT_ID;
 #ifndef OMIT_XLARGE_FONT
         case EXTRA_LARGE:
@@ -563,10 +585,15 @@ int CrossPointSettings::getReaderFontId() const {
         case SMALL:
           return BITTER_12_FONT_ID;
 #endif
+#ifndef OMIT_MEDIUM_FONT
         case MEDIUM:
         default:
           return BITTER_14_FONT_ID;
+#endif
         case LARGE:
+#ifdef OMIT_MEDIUM_FONT
+        default:
+#endif
           return BITTER_16_FONT_ID;
 #ifndef OMIT_XLARGE_FONT
         case EXTRA_LARGE:

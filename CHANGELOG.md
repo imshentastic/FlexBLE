@@ -6,6 +6,7 @@
 - Added new personal theme: "Minimal"
 - Added new theme "Lyra Carousel" with added stats
 - Added a custom sleep timer picker so `Time to Sleep` can be set from 1 to 30 minutes instead of cycling fixed presets.
+- Added an `OMIT_MEDIUM_FONT` build flag for firmware variants that need to exclude the 14px reader font size.
 - Added an in-reader Controls shortcut so you can customize your buttons without leaving the book.
 - Added bookmark cleanup shortcuts: hold Select on a bookmark to delete it, or hold Open on a book in Bookmarks to clear that book's bookmark list.
 - Added a confirmation message after deleting a book's cache from the reader or File Browser.
