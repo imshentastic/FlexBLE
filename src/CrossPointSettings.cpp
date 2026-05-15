@@ -86,10 +86,10 @@ bool isReaderFontSizeAvailable(const CrossPointSettings::FONT_SIZE size) {
 }
 
 CrossPointSettings::FONT_SIZE firstAvailableReaderFontSize() {
-  for (const CrossPointSettings::FONT_SIZE size : READER_FONT_SIZE_STORAGE_ORDER) {
-    if (isReaderFontSizeAvailable(size)) return size;
-  }
-  return CrossPointSettings::LARGE;
+  const auto it =
+      std::find_if(std::begin(READER_FONT_SIZE_STORAGE_ORDER), std::end(READER_FONT_SIZE_STORAGE_ORDER),
+                   [](const CrossPointSettings::FONT_SIZE size) { return isReaderFontSizeAvailable(size); });
+  return (it != std::end(READER_FONT_SIZE_STORAGE_ORDER)) ? *it : CrossPointSettings::LARGE;
 }
 
 // Convert legacy front button layout into explicit logical->hardware mapping.
