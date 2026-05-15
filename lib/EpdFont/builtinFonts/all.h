@@ -11,6 +11,7 @@
 //   OMIT_TEENSY_FONT - excludes 8px (Teensy) reading fonts; used by env:xlarge
 //   OMIT_TINY_FONT   - excludes 10px (Tiny) reading fonts; used by env:xlarge
 //   OMIT_SMALL_FONT  - excludes 12px (Small) reading fonts
+//   OMIT_MEDIUM_FONT - excludes 14px (Medium) reading fonts
 //   OMIT_XLARGE_FONT - excludes 18px (Extra Large) reading fonts; used by env:tiny
 //   OMIT_HUGE_FONT   - excludes 20px (Huge) reading fonts; used by all firmware envs except env:xlarge
 #ifdef OMIT_EMOJI_FONTS
@@ -39,10 +40,12 @@
 #include BUILTIN_READING_FONT_HEADER(bitter_12_italic)
 #include BUILTIN_READING_FONT_HEADER(bitter_12_regular)
 #endif
+#ifndef OMIT_MEDIUM_FONT
 #include BUILTIN_READING_FONT_HEADER(bitter_14_bold)
 #include BUILTIN_READING_FONT_HEADER(bitter_14_bolditalic)
 #include BUILTIN_READING_FONT_HEADER(bitter_14_italic)
 #include BUILTIN_READING_FONT_HEADER(bitter_14_regular)
+#endif
 #include BUILTIN_READING_FONT_HEADER(bitter_16_bold)
 #include BUILTIN_READING_FONT_HEADER(bitter_16_bolditalic)
 #include BUILTIN_READING_FONT_HEADER(bitter_16_italic)
@@ -78,10 +81,12 @@
 #include BUILTIN_READING_FONT_HEADER(charein_12_italic)
 #include BUILTIN_READING_FONT_HEADER(charein_12_regular)
 #endif
+#ifndef OMIT_MEDIUM_FONT
 #include BUILTIN_READING_FONT_HEADER(charein_14_bold)
 #include BUILTIN_READING_FONT_HEADER(charein_14_bolditalic)
 #include BUILTIN_READING_FONT_HEADER(charein_14_italic)
 #include BUILTIN_READING_FONT_HEADER(charein_14_regular)
+#endif
 #include BUILTIN_READING_FONT_HEADER(charein_16_bold)
 #include BUILTIN_READING_FONT_HEADER(charein_16_bolditalic)
 #include BUILTIN_READING_FONT_HEADER(charein_16_italic)
@@ -117,10 +122,12 @@
 #include BUILTIN_READING_FONT_HEADER(lexenddeca_12_italic)
 #include BUILTIN_READING_FONT_HEADER(lexenddeca_12_regular)
 #endif
+#ifndef OMIT_MEDIUM_FONT
 #include BUILTIN_READING_FONT_HEADER(lexenddeca_14_bold)
 #include BUILTIN_READING_FONT_HEADER(lexenddeca_14_bolditalic)
 #include BUILTIN_READING_FONT_HEADER(lexenddeca_14_italic)
 #include BUILTIN_READING_FONT_HEADER(lexenddeca_14_regular)
+#endif
 #include BUILTIN_READING_FONT_HEADER(lexenddeca_16_bold)
 #include BUILTIN_READING_FONT_HEADER(lexenddeca_16_bolditalic)
 #include BUILTIN_READING_FONT_HEADER(lexenddeca_16_italic)
