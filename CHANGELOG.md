@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.2.11.1] - 2026-05-15
+
+### Changed
+- Removed Medium font size from `xlarge` build to get it below the size limit
+
+### Fixed
+- Included Lyra Carousel by activating the build flag `DCROSSINK_ENABLE_LYRA_CAROUSEL=1`
+
 ## [v1.2.11] - 2026-05-14
 
 ### Added
