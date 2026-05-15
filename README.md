@@ -85,8 +85,7 @@ There are 3 available build variants to choose from due to build size constraint
 > Teensy, Tiny, and Small font sizes had to be removed to reduce build size and still support emoji/symbols.
 
 - Emoji & Misc. Symbols Support
-- 4 Font sizes:
-  - Medium (14pt)
+- 3 Font sizes:
   - Large (16pt)
   - Extra Large (18pt)
   - Huge (20pt)
