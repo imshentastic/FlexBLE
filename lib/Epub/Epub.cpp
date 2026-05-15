@@ -700,7 +700,9 @@ std::string Epub::getThumbBmpPath(int width, int height) const {
 
 bool Epub::generateThumbBmp(int height) const { return generateThumbBmp(0, height); }
 
-bool Epub::generateThumbBmp(int width, int height) const {
+bool Epub::generateThumbBmp(int width, int height) const { return generateThumbBmpInternal(width, height); }
+
+bool Epub::generateThumbBmpInternal(int width, int height) const {
   if (height <= 0) {
     LOG_DBG("EBP", "Using default thumb BMP height for requested dimensions: %dx%d", width, height);
     height = kDefaultThumbHeight;
@@ -751,8 +753,6 @@ bool Epub::generateThumbBmp(int width, int height) const {
       Storage.remove(coverJpgTempPath.c_str());
       return false;
     }
-    // Use smaller target size for Continue Reading card (half of screen: 240x400)
-    // Generate 1-bit BMP for fast home screen rendering (no gray passes needed)
     int THUMB_TARGET_WIDTH = width;
     int THUMB_TARGET_HEIGHT = height;
     const bool success = JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(coverJpg, thumbBmp, THUMB_TARGET_WIDTH,

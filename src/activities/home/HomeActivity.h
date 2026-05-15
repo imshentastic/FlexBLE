@@ -4,10 +4,10 @@
 #include <optional>
 #include <vector>
 
-#include "../Activity.h"
-#include "../reader/BookReadingStats.h"
-#include "../reader/GlobalReadingStats.h"
 #include "./FileBrowserActivity.h"
+#include "activities/Activity.h"
+#include "activities/reader/BookReadingStats.h"
+#include "activities/reader/GlobalReadingStats.h"
 #include "util/ButtonNavigator.h"
 
 struct RecentBook;
@@ -31,6 +31,10 @@ class HomeActivity final : public Activity {
   bool hasReadingStats = false;
   bool hasBookmarks = false;
   bool hasOpdsServers = false;
+  bool minimalMenuOpen = false;
+  bool minimalSuppressInitialFrontRelease = false;
+  int minimalMenuIndex = 0;
+  int minimalHomeNavIndex = -1;
   bool coverRendered = false;      // Track if cover has been rendered once
   bool coverBufferStored = false;  // Track if cover buffer is stored
   uint8_t* coverBuffer = nullptr;  // HomeActivity's own buffer for cover image

@@ -1,16 +1,29 @@
 # Changelog
 
-## [Unreleased]
+## [v1.2.11] - Unreleased
 
 ### Added
+- Added new personal theme: "Minimal"
+- Added new theme "Lyra Carousel" with added stats
 - Added a custom sleep timer picker so `Time to Sleep` can be set from 1 to 30 minutes instead of cycling fixed presets.
+- Added an in-reader Controls shortcut so you can customize your buttons without leaving the book.
+- Added bookmark cleanup shortcuts: hold Select on a bookmark to delete it, or hold Open on a book in Bookmarks to clear that book's bookmark list.
+- Added a confirmation message after deleting a book's cache from the reader or File Browser.
+- Added a File Browser long-press action for deleting an EPUB or XTC book's cache
+- Added a File Browser long-press action for marking EPUB books as finished or unfinished.
 
 ### Changed
 - Hardened deep sleep entry by shutting WiFi down before waiting for the power button to be released.
 - Raised the web file-transfer filename limit from 100 to 150 bytes so longer uploaded filenames are preserved.
+- Made the in-reader Reader Options menu include the same Reader settings and actions as Settings > Reader.
 
 ### Fixed
 - Fixed inline EPUB images disappearing in landscape when their bottom edge slightly overlaps the screen margin.
+- Reduced unnecessary low-memory image suppression for JPEG-heavy EPUB chapters and added CSS heap diagnostics during chapter rebuilds.
+- Allowed wider inline JPEG images in EPUBs to render when they still fit the total pixel and heap safety limits.
+- Fixed the SD-card font picker reopening immediately after selecting a font from Settings > Reader > Font Family.
+- Fixed in-reader font-size changes for SD card fonts not working
+- Fixed in-reader SD-card font changes not always rebuilding the current EPUB page layout.
 
 ## [v1.2.10] - 2026-05-11
 
@@ -26,6 +39,7 @@
 ### Changed
 - Reduced Controls settings section spacing so the grouped controls fit better on X3 screens.
 - Made front reader long-press actions trigger when the hold delay is reached while normal page turns still trigger on release.
+
 - Used the fast EPUB spine/TOC indexing path for books with 300+ spine entries so heavily split books build `book.bin` faster on first open.
 - Allowed the web file manager and WebDAV to browse dot-prefixed hidden files when hidden files are enabled, matching the device file browser.
 

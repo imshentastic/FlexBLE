@@ -34,6 +34,7 @@
 #include "QrDisplayActivity.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
+#include "SdCardFontSystem.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
@@ -47,6 +48,20 @@ constexpr uint16_t DEFAULT_AUTO_PAGE_TURN_INTERVAL_S = 30;
 constexpr uint16_t MIN_AUTO_PAGE_TURN_INTERVAL_S = 5;
 constexpr uint16_t MAX_AUTO_PAGE_TURN_INTERVAL_S = 120;
 constexpr int MAX_PAGE_LOAD_RETRIES = 3;
+
+void drawToast(const GfxRenderer& renderer, const char* msg) {
+  constexpr int toastPadX = 20;
+  constexpr int toastPadY = 12;
+  const int msgW = renderer.getTextWidth(UI_10_FONT_ID, msg);
+  const int msgH = renderer.getLineHeight(UI_10_FONT_ID);
+  const int toastW = msgW + toastPadX * 2;
+  const int toastH = msgH + toastPadY * 2;
+  const int toastX = (renderer.getScreenWidth() - toastW) / 2;
+  const int toastY = (renderer.getScreenHeight() - toastH) / 2;
+  renderer.fillRect(toastX, toastY, toastW, toastH, true);
+  renderer.drawText(UI_10_FONT_ID, toastX + toastPadX, toastY + toastPadY, msg, false);
+  renderer.displayBuffer();
+}
 
 int clampPercent(int percent) {
   if (percent < 0) {
@@ -431,6 +446,7 @@ void EpubReaderActivity::loop() {
                              const auto& menu = std::get<MenuResult>(result.data);
                              applyOrientation(menu.orientation);
                              if (menu.settingsChanged) {
+                               sdFontSystem.ensureLoaded(renderer);
                                RenderLock lock(*this);
                                if (section) {
                                  cachedSpineIndex = currentSpineIndex;
@@ -777,6 +793,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       return;
     }
     case EpubReaderMenuActivity::MenuAction::DELETE_CACHE: {
+      bool cacheDeleted = false;
       {
         RenderLock lock(*this);
         if (epub && section) {
@@ -784,12 +801,18 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
           uint16_t backupPage = section->currentPage;
           uint16_t backupPageCount = section->pageCount;
           section.reset();
-          epub->clearCache();
+          cacheDeleted = epub->clearCache();
           epub->setupCacheDir();
           if (!saveProgress(backupSpine, backupPage, backupPageCount)) {
             LOG_ERR("ERS", "Failed to save progress before cache clear");
           }
+          if (cacheDeleted) {
+            drawToast(renderer, tr(STR_BOOK_CACHE_DELETED));
+          }
         }
+      }
+      if (cacheDeleted) {
+        delay(1000);
       }
       onGoHome();
       return;
@@ -920,12 +943,14 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     case EpubReaderMenuActivity::MenuAction::ROTATE_SCREEN:
     case EpubReaderMenuActivity::MenuAction::READER_OPTIONS:
+    case EpubReaderMenuActivity::MenuAction::CONTROLS_OPTIONS:
       break;
   }
 }
 
 void EpubReaderActivity::reindexCurrentSection() {
   SETTINGS.saveToFile();
+  sdFontSystem.ensureLoaded(renderer);
   {
     RenderLock lock(*this);
     GUI.drawPopup(renderer, tr(STR_INDEXING));

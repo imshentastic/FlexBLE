@@ -268,8 +268,9 @@ bool CrossPointSettings::loadFromBinaryFile() {
     if (++settingsRead >= fileSettingsCount) break;
     readAndValidate(inputFile, paragraphAlignment, PARAGRAPH_ALIGNMENT_COUNT);
     if (++settingsRead >= fileSettingsCount) break;
-    readAndValidate(inputFile, sleepTimeout, SLEEP_TIMEOUT_COUNT);
-    sleepTimeoutMinutes = sleepTimeoutEnumToMinutes(sleepTimeout);
+    uint8_t legacySleepTimeout = SLEEP_10_MIN;
+    readAndValidate(inputFile, legacySleepTimeout, SLEEP_TIMEOUT_COUNT);
+    sleepTimeoutMinutes = sleepTimeoutEnumToMinutes(legacySleepTimeout);
     if (++settingsRead >= fileSettingsCount) break;
     readAndValidate(inputFile, refreshFrequency, REFRESH_FREQUENCY_COUNT);
     if (++settingsRead >= fileSettingsCount) break;
@@ -397,6 +398,22 @@ unsigned long CrossPointSettings::getSleepTimeoutMs() const {
   const uint8_t minutes = std::clamp(sleepTimeoutMinutes, MIN_SLEEP_TIMEOUT_MINUTES, MAX_SLEEP_TIMEOUT_MINUTES);
   return static_cast<unsigned long>(minutes) * 60UL * 1000UL;
 }
+
+#ifdef SIMULATOR
+bool CrossPointSettings::verifySleepTimeoutMigrationContract() {
+  CrossPointSettings& settings = getInstance();
+  const uint8_t originalMinutes = settings.sleepTimeoutMinutes;
+
+  settings.sleepTimeoutMinutes = sleepTimeoutEnumToMinutes(SLEEP_5_MIN);
+  const bool migratedValueDrivesTimeout = settings.getSleepTimeoutMs() == 5UL * 60UL * 1000UL;
+
+  settings.sleepTimeoutMinutes = 12;
+  const bool runtimeUsesMinutesOnly = settings.getSleepTimeoutMs() == 12UL * 60UL * 1000UL;
+
+  settings.sleepTimeoutMinutes = originalMinutes;
+  return migratedValueDrivesTimeout && runtimeUsesMinutesOnly;
+}
+#endif
 
 int CrossPointSettings::getRefreshFrequency() const {
   switch (refreshFrequency) {

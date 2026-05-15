@@ -12,12 +12,12 @@
 #include <esp_task_wdt.h>
 
 #include <algorithm>
+#include <iterator>
 
 #include "AppVersion.h"
 #include "CrossPointSettings.h"
 #include "FontInstaller.h"
 #include "OpdsServerStore.h"
-#include "SdCardFontGlobals.h"
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
 #include "WebDAVHandler.h"
@@ -38,6 +38,28 @@ constexpr uint16_t LOCAL_UDP_PORT = 8134;
 
 // Static pointer for WebSocket callback (WebSocketsServer requires C-style callback)
 CrossPointWebServer* wsInstance = nullptr;
+
+uint8_t enumDisplayIndexForRawValue(const SettingInfo& setting, uint8_t rawValue) {
+  if (setting.enumRawValues.empty()) {
+    return rawValue;
+  }
+
+  auto it = std::find(setting.enumRawValues.begin(), setting.enumRawValues.end(), rawValue);
+  if (it == setting.enumRawValues.end()) {
+    return 0;
+  }
+  return static_cast<uint8_t>(std::distance(setting.enumRawValues.begin(), it));
+}
+
+uint8_t enumRawValueForDisplayIndex(const SettingInfo& setting, uint8_t displayIndex) {
+  if (setting.enumRawValues.empty()) {
+    return displayIndex;
+  }
+  if (displayIndex >= setting.enumRawValues.size()) {
+    return setting.enumRawValues.front();
+  }
+  return setting.enumRawValues[displayIndex];
+}
 
 // WebSocket upload state
 FsFile wsUploadFile;
@@ -1127,7 +1149,7 @@ void CrossPointWebServer::handleGetSettings() const {
       case SettingType::ENUM: {
         doc["type"] = "enum";
         if (s.valuePtr) {
-          doc["value"] = static_cast<int>(SETTINGS.*(s.valuePtr));
+          doc["value"] = static_cast<int>(enumDisplayIndexForRawValue(s, SETTINGS.*(s.valuePtr)));
         } else if (s.valueGetter) {
           doc["value"] = static_cast<int>(s.valueGetter());
         }
@@ -1221,7 +1243,7 @@ void CrossPointWebServer::handlePostSettings() {
                                                       : static_cast<int>(s.enumStringValues.size());
         if (val >= 0 && val < maxVal) {
           if (s.valuePtr) {
-            SETTINGS.*(s.valuePtr) = static_cast<uint8_t>(val);
+            SETTINGS.*(s.valuePtr) = enumRawValueForDisplayIndex(s, static_cast<uint8_t>(val));
           } else if (s.valueSetter) {
             s.valueSetter(static_cast<uint8_t>(val));
           }

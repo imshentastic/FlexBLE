@@ -197,10 +197,11 @@ class CrossPointSettings {
     LYRA_3_COVERS = 2,
     ROUNDEDRAFF = 3,
     LYRA_CAROUSEL = 4,
+    MINIMAL = 5,
 #if defined(CROSSINK_ENABLE_LYRA_CAROUSEL) && CROSSINK_ENABLE_LYRA_CAROUSEL
-    UI_THEME_COUNT = 5
+    UI_THEME_COUNT = 6
 #else
-    UI_THEME_COUNT = 4
+    UI_THEME_COUNT = 6
 #endif
   };
   enum RECENT_BOOKS_VIEW { RECENT_BOOKS_LIST = 0, RECENT_BOOKS_GRID = 1, RECENT_BOOKS_VIEW_COUNT };
@@ -286,8 +287,7 @@ class CrossPointSettings {
   uint8_t fontSize = MEDIUM;
   uint8_t lineSpacing = NORMAL;
   uint8_t paragraphAlignment = JUSTIFIED;
-  // Auto-sleep timeout setting (default 10 minutes)
-  uint8_t sleepTimeout = SLEEP_10_MIN;  // legacy enum retained for binary/JSON migration
+  // Auto-sleep timeout setting (default 10 minutes). Legacy sleepTimeout enum values are migration-only.
   uint8_t sleepTimeoutMinutes = 10;
   // E-ink refresh frequency (default 15 pages)
   uint8_t refreshFrequency = REFRESH_15;
@@ -368,6 +368,9 @@ class CrossPointSettings {
   static void validateFrontButtonMapping(CrossPointSettings& settings);
   static void validateReaderFrontButtonMapping(CrossPointSettings& settings);
   static uint8_t sleepTimeoutEnumToMinutes(uint8_t legacyValue);
+#ifdef SIMULATOR
+  static bool verifySleepTimeoutMigrationContract();
+#endif
 
  private:
   bool loadFromBinaryFile();
