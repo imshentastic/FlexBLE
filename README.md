@@ -55,14 +55,17 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 ### Web installer (recommended)
 
 1. Connect your device to your computer via USB-C and wake/unlock the device
-2. Go to https://xteink.dve.al/ and click "Flash CrossPoint firmware"
-
-To revert to the official firmware, you can flash the latest official firmware from https://xteink.dve.al/, or swap back to the other partition using the "Swap boot partition" button here https://xteink.dve.al/debug.
+2. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), and choose an official CrossPoint release.
 
 ### Web installer (specific version)
 
-1. Download a `firmware.bin` from [Releases](https://github.com/crosspoint-reader/crosspoint-reader/releases).
-2. Open https://xteink.dve.al/ and flash from **OTA fast flash controls**.
+1. Connect your device to your computer via USB-C and wake/unlock the device
+2. Download a `firmware.bin` from [Releases](https://github.com/crosspoint-reader/crosspoint-reader/releases), local build, or continuous integration artifact.
+3. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), click "Custom .bin" and upload a `firmware.bin`.
+
+### Revert to Official Firmware
+
+To revert to the official firmware, you can also flash the latest official firmware using https://crosspointreader.com/#flash-tools.
 
 ### Command line
 
