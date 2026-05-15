@@ -50,6 +50,30 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 
 ---
 
+## USB-locked devices (Xteink Unlocker)
+
+Some Xteink units purchased from third-party stores (e.g. AliExpress) ship with USB flashing locked from the factory.
+If your device is locked, you will need to use the **Xteink Unlocker** tool available at
+https://crosspointreader.com/#unlock-tool before you can flash CrossPoint.
+
+**You do not need this tool if you bought your device directly from xteink.com.** Those units are not locked.
+
+**Not sure if your device is locked?** Power it on, connect the USB-C cable, and try flashing via the web flasher first (see
+[Install firmware](#Install%20firmware) below). If the browser's serial device picker does not show your device, try a different
+USB port or browser before assuming the device is locked. Only reach for the unlocker if the device still doesn't appear.
+
+### ⚠️ WARNING: READ THIS BEFORE USING THE UNLOCKER ⚠️
+
+**The only officially supported firmwares in the unlock tool are CrossPoint and CrossInk.**
+
+Flashing any other firmware on a USB-locked device may **permanently brick the device** or leave it **permanently
+stuck on that firmware with no recovery path**. Once USB flashing is re-locked, your only way back is via OTA, and if
+the firmware you flashed doesn't support OTA, **there is no way out**.
+
+**The Papyrix fork has removed OTA update support from its code.** If you flash Papyrix onto a
+USB-locked unit, you will have **zero update or recovery path** and will be stuck on it forever. **Do not flash
+Papyrix (or any other unsupported firmware) on a locked device.**
+
 ## Install firmware
 
 ### Web installer (recommended)
