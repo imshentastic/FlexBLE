@@ -17,6 +17,10 @@ My goal with this fork was to maintain the core Crosspoint firmware while integr
   </tr>
 </table>
 
+---
+
+**Note**: This firmware is confirmed to be working on both the X3 and X4.
+
 ### Highlights
 
 - New reader fonts: ChareInk, Lexend Deca, and Bitter
@@ -55,18 +59,6 @@ The default fonts have been replaced with ChareInk, Lexend Deca, and Bitter. The
 - [Bitter](https://fonts.google.com/specimen/Bitter) - A "contemporary" slab serif typeface for text, it is specially designed for comfortably reading on digital screens. The consistent stroke weight of Bitter helps it render particularly well on e-ink devices. The medium weight has been chosen specifically for improved rendering on the X4.
 
 The UI now uses [Inter](https://fonts.google.com/specimen/Inter) as the display font which has improved readability at smaller sizes.
-
-### Wireless workflows
-
-- File transfer web UI
-- EPUB Optimizer
-- Web settings UI/API (edit many device settings from browser)
-- WebSocket fast uploads
-- WebDAV handler
-- AP mode (hotspot) and STA mode (join existing WiFi), both with QR helpers
-- Calibre wireless connect flow
-- OPDS browser with saved servers (up to 8), search, pagination, and direct download
-- OTA update checks and installs from GitHub releases
 
 ### Emojis and Misc Glyphs
 
@@ -245,11 +237,7 @@ pio run -e simulator
 > **Note:** On first open of an ebook, an "Indexing..." popup will appear while the section cache is built in `.crosspoint/`. If you see rendering issues after a code change, delete `./fs_/.crosspoint/` to clear stale caches.
 
 ---
-
-### Localization
-
-CrossPoint includes 22 UI languages and counting.
-
+## Installation
 ### Web
 
 1. Download the `firmware-*.bin` file for the build variant of your choosing from the [releases](https://github.com/uxjulia/CrossInk/releases) page
@@ -259,49 +247,6 @@ CrossPoint includes 22 UI languages and counting.
 5. Choose the `firmware-*.bin` file you downloaded and click "Flash"
 
 To revert back to the official firmware, you can flash the latest official firmware from https://crosspointreader.com/#flash-tools
-
----
-
-## USB-locked devices (Xteink Unlocker)
-
-Some Xteink units purchased from third-party stores (e.g. AliExpress) ship with USB flashing locked from the factory.
-If your device is locked, you will need to use the **Xteink Unlocker** tool available at
-https://crosspointreader.com/#unlock-tool before you can flash CrossPoint.
-
-**You do not need this tool if you bought your device directly from xteink.com.** Those units are not locked.
-
-**Not sure if your device is locked?** Power it on, connect the USB-C cable, and try flashing via the web flasher first (see
-[Install firmware](#install-firmware) below). If the browser's serial device picker does not show your device, try a different
-USB port or browser before assuming the device is locked. Only reach for the unlocker if the device still doesn't appear.
-
-### ⚠️ WARNING: READ THIS BEFORE USING THE UNLOCKER ⚠️
-
-**The only officially supported firmwares in the unlock tool are CrossPoint and CrossInk.**
-
-Flashing any other firmware on a USB-locked device may **permanently brick the device** or leave it **permanently
-stuck on that firmware with no recovery path**. Once USB flashing is re-locked, your only way back is via OTA, and if
-the firmware you flashed doesn't support OTA, **there is no way out**.
-
-**The Papyrix fork has removed OTA update support from its code.** If you flash Papyrix onto a
-USB-locked unit, you will have **zero update or recovery path** and will be stuck on it forever. **Do not flash
-Papyrix (or any other unsupported firmware) on a locked device.**
-
-## Install firmware
-
-### Web installer (recommended)
-
-1. Connect your device to your computer via USB-C and wake/unlock the device
-2. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), and choose an official CrossPoint release.
-
-### Web installer (specific version)
-
-1. Connect your device to your computer via USB-C and wake/unlock the device
-2. Download a `firmware.bin` from [Releases](https://github.com/crosspoint-reader/crosspoint-reader/releases), local build, or continuous integration artifact.
-3. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), click "Custom .bin" and upload a `firmware.bin`.
-
-### Revert to Official Firmware
-
-To revert to the official firmware, you can also flash the latest official firmware using https://crosspointreader.com/#flash-tools.
 
 ### Command line
 
@@ -330,6 +275,9 @@ esptool.py --chip esp32c3 --port /dev/ttyACM0 --baud 921600 write_flash 0x10000 
 # macOS
 esptool.py --chip esp32c3 --port /dev/cu.usbmodem2101 --baud 921600 write_flash 0x10000 /path/to/firmware.bin
 ```
+### Revert to Official Firmware
+
+To revert to the official firmware, you can flash the latest official firmware using https://crosspointreader.com/#flash-tools.
 
 ---
 
@@ -350,11 +298,11 @@ esptool.py --chip esp32c3 --port /dev/cu.usbmodem2101 --baud 921600 write_flash 
 - **PlatformIO Core** (`pio`) or **VS Code + PlatformIO IDE**
 - Python 3.8+
 - USB-C cable for flashing the ESP32-C3
-- Xteink X4
+- Unlocked Xteink X4 or X3
 
 ### Setup
 
-CrossPoint uses PlatformIO for building and flashing the firmware. To get started, clone the repository:
+CrossInk uses PlatformIO for building and flashing the firmware. To get started, clone the repository:
 
 ```
 git clone --recursive https://github.com/uxjulia/CrossInk
@@ -404,25 +352,41 @@ on this constraint.
 
 ### Data caching
 
-The first time chapters of a book are loaded, they are cached to the SD card. Subsequent loads are served from the
-cache. This cache directory exists at `.crosspoint` on the SD card. The structure is as follows:
+The first time a book is loaded, CrossInk writes reusable data to the SD card so later opens do not have to rebuild
+everything from scratch. This data lives in `.crosspoint` on the SD card. The directory also contains device settings,
+saved servers, recent books, bookmarks, and reading stats, so it is more than just a disposable render cache.
+
+The structure is roughly:
 
 ```
 .crosspoint/
-├── epub_12471232/       # Each EPUB is cached to a subdirectory named `epub_<hash>`
-│   ├── progress.bin     # Stores reading progress (chapter, page, etc.)
-│   ├── stats.bin        # Per-book reading statistics (time, sessions, pages turned)
-│   ├── cover.bmp        # Book cover image (once generated)
-│   ├── book.bin         # Book metadata (title, author, spine, table of contents, etc.)
-│   └── sections/        # All chapter data is stored in the sections subdirectory
-│       ├── 0.bin        # Chapter data (screen count, all text layout info, etc.)
-│       ├── 1.bin        #     files are named by their index in the spine
+├── global_stats.bin        # All-time reading stats, including total books read
+├── global_stats.bin.bak    # Backup used if the main global stats file is corrupt
+├── settings.bin            # Device settings
+├── state.bin               # Last-opened book and sleep/session state
+├── recent.bin              # Recent books list
+├── bookmarks/              # Bookmark files, one per book
+├── home_carousel_cache.bin # Lyra Carousel home-screen snapshot cache
+├── epub_12471232/          # Each EPUB is cached to `epub_<hash>`
+│   ├── progress.bin        # Reading position (chapter, page, etc.)
+│   ├── stats.bin           # Per-book reading stats
+│   ├── cover.bmp           # Book cover image, once generated
+│   ├── thumb_*.bmp         # Home/recent-books thumbnail images
+│   ├── book.bin            # Book metadata (title, author, spine, table of contents, etc.)
+│   ├── css_rules.cache     # Parsed CSS rules
+│   └── sections/           # Pre-rendered chapter/page layout data
+│       ├── 0.bin
+│       ├── 1.bin
 │       └── ...
+├── xtc_12471232/           # XTC progress and generated cover/thumb images
+└── txt_12471232/           # TXT progress, page index, and generated cover image
 ```
 
-Deleting the `.crosspoint` directory will clear the entire cache.
+Deleting the entire `.crosspoint` directory will reset caches, settings, saved network/server data, bookmarks, recent
+books, reading progress, and reading stats. To clear EPUB/XTC render caches from the device UI, use
+**Settings > System > Clear Reading Cache**; that leaves settings and global stats in place.
 
-Due the way it's currently implemented, the cache is not automatically cleared when a book is deleted and moving a book
-file will use a new cache directory, resetting the reading progress.
+Due to the way it's currently implemented, cache data is not automatically cleared when a book is deleted. Moving a book
+file creates a new hash-based cache directory, so the moved copy may start with fresh reading progress.
 
 For more details on the internal file structures, see the [file formats document](./docs/file-formats.md).

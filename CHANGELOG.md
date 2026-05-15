@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+### Fixed
+
+### Changed
+
 ## [v1.2.11.1] - 2026-05-15
 
 ### Changed
@@ -7,7 +15,7 @@
 
 ### Fixed
 - Included Lyra Carousel by activating the build flag `DCROSSINK_ENABLE_LYRA_CAROUSEL=1`
-
+---
 ## [v1.2.11] - 2026-05-14
 
 ### Added
@@ -31,7 +39,7 @@
 - Fixed the SD-card font picker reopening immediately after selecting a font from Settings > Reader > Font Family.
 - Fixed in-reader font-size changes for SD card fonts not working
 - Fixed in-reader SD-card font changes not always rebuilding the current EPUB page layout.
-
+---
 ## [v1.2.10] - 2026-05-11
 
 ### Added
@@ -46,7 +54,6 @@
 ### Changed
 - Reduced Controls settings section spacing so the grouped controls fit better on X3 screens.
 - Made front reader long-press actions trigger when the hold delay is reached while normal page turns still trigger on release.
-
 - Used the fast EPUB spine/TOC indexing path for books with 300+ spine entries so heavily split books build `book.bin` faster on first open.
 - Allowed the web file manager and WebDAV to browse dot-prefixed hidden files when hidden files are enabled, matching the device file browser.
 
@@ -63,7 +70,7 @@
 - Fixed concurrent render/storage crashes by serializing `GfxRenderer` scratch-buffer access, shared SPI bus access, and failed SPI lock cleanup.
 - Fixed Recent Books, EPUB/XTC thumbnail caches, deleted-folder metadata, and XTC cover scaling so cached book data stays in sync and grid covers fill their slots correctly.
 - Fixed simulator build configuration so SDL2 and simulator-provided network/OTA shims compile cleanly.
-
+---
 ## [v1.2.9.1] - 2026-05-03
 
 ### Changed

@@ -190,7 +190,7 @@ class CrossPointSettings {
     LONG_PRESS_BUTTON_BEHAVIOR_COUNT
   };
 
-  // UI Theme. LYRA_CAROUSEL remains as a legacy value while the option is hidden by default.
+  // UI Theme. Raw values are persisted in settings; keep existing values stable.
   enum UI_THEME {
     CLASSIC = 0,
     LYRA = 1,
@@ -198,11 +198,7 @@ class CrossPointSettings {
     ROUNDEDRAFF = 3,
     LYRA_CAROUSEL = 4,
     MINIMAL = 5,
-#if defined(CROSSINK_ENABLE_LYRA_CAROUSEL) && CROSSINK_ENABLE_LYRA_CAROUSEL
     UI_THEME_COUNT = 6
-#else
-    UI_THEME_COUNT = 6
-#endif
   };
   enum RECENT_BOOKS_VIEW { RECENT_BOOKS_LIST = 0, RECENT_BOOKS_GRID = 1, RECENT_BOOKS_VIEW_COUNT };
 
