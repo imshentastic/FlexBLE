@@ -7,18 +7,19 @@
 #include "../settings/SettingsActivity.h"
 #include "util/ButtonNavigator.h"
 
-class ReaderOptionsActivity final : public Activity {
+class ControlsOptionsActivity final : public Activity {
   ButtonNavigator buttonNavigator;
   int selectedIndex = 0;
   int settingsCount = 0;
   std::vector<SettingInfo> settings;
 
   void rebuildSettingsList();
+  void moveSelection(bool forward);
   void toggleCurrentSetting();
 
  public:
-  explicit ReaderOptionsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("ReaderOptions", renderer, mappedInput) {}
+  explicit ControlsOptionsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
+      : Activity("ControlsOptions", renderer, mappedInput) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;

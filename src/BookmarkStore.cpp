@@ -116,6 +116,15 @@ void BookmarkStore::removeBookmarkForPage(uint16_t spineIndex, float pageProgres
   saveToFile();
 }
 
+bool BookmarkStore::removeBookmarkAt(size_t index) {
+  if (index >= bookmarks.size()) return false;
+
+  bookmarks.erase(bookmarks.begin() + index);
+  dirty = true;
+  saveToFile();
+  return true;
+}
+
 bool BookmarkStore::hasBookmarkForPage(uint16_t spineIndex, float pageProgress, int pageCount) {
   if (pageCount <= 0) return false;
   float pageSlice = 1.0f / static_cast<float>(pageCount);

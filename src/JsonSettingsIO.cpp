@@ -8,12 +8,12 @@
 #include <Logging.h>
 #include <ObfuscationUtils.h>
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
-#include "KOReaderCredentialStore.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "SettingsList.h"
@@ -66,6 +66,23 @@ void applyLegacyStatusBarSettings(CrossPointSettings& settings) {
       settings.statusBarBattery = 1;
       break;
   }
+}
+
+bool isEnumRawValueAllowed(const SettingInfo& info, uint8_t value) {
+  if (info.enumRawValues.empty()) {
+    return value < info.enumValues.size();
+  }
+  return std::find(info.enumRawValues.begin(), info.enumRawValues.end(), value) != info.enumRawValues.end();
+}
+
+uint8_t defaultEnumRawValue(const SettingInfo& info, uint8_t fieldDefault) {
+  if (isEnumRawValueAllowed(info, fieldDefault)) {
+    return fieldDefault;
+  }
+  if (!info.enumRawValues.empty()) {
+    return info.enumRawValues.front();
+  }
+  return 0;
 }
 
 // ---- CrossPointState ----
@@ -220,7 +237,10 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
       const uint8_t fieldDefault = s.*(info.valuePtr);  // struct-initializer default, read before we overwrite it
       uint8_t v = doc[info.key] | fieldDefault;
       if (info.type == SettingType::ENUM) {
-        v = clamp(v, (uint8_t)info.enumValues.size(), fieldDefault);
+        if (!isEnumRawValueAllowed(info, v)) {
+          v = defaultEnumRawValue(info, fieldDefault);
+          if (needsResave) *needsResave = true;
+        }
       } else if (info.type == SettingType::TOGGLE) {
         v = clamp(v, (uint8_t)2, fieldDefault);
       } else if (info.type == SettingType::VALUE) {
@@ -237,7 +257,6 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
     const uint8_t legacyValue =
         clamp(doc["sleepTimeout"] | (uint8_t)CrossPointSettings::SLEEP_10_MIN, CrossPointSettings::SLEEP_TIMEOUT_COUNT,
               (uint8_t)CrossPointSettings::SLEEP_10_MIN);
-    s.sleepTimeout = legacyValue;
     s.sleepTimeoutMinutes = CrossPointSettings::sleepTimeoutEnumToMinutes(legacyValue);
     if (needsResave) *needsResave = true;
   }
@@ -278,44 +297,6 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
 
   LOG_DBG("CPS", "Settings loaded from file");
 
-  return true;
-}
-
-// ---- KOReaderCredentialStore ----
-
-bool JsonSettingsIO::saveKOReader(const KOReaderCredentialStore& store, const char* path) {
-  JsonDocument doc;
-  doc["username"] = store.getUsername();
-  doc["password_obf"] = obfuscation::obfuscateToBase64(store.getPassword());
-  doc["serverUrl"] = store.getServerUrl();
-  doc["matchMethod"] = static_cast<uint8_t>(store.getMatchMethod());
-
-  String json;
-  serializeJson(doc, json);
-  return Storage.writeFile(path, json);
-}
-
-bool JsonSettingsIO::loadKOReader(KOReaderCredentialStore& store, const char* json, bool* needsResave) {
-  if (needsResave) *needsResave = false;
-  JsonDocument doc;
-  auto error = deserializeJson(doc, json);
-  if (error) {
-    LOG_ERR("KRS", "JSON parse error: %s", error.c_str());
-    return false;
-  }
-
-  store.username = doc["username"] | std::string("");
-  bool ok = false;
-  store.password = obfuscation::deobfuscateFromBase64(doc["password_obf"] | "", &ok);
-  if (!ok || store.password.empty()) {
-    store.password = doc["password"] | std::string("");
-    if (!store.password.empty() && needsResave) *needsResave = true;
-  }
-  store.serverUrl = doc["serverUrl"] | std::string("");
-  uint8_t method = doc["matchMethod"] | (uint8_t)0;
-  store.matchMethod = static_cast<DocumentMatchMethod>(method);
-
-  LOG_DBG("KRS", "Loaded KOReader credentials for user: %s", store.username.c_str());
   return true;
 }
 

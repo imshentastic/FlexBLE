@@ -134,6 +134,9 @@ class SimulatorSmokeTest {
     switch (step) {
       case SmokeStep::Start:
         LOG_INF("SMOKE", "Starting simulator smoke test");
+        if (!CrossPointSettings::verifySleepTimeoutMigrationContract()) {
+          fail("Sleep timeout migration contract failed");
+        }
         applyRequestedTheme();
         activityManager.goHome();
         queueStep("Home", SmokeStep::Home);

@@ -3,8 +3,8 @@
 #include <string>
 #include <vector>
 
-#include "../../fontIds.h"
-#include "../Activity.h"
+#include "activities/Activity.h"
+#include "fontIds.h"
 
 class ConfirmationActivity : public Activity {
  private:
