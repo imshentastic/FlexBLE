@@ -14,6 +14,9 @@
 ### Changed
 - Default `tiny` build now omits the Teensy (8px) font variant to make room for the NimBLE-Arduino BLE stack. Re-enable by removing `OMIT_TEENSY_FONT` from `platformio.ini` if you don't need Bluetooth.
 
+### Fixed
+- BLE page-turner could hang at chapter boundaries when a release HID frame was dropped (NimBLE task starvation during the heavy section-load render is a common trigger). Subsequent presses were silently filtered out by both the BLE-side `activeInjectedButton` gate and HalGPIO's same-state short-circuit, requiring a book exit/re-enter to recover. Added two backstops: a 2 s max-hold auto-release on virtual buttons (suppressed release edge so no phantom page turn fires), and a force-release of a stuck injection in Game Brick's same-key re-press promotion path.
+
 ## [v1.2.9.1] - 2026-05-03
 
 ### Changed
