@@ -1181,6 +1181,17 @@ void BluetoothHIDManager::onHIDNotify(NimBLERemoteCharacteristic* pChar, uint8_t
       isNewPressEvent = true;
       device->lastButtonState = false;
       device->lastNormalizedPressed = false;
+      // A same-key re-press after this much idle means we missed the previous
+      // release frame (BLE callback starved during a heavy chapter render is a
+      // common trigger). Force-release the stuck injection so the press path
+      // below treats this as a fresh tap; otherwise the `activeInjectedButton`
+      // gate at the injector block would silently swallow it.
+      if (device->activeInjectedButton != 0xFF) {
+        if (g_instance->_buttonInjector) {
+          g_instance->_buttonInjector(device->activeInjectedButton, false);
+        }
+        device->activeInjectedButton = 0xFF;
+      }
       LOG_DBG("BT", "Game Brick: promoting same-key re-press after %lu ms idle (key=0x%02X)",
               nowMs - device->lastNormalizedEventMs, keycode);
     }

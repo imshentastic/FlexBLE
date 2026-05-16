@@ -209,11 +209,40 @@ void HalGPIO::begin() {
 
 namespace {
 constexpr unsigned long VIRTUAL_BUTTON_REPRESS_DEBOUNCE_MS = 250;
+// Backstop for lost BLE release frames. If a BLE HID release report is dropped
+// (NimBLE task starvation during a heavy chapter render, or a flaky remote),
+// the virtual button bit can stay latched forever -- and `setVirtualButtonState`
+// short-circuits same-state updates, so no later press will ever re-arm the
+// rising edge. After this many ms with the bit set, force-clear it so the
+// reader recovers without needing a book exit/re-enter.
+// Must stay comfortably above the reader's 700 ms long-press chapter-skip
+// threshold so legitimate holds aren't cut short.
+constexpr unsigned long VIRTUAL_BUTTON_MAX_HOLD_MS = 2000;
 }
 
 void HalGPIO::update() {
   previousVirtualButtonState = virtualButtonState;
   virtualButtonState = desiredVirtualButtonState;
+
+  // Auto-release any virtual button that has been latched "pressed" past the
+  // safety threshold. Suppress the release edge (clear both current and
+  // previous bits) so the reader doesn't see a phantom wasReleased -- by the
+  // time we hit this threshold, the user has long since given up and a
+  // delayed page turn would be worse than silent recovery.
+  const unsigned long nowMs = millis();
+  for (uint8_t buttonIndex = 0; buttonIndex <= BTN_POWER; ++buttonIndex) {
+    const uint8_t mask = (1 << buttonIndex);
+    if ((virtualButtonState & mask) == 0) continue;
+    if (virtualPressStart[buttonIndex] == 0) continue;
+    if ((nowMs - virtualPressStart[buttonIndex]) <= VIRTUAL_BUTTON_MAX_HOLD_MS) continue;
+
+    virtualButtonState &= ~mask;
+    previousVirtualButtonState &= ~mask;
+    desiredVirtualButtonState &= ~mask;
+    virtualPressFinish[buttonIndex] = nowMs;
+    virtualPressStart[buttonIndex] = 0;
+    virtualLastActivityTime[buttonIndex] = 0;
+  }
 
   inputMgr.update();
   const bool connected = isUsbConnected();
