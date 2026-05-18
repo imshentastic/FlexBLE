@@ -55,10 +55,13 @@ My goal with this fork was to maintain the core Crosspoint firmware while integr
 ### Highlights
 
 - New reader fonts: ChareInk, Lexend Deca, and Bitter
-- Unicode emoji and miscellaneous symbols support
+- Unicode emoji and miscellaneous symbols support (a limited subset)
 - Adjusted font sizes: Teensy (8pt), Tiny (10pt), Small (12pt), Medium (14pt), Large (16pt), Extra Large (18pt), Huge (20pt). See [Font Sizes](#font-sizes) for more details.
 - Added ~~strikethrough~~ support
 - Made <u>underlines</u> thicker for better visibility
+- Added support for `<hr>` section breaks
+- Added support for "redaction" style rendering
+- Added improved support for tables with simple markup
 - Added ability to add bookmarks
 - Added ability to remap front buttons that only applies in the reader
 - Added Bionic Reading and Guide Dots as optional reader modes
@@ -70,10 +73,11 @@ My goal with this fork was to maintain the core Crosspoint firmware while integr
   - To turn this on, go to Settings > System > Move finished books to Read folder. Once a book is marked as finished, the book will be moved to the folder when the book is closed.
 - In-book menu to quickly adjust reader options without having to exit the book
 - Reading stats: total books read, total reading time, number of sessions, pages turned, average session time, pages turned per minute. You can also set your reading stats as your sleep screen.
-- Changed label for "Auto Turn (Pages Per Minute)" to "Auto Page Turn Interval (seconds)"
-  - Added additional page turn intervals (how many seconds pass between page turns). Options are now (in seconds): 60, 45, 30, 20, 15, 10, 5, OFF.
-- Added Vietnamese language support
+- Added customizable Auto Page Turn Interval (anything between 5-120 seconds)
+- Added ability to view Recent Books as a 3x3 grid view
+- Added ability to install custom fonts on the SD card
 - Device simulator during development
+- To view a more detailed list for each version, visit the [releases](https://github.com/uxjulia/CrossInk/releases) page to read release notes.
 
 ---
 
@@ -86,6 +90,18 @@ The default fonts have been replaced with ChareInk, Lexend Deca, and Bitter. The
 - [Bitter](https://fonts.google.com/specimen/Bitter) - A "contemporary" slab serif typeface for text, it is specially designed for comfortably reading on digital screens. The consistent stroke weight of Bitter helps it render particularly well on e-ink devices. The medium weight has been chosen specifically for improved rendering on the X4.
 
 The UI now uses [Inter](https://fonts.google.com/specimen/Inter) as the display font which has improved readability at smaller sizes.
+
+### Wireless workflows
+
+- File transfer web UI
+- EPUB Optimizer
+- Web settings UI/API (edit many device settings from browser)
+- WebSocket fast uploads
+- WebDAV handler
+- AP mode (hotspot) and STA mode (join existing WiFi), both with QR helpers
+- Calibre wireless connect flow
+- OPDS browser with saved servers (up to 8), search, pagination, and direct download
+- OTA update checks and installs from GitHub releases
 
 ### Emojis and Misc Glyphs
 
@@ -114,19 +130,17 @@ There are 3 available build variants to choose from due to build size constraint
 > Teensy, Tiny, and Small font sizes had to be removed to reduce build size and still support emoji/symbols.
 
 - Emoji & Misc. Symbols Support
-- 4 Font sizes:
-  - Medium (14pt)
+- 3 Font sizes:
   - Large (16pt)
   - Extra Large (18pt)
   - Huge (20pt)
 
 **no_emoji**
 
-> All standard font sizes through Extra Large are available, but no emoji/symbols support.
+> All standard font sizes from Tiny through Extra Large are available, but no emoji/symbols support.
 
 - **No** Emoji & Misc. Symbols Support
-- 6 Font sizes:
-  - Teensy (8pt)
+- 5 Font sizes:
   - Tiny (10pt)
   - Small (12pt)
   - Medium (14pt)
@@ -196,6 +210,7 @@ Map the **Power** or **Menu** button short/long-press action to one of the follo
 - Take Screenshot (takes a screenshot)
 - Auto Page Turn (cycles through the page turn intervals: **Off → 5s → 10s → 15s → 20s → 30s → 45s → 60s → Off →**)
 - File Transfer (opens the File Transfer menu)
+- Tilt Page Turn (turns tilt-based page turning on/off on supported devices)
 
 ### Reading stats
 
@@ -266,7 +281,9 @@ pio run -e simulator
 
 ---
 
-## Installing
+### Localization
+
+CrossPoint includes 22 UI languages and counting.
 
 ### Web
 
@@ -278,7 +295,52 @@ pio run -e simulator
 
 To revert back to the official firmware, you can flash the latest official firmware from https://crosspointreader.com/#flash-tools
 
-### Command line (specific firmware version)
+---
+
+## USB-locked devices (Xteink Unlocker)
+
+Some Xteink units purchased from third-party stores (e.g. AliExpress) ship with USB flashing locked from the factory.
+If your device is locked, you will need to use the **Xteink Unlocker** tool available at
+https://crosspointreader.com/#unlock-tool before you can flash CrossPoint.
+
+**You do not need this tool if you bought your device directly from xteink.com.** Those units are not locked.
+
+**Not sure if your device is locked?** Power it on, connect the USB-C cable, and try flashing via the web flasher first (see
+[Install firmware](#install-firmware) below). If the browser's serial device picker does not show your device, try a different
+USB port or browser before assuming the device is locked. Only reach for the unlocker if the device still doesn't appear.
+
+### ⚠️ WARNING: READ THIS BEFORE USING THE UNLOCKER ⚠️
+
+**The only officially supported firmwares in the unlock tool are CrossPoint and CrossInk.**
+
+Flashing any other firmware on a USB-locked device may **permanently brick the device** or leave it **permanently
+stuck on that firmware with no recovery path**. Once USB flashing is re-locked, your only way back is via OTA, and if
+the firmware you flashed doesn't support OTA, **there is no way out**.
+
+**The Papyrix fork has removed OTA update support from its code.** If you flash Papyrix onto a
+USB-locked unit, you will have **zero update or recovery path** and will be stuck on it forever. **Do not flash
+Papyrix (or any other unsupported firmware) on a locked device.**
+
+## Install firmware
+
+### Web installer (recommended)
+
+1. Connect your device to your computer via USB-C and wake/unlock the device
+2. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), and choose an official CrossPoint release.
+
+### Web installer (specific version)
+
+1. Connect your device to your computer via USB-C and wake/unlock the device
+2. Download a `firmware.bin` from [Releases](https://github.com/crosspoint-reader/crosspoint-reader/releases), local build, or continuous integration artifact.
+3. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), click "Custom .bin" and upload a `firmware.bin`.
+
+### Revert to Official Firmware
+
+To revert to the official firmware, you can also flash the latest official firmware using https://crosspointreader.com/#flash-tools.
+
+### Command line
+
+1. Install [`esptool`](https://github.com/espressif/esptool):
 
 > **Note:** These instructions are for macOS and Linux. Windows users should use the [Web installer](#web) instead.
 
@@ -306,7 +368,19 @@ esptool.py --chip esp32c3 --port /dev/cu.usbmodem2101 --baud 921600 write_flash 
 # Swap the filename for the variant (tiny / xlarge / no_emoji) and version you downloaded.
 ```
 
-## Development
+---
+
+## Documentation
+
+- [User Guide](./USER_GUIDE.md)
+- [Web server usage](./docs/webserver.md)
+- [Web server endpoints](./docs/webserver-endpoints.md)
+- [Project scope](./SCOPE.md)
+- [Contributing docs](./docs/contributing/README.md)
+
+---
+
+## Development quick start
 
 ### Prerequisites
 
@@ -315,18 +389,18 @@ esptool.py --chip esp32c3 --port /dev/cu.usbmodem2101 --baud 921600 write_flash 
 - USB-C cable for flashing the ESP32-C3
 - Xteink X4
 
-### Checking out the code
+### Setup
 
 CrossPoint uses PlatformIO for building and flashing the firmware. To get started, clone the repository:
 
 ```
 git clone --recursive https://github.com/chintanvajariya/CrossInk-Carousel
 
-# Or, if you've already cloned without --recursive:
+# if cloned without --recursive:
 git submodule update --init --recursive
 ```
 
-### Flashing your device
+### Build / flash / monitor
 
 Connect your Xteink X4 to your computer via USB-C and run the following command. Replace `tiny` with `xlarge` or `no_emoji` if you prefer a different build variant (see [Font Sizes](#font-sizes)).
 
@@ -344,7 +418,7 @@ First, make sure all required Python packages are installed:
 python3 -m pip install pyserial colorama matplotlib
 ```
 
-after that run the script:
+After that run the script:
 
 ```sh
 # For Linux
@@ -356,6 +430,8 @@ python3 scripts/debugging_monitor.py /dev/cu.usbmodem2101
 ```
 
 Minor adjustments may be required for Windows.
+
+---
 
 ## Internals
 
@@ -379,8 +455,6 @@ cache. This cache directory exists at `.crosspoint` on the SD card. The structur
 │       ├── 0.bin        # Chapter data (screen count, all text layout info, etc.)
 │       ├── 1.bin        #     files are named by their index in the spine
 │       └── ...
-│
-└── epub_189013891/
 ```
 
 Deleting the `.crosspoint` directory will clear the entire cache.

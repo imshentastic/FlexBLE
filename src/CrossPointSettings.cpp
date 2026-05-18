@@ -61,6 +61,12 @@ bool isReaderFontSizeAvailable(const CrossPointSettings::FONT_SIZE size) {
 #else
       return true;
 #endif
+    case CrossPointSettings::MEDIUM:
+#ifdef OMIT_MEDIUM_FONT
+      return false;
+#else
+      return true;
+#endif
     case CrossPointSettings::EXTRA_LARGE:
 #ifdef OMIT_XLARGE_FONT
       return false;
@@ -73,11 +79,17 @@ bool isReaderFontSizeAvailable(const CrossPointSettings::FONT_SIZE size) {
 #else
       return true;
 #endif
-    case CrossPointSettings::MEDIUM:
     case CrossPointSettings::LARGE:
     default:
       return true;
   }
+}
+
+CrossPointSettings::FONT_SIZE firstAvailableReaderFontSize() {
+  const auto it =
+      std::find_if(std::begin(READER_FONT_SIZE_STORAGE_ORDER), std::end(READER_FONT_SIZE_STORAGE_ORDER),
+                   [](const CrossPointSettings::FONT_SIZE size) { return isReaderFontSizeAvailable(size); });
+  return (it != std::end(READER_FONT_SIZE_STORAGE_ORDER)) ? *it : CrossPointSettings::LARGE;
 }
 
 // Convert legacy front button layout into explicit logical->hardware mapping.
@@ -142,6 +154,22 @@ void CrossPointSettings::validateReaderFrontButtonMapping(CrossPointSettings& se
         return;
       }
     }
+  }
+}
+
+uint8_t CrossPointSettings::sleepTimeoutEnumToMinutes(const uint8_t legacyValue) {
+  switch (legacyValue) {
+    case SLEEP_1_MIN:
+      return 1;
+    case SLEEP_5_MIN:
+      return 5;
+    case SLEEP_15_MIN:
+      return 15;
+    case SLEEP_30_MIN:
+      return 30;
+    case SLEEP_10_MIN:
+    default:
+      return 10;
   }
 }
 
@@ -252,7 +280,9 @@ bool CrossPointSettings::loadFromBinaryFile() {
     if (++settingsRead >= fileSettingsCount) break;
     readAndValidate(inputFile, paragraphAlignment, PARAGRAPH_ALIGNMENT_COUNT);
     if (++settingsRead >= fileSettingsCount) break;
-    readAndValidate(inputFile, sleepTimeout, SLEEP_TIMEOUT_COUNT);
+    uint8_t legacySleepTimeout = SLEEP_10_MIN;
+    readAndValidate(inputFile, legacySleepTimeout, SLEEP_TIMEOUT_COUNT);
+    sleepTimeoutMinutes = sleepTimeoutEnumToMinutes(legacySleepTimeout);
     if (++settingsRead >= fileSettingsCount) break;
     readAndValidate(inputFile, refreshFrequency, REFRESH_FREQUENCY_COUNT);
     if (++settingsRead >= fileSettingsCount) break;
@@ -271,7 +301,7 @@ bool CrossPointSettings::loadFromBinaryFile() {
     if (++settingsRead >= fileSettingsCount) break;
     readAndValidate(inputFile, hideBatteryPercentage, HIDE_BATTERY_PERCENTAGE_COUNT);
     if (++settingsRead >= fileSettingsCount) break;
-    serialization::readPod(inputFile, longPressChapterSkip);
+    readAndValidate(inputFile, longPressButtonBehavior, LONG_PRESS_BUTTON_BEHAVIOR_COUNT);
     if (++settingsRead >= fileSettingsCount) break;
     serialization::readPod(inputFile, hyphenationEnabled);
     if (++settingsRead >= fileSettingsCount) break;
@@ -291,7 +321,16 @@ bool CrossPointSettings::loadFromBinaryFile() {
     if (++settingsRead >= fileSettingsCount) break;
     readAndValidate(inputFile, sleepScreenCoverFilter, SLEEP_SCREEN_COVER_FILTER_COUNT);
     if (++settingsRead >= fileSettingsCount) break;
-    serialization::readPod(inputFile, uiTheme);
+    {
+      // Older builds wrote uiTheme via raw readPod, so any byte (including
+      // values that were briefly assigned to themes that are not currently
+      // exposed) may be on disk. Map anything outside the active theme count
+      // to LYRA so the migration is deterministic instead of leaning on
+      // readAndValidate's no-op-on-invalid behaviour.
+      uint8_t rawTheme = LYRA;
+      serialization::readPod(inputFile, rawTheme);
+      uiTheme = (rawTheme < UI_THEME_COUNT) ? rawTheme : static_cast<uint8_t>(LYRA);
+    }
     if (++settingsRead >= fileSettingsCount) break;
     readAndValidate(inputFile, frontButtonBack, FRONT_BUTTON_HARDWARE_COUNT);
     if (++settingsRead >= fileSettingsCount) break;
@@ -319,6 +358,19 @@ bool CrossPointSettings::loadFromBinaryFile() {
 }
 
 float CrossPointSettings::getReaderLineCompression() const {
+  // SD card fonts use same compression as Bookerly (the most neutral values)
+  if (sdFontFamilyName[0] != '\0') {
+    switch (lineSpacing) {
+      case TIGHT:
+        return 0.95f;
+      case NORMAL:
+      default:
+        return 1.0f;
+      case WIDE:
+        return 1.1f;
+    }
+  }
+
   switch (fontFamily) {
     case LEXENDDECA:
     default:
@@ -355,20 +407,25 @@ float CrossPointSettings::getReaderLineCompression() const {
 }
 
 unsigned long CrossPointSettings::getSleepTimeoutMs() const {
-  switch (sleepTimeout) {
-    case SLEEP_1_MIN:
-      return 1UL * 60 * 1000;
-    case SLEEP_5_MIN:
-      return 5UL * 60 * 1000;
-    case SLEEP_10_MIN:
-    default:
-      return 10UL * 60 * 1000;
-    case SLEEP_15_MIN:
-      return 15UL * 60 * 1000;
-    case SLEEP_30_MIN:
-      return 30UL * 60 * 1000;
-  }
+  const uint8_t minutes = std::clamp(sleepTimeoutMinutes, MIN_SLEEP_TIMEOUT_MINUTES, MAX_SLEEP_TIMEOUT_MINUTES);
+  return static_cast<unsigned long>(minutes) * 60UL * 1000UL;
 }
+
+#ifdef SIMULATOR
+bool CrossPointSettings::verifySleepTimeoutMigrationContract() {
+  CrossPointSettings& settings = getInstance();
+  const uint8_t originalMinutes = settings.sleepTimeoutMinutes;
+
+  settings.sleepTimeoutMinutes = sleepTimeoutEnumToMinutes(SLEEP_5_MIN);
+  const bool migratedValueDrivesTimeout = settings.getSleepTimeoutMs() == 5UL * 60UL * 1000UL;
+
+  settings.sleepTimeoutMinutes = 12;
+  const bool runtimeUsesMinutesOnly = settings.getSleepTimeoutMs() == 12UL * 60UL * 1000UL;
+
+  settings.sleepTimeoutMinutes = originalMinutes;
+  return migratedValueDrivesTimeout && runtimeUsesMinutesOnly;
+}
+#endif
 
 int CrossPointSettings::getRefreshFrequency() const {
   switch (refreshFrequency) {
@@ -409,7 +466,7 @@ CrossPointSettings::FONT_SIZE CrossPointSettings::getEffectiveReaderFontSize() c
     if (fontSize == stored) return size;
     stored++;
   }
-  return MEDIUM;
+  return firstAvailableReaderFontSize();
 }
 
 bool CrossPointSettings::changeReaderFontSize(const bool larger) {
@@ -438,6 +495,14 @@ bool CrossPointSettings::changeReaderFontSize(const bool larger) {
 
 int CrossPointSettings::getReaderFontId() const {
   const FONT_SIZE effectiveSize = getEffectiveReaderFontSize();
+
+  // Check SD card font first
+  if (sdFontFamilyName[0] != '\0' && sdFontIdResolver) {
+    int id = sdFontIdResolver(sdFontResolverCtx, sdFontFamilyName, fontSize);
+    if (id != 0) return id;
+    // Fall through to built-in if SD font not found
+  }
+
   switch (fontFamily) {
     case LEXENDDECA:
     default:
@@ -454,10 +519,15 @@ int CrossPointSettings::getReaderFontId() const {
         case SMALL:
           return LEXENDDECA_12_FONT_ID;
 #endif
+#ifndef OMIT_MEDIUM_FONT
         case MEDIUM:
         default:
           return LEXENDDECA_14_FONT_ID;
+#endif
         case LARGE:
+#ifdef OMIT_MEDIUM_FONT
+        default:
+#endif
           return LEXENDDECA_16_FONT_ID;
 #ifndef OMIT_XLARGE_FONT
         case EXTRA_LARGE:
@@ -482,10 +552,15 @@ int CrossPointSettings::getReaderFontId() const {
         case SMALL:
           return CHAREINK_12_FONT_ID;
 #endif
+#ifndef OMIT_MEDIUM_FONT
         case MEDIUM:
         default:
           return CHAREINK_14_FONT_ID;
+#endif
         case LARGE:
+#ifdef OMIT_MEDIUM_FONT
+        default:
+#endif
           return CHAREINK_16_FONT_ID;
 #ifndef OMIT_XLARGE_FONT
         case EXTRA_LARGE:
@@ -510,10 +585,15 @@ int CrossPointSettings::getReaderFontId() const {
         case SMALL:
           return BITTER_12_FONT_ID;
 #endif
+#ifndef OMIT_MEDIUM_FONT
         case MEDIUM:
         default:
           return BITTER_14_FONT_ID;
+#endif
         case LARGE:
+#ifdef OMIT_MEDIUM_FONT
+        default:
+#endif
           return BITTER_16_FONT_ID;
 #ifndef OMIT_XLARGE_FONT
         case EXTRA_LARGE:

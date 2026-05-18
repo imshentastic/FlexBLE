@@ -39,6 +39,7 @@ class BookmarkStore {
 
   AddResult addBookmark(uint16_t spineIndex, float progress, int pageCount, const char* chapterTitle);
   void removeBookmarkForPage(uint16_t spineIndex, float pageProgress, int pageCount);
+  bool removeBookmarkAt(size_t index);
   bool hasBookmarkForPage(uint16_t spineIndex, float pageProgress, int pageCount);
   const std::vector<Bookmark>& getBookmarks() const { return bookmarks; }
 
