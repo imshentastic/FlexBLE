@@ -85,8 +85,8 @@ void cutRoundedCorners(GfxRenderer& renderer, int x, int y, int w, int h, int r)
 }  // namespace
 
 void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
-                                        const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                        bool& bufferRestored, std::function<bool()> storeCoverBuffer,
+                                        int selectorIndex, bool& coverRendered, bool& coverBufferStored,
+                                        bool& bufferRestored, const std::function<bool()>& storeCoverBuffer,
                                         const BookReadingStats* stats, float /*progressPercent*/) const {
   if (recentBooks.empty()) {
     drawEmptyRecents(renderer, rect);

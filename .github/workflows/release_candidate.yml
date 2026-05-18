@@ -93,6 +93,7 @@ jobs:
       - name: Create GitHub RC Prerelease
         uses: softprops/action-gh-release@v3
         with:
+          token: ${{ secrets.RELEASE_PAT }}
           tag_name: ${{ env.RC_TAG }}
           target_commitish: ${{ github.sha }}
           name: RC ${{ env.RC_BRANCH_SAFE }} ${{ env.RC_HASH_SHORT }}

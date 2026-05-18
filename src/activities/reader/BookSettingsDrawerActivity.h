@@ -79,7 +79,10 @@ class BookSettingsDrawerActivity final : public Activity {
   int drawerH = 0;
   int itemHeight = 40;
   int itemsVisible = 8;
-  int hintsHeight = 28;
+  // Reserve enough vertical space below the list for the button-hint line
+  // to render fully — at 28 the SMALL_FONT baseline + descender was clipping
+  // against the screen bottom.
+  int hintsHeight = 44;
 
   // Tab + panel decoration constants. The tab sits centred above the panel's
   // top edge, with its bottom extending TAB_OVERLAP_PX into the panel so the

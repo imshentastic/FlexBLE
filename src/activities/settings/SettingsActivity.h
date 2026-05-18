@@ -21,7 +21,9 @@ enum class SettingAction {
   Network,
   ClearCache,
   CheckForUpdates,
+  SdFirmwareUpdate,
   Language,
+  DownloadFonts,
 };
 
 struct SettingInfo {
@@ -29,6 +31,8 @@ struct SettingInfo {
   SettingType type;
   uint8_t CrossPointSettings::* valuePtr = nullptr;
   std::vector<StrId> enumValues;
+  std::vector<uint8_t> enumRawValues;
+  std::vector<std::string> enumStringValues;  // runtime alternative to StrId enumValues (for SD card fonts etc.)
   SettingAction action = SettingAction::None;
 
   struct ValueRange {
@@ -78,6 +82,11 @@ struct SettingInfo {
     s.key = key;
     s.category = category;
     return s;
+  }
+
+  SettingInfo& withEnumRawValues(std::vector<uint8_t> values) {
+    enumRawValues = std::move(values);
+    return *this;
   }
 
   static SettingInfo Action(StrId nameId, SettingAction action) {
@@ -166,6 +175,8 @@ class SettingsActivity final : public Activity {
 
   void enterCategory(int categoryIndex);
   void toggleCurrentSetting();
+  void openSleepTimeoutPicker();
+  void rebuildSettingsLists();
 
  public:
   explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)

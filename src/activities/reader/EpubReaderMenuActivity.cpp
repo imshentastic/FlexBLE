@@ -3,11 +3,71 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include <cstring>
+
 #include "../settings/BluetoothSettingsActivity.h"
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+
+namespace {
+
+struct ReaderLayoutSettingsSnapshot {
+  uint8_t fontFamily;
+  uint8_t fontSize;
+  uint8_t lineSpacing;
+  uint8_t orientation;
+  uint8_t screenMargin;
+  uint8_t paragraphAlignment;
+  uint8_t embeddedStyle;
+  uint8_t hyphenationEnabled;
+  uint8_t imageRendering;
+  uint8_t extraParagraphSpacing;
+  uint8_t forceParagraphIndents;
+  uint8_t bionicReadingEnabled;
+  uint8_t guideReadingEnabled;
+  char sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName)] = {};
+
+  bool operator==(const ReaderLayoutSettingsSnapshot& other) const {
+    return fontFamily == other.fontFamily && fontSize == other.fontSize && lineSpacing == other.lineSpacing &&
+           orientation == other.orientation && screenMargin == other.screenMargin &&
+           paragraphAlignment == other.paragraphAlignment && embeddedStyle == other.embeddedStyle &&
+           hyphenationEnabled == other.hyphenationEnabled && imageRendering == other.imageRendering &&
+           extraParagraphSpacing == other.extraParagraphSpacing &&
+           forceParagraphIndents == other.forceParagraphIndents && bionicReadingEnabled == other.bionicReadingEnabled &&
+           guideReadingEnabled == other.guideReadingEnabled &&
+           std::strncmp(sdFontFamilyName, other.sdFontFamilyName, sizeof(sdFontFamilyName)) == 0;
+  }
+  bool operator!=(const ReaderLayoutSettingsSnapshot& other) const { return !(*this == other); }
+};
+
+ReaderLayoutSettingsSnapshot captureReaderLayoutSettings() {
+  ReaderLayoutSettingsSnapshot snapshot{
+      SETTINGS.fontFamily,
+      SETTINGS.fontSize,
+      SETTINGS.lineSpacing,
+      SETTINGS.orientation,
+      SETTINGS.screenMargin,
+      SETTINGS.paragraphAlignment,
+      SETTINGS.embeddedStyle,
+      SETTINGS.hyphenationEnabled,
+      SETTINGS.imageRendering,
+      SETTINGS.extraParagraphSpacing,
+      SETTINGS.forceParagraphIndents,
+      SETTINGS.bionicReadingEnabled,
+      SETTINGS.guideReadingEnabled,
+  };
+  std::strncpy(snapshot.sdFontFamilyName, SETTINGS.sdFontFamilyName, sizeof(snapshot.sdFontFamilyName) - 1);
+  snapshot.sdFontFamilyName[sizeof(snapshot.sdFontFamilyName) - 1] = '\0';
+  return snapshot;
+}
+
+bool haveReaderLayoutSettingsChanged(const ReaderLayoutSettingsSnapshot& before) {
+  return before != captureReaderLayoutSettings();
+}
+
+}  // namespace
 
 EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                const std::string& title, const int currentPage, const int totalPages,
@@ -27,17 +87,19 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
                                                                                      bool isCurrentPageBookmarked,
                                                                                      bool isBookCompleted) {
   std::vector<MenuItem> items;
-  constexpr size_t baseItemCount = 14;
+  // 14 upstream items + 1 (FlexBLE Bluetooth entry).
+  constexpr size_t baseItemCount = 15;
   const size_t totalItemCount = baseItemCount + (hasFootnotes ? 1u : 0u) + (hasBookmarks ? 2u : 0u);
   items.reserve(totalItemCount);
   items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
   items.push_back({MenuAction::READER_OPTIONS, StrId::STR_READER_OPTIONS});
+  items.push_back({MenuAction::CONTROLS_OPTIONS, StrId::STR_CAT_CONTROLS});
   items.push_back({MenuAction::BLUETOOTH, StrId::STR_BLUETOOTH});
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
   }
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
-  items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN});
+  items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_INTERVAL_SECONDS});
   items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
   items.push_back(
       {MenuAction::BOOKMARK_TOGGLE, isCurrentPageBookmarked ? StrId::STR_REMOVE_BOOKMARK : StrId::STR_ADD_BOOKMARK});
@@ -84,37 +146,61 @@ void EpubReaderMenuActivity::loop() {
       return;
     }
 
-    if (selectedAction == MenuAction::AUTO_PAGE_TURN) {
-      selectedPageTurnOption = (selectedPageTurnOption + 1) % pageTurnLabels.size();
-      requestUpdate();
-      return;
-    }
-
     if (selectedAction == MenuAction::READER_OPTIONS) {
+      const auto before = captureReaderLayoutSettings();
       startActivityForResult(std::make_unique<ReaderOptionsActivity>(renderer, mappedInput),
-                             [this](const ActivityResult&) {
-                               settingsChanged = true;
+                             [this, before](const ActivityResult&) {
+                               settingsChanged = settingsChanged || haveReaderLayoutSettingsChanged(before);
                                pendingOrientation = SETTINGS.orientation;  // sync in case orientation changed
                                requestUpdate();
                              });
       return;
     }
 
-    if (selectedAction == MenuAction::BLUETOOTH) {
-      startActivityForResult(
-          std::make_unique<BluetoothSettingsActivity>(renderer, mappedInput, [] { activityManager.popActivity(); }),
-          [this](const ActivityResult&) { requestUpdate(); });
+    if (selectedAction == MenuAction::CONTROLS_OPTIONS) {
+      startActivityForResult(std::make_unique<ControlsOptionsActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) {
+                               ActivityResult result;
+                               result.isCancelled = true;
+                               result.data = MenuResult{-1, pendingOrientation, settingsChanged};
+                               setResult(std::move(result));
+                               finish();
+                             });
       return;
     }
 
-    setResult(
-        MenuResult{static_cast<int>(selectedAction), pendingOrientation, selectedPageTurnOption, settingsChanged});
+    if (selectedAction == MenuAction::BLUETOOTH) {
+      // exitOnSuccessfulConnect=true: when the user pairs a new remote or
+      // reconnects to a bonded one from inside the book, BluetoothSettings
+      // sets MenuResult.autoExitParent=true and pops itself. We then also
+      // finish this menu so the user lands straight back in the book —
+      // ActivityManager chains the two pops in the same loop iteration so
+      // the menu never visibly re-renders.
+      startActivityForResult(
+          std::make_unique<BluetoothSettingsActivity>(renderer, mappedInput, [] { activityManager.popActivity(); },
+                                                      /*exitOnSuccessfulConnect=*/true),
+          [this](const ActivityResult& result) {
+            const auto* menu = std::get_if<MenuResult>(&result.data);
+            if (menu && menu->autoExitParent) {
+              ActivityResult myResult;
+              myResult.isCancelled = true;
+              myResult.data = MenuResult{-1, pendingOrientation, settingsChanged};
+              setResult(std::move(myResult));
+              finish();
+              return;
+            }
+            requestUpdate();
+          });
+      return;
+    }
+
+    setResult(MenuResult{static_cast<int>(selectedAction), pendingOrientation, settingsChanged});
     finish();
     return;
   } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     ActivityResult result;
     result.isCancelled = true;
-    result.data = MenuResult{-1, pendingOrientation, selectedPageTurnOption, settingsChanged};
+    result.data = MenuResult{-1, pendingOrientation, settingsChanged};
     setResult(std::move(result));
     finish();
     return;
@@ -177,18 +263,11 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
       const auto width = renderer.getTextWidth(UI_10_FONT_ID, value);
       renderer.drawText(UI_10_FONT_ID, contentX + contentWidth - 20 - width, displayY, value, !isSelected);
     }
-
-    if (menuItems[i].action == MenuAction::AUTO_PAGE_TURN) {
-      // Render current page turn value on the right edge of the content area.
-      const auto value = pageTurnLabels[selectedPageTurnOption];
-      const auto width = renderer.getTextWidth(UI_10_FONT_ID, value);
-      renderer.drawText(UI_10_FONT_ID, contentX + contentWidth - 20 - width, displayY, value, !isSelected);
-    }
   }
 
   // Footer / Hints
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, true);
 
   renderer.displayBuffer();
 }

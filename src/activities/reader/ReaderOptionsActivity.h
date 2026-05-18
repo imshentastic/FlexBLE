@@ -13,6 +13,7 @@ class ReaderOptionsActivity final : public Activity {
   int settingsCount = 0;
   std::vector<SettingInfo> settings;
 
+  void rebuildSettingsList();
   void toggleCurrentSetting();
 
  public:

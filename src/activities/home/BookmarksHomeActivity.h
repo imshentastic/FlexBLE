@@ -19,7 +19,10 @@ class BookmarksHomeActivity final : public Activity {
  private:
   std::vector<BookmarkedBookEntry> books;
   int selectedIndex = 0;
+  bool longPressOpenHandled = false;
   ButtonNavigator buttonNavigator;
 
+  void reloadBookmarks();
   void openBookmarkList(int bookIndex);
+  void showBookmarkBookActionMenu(int bookIndex, bool ignoreInitialConfirmRelease = false);
 };

@@ -67,7 +67,13 @@ void BluetoothSettingsActivity::onExit() {
 }
 
 void BluetoothSettingsActivity::loop() {
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+  // Use the Back *release* edge, not the press edge: every other activity in
+  // the stack (EpubReaderMenu, EpubReader) also handles Back on release. If
+  // this activity exits on the press edge, the same physical tap's release
+  // arrives at whichever activity is now current, popping a second time —
+  // sending the user from BT settings → reader menu → book in one tap and
+  // sometimes triggering the reader's onExit BLE auto-disable.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     if (viewMode == ViewMode::DEVICE_LIST) {
       // Return to main menu
       viewMode = ViewMode::MAIN_MENU;
@@ -143,15 +149,22 @@ void BluetoothSettingsActivity::handleMainMenuInput() {
   constexpr int kForgetBondedRemoteIndex = 6;
 #endif
 
-  if (mappedInput.wasPressed(MappedInputManager::Button::Up)) {
+  // Match Reader Options / Controls Options convention: both side U/D and
+  // front L/R drive the same Up/Down navigation. Hint labels (line ~675)
+  // render this as "Up/Down" since that's the conceptual operation.
+  const bool prevPressed = mappedInput.wasPressed(MappedInputManager::Button::Up) ||
+                            mappedInput.wasPressed(MappedInputManager::Button::Left);
+  const bool nextPressed = mappedInput.wasPressed(MappedInputManager::Button::Down) ||
+                            mappedInput.wasPressed(MappedInputManager::Button::Right);
+  if (prevPressed) {
     selectedIndex = (selectedIndex > 0) ? selectedIndex - 1 : (kMainMenuItemCount - 1);
     requestUpdate();
-  } else if (mappedInput.wasPressed(MappedInputManager::Button::Down)) {
+  } else if (nextPressed) {
     selectedIndex = (selectedIndex < (kMainMenuItemCount - 1)) ? selectedIndex + 1 : 0;
     requestUpdate();
   }
   
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (!btMgr) {
       lastError = "BLE not available";
       LOG_ERR("BT", "BLE manager not available");
@@ -194,11 +207,30 @@ void BluetoothSettingsActivity::handleMainMenuInput() {
         lastError = "Reconnecting...";
         requestUpdate();
 
-        if (btMgr->connectToDevice(SETTINGS.bleBondedDeviceAddr)) {
+        const unsigned long reconnectStart = millis();
+        const bool reconnected = btMgr->connectToDevice(SETTINGS.bleBondedDeviceAddr);
+        if (reconnected) {
           lastError = std::string("Reconnected to ") +
                       (SETTINGS.bleBondedDeviceName[0] ? SETTINGS.bleBondedDeviceName : "bonded remote");
         } else {
           lastError = btMgr->lastError.empty() ? "Reconnect failed" : btMgr->lastError;
+        }
+        // connectToDevice can block 2-3 s. If the user impatiently tapped
+        // Back during the freeze, swallow that release so it doesn't pop us
+        // out of the BT menu (and cascade into a reader exit + BLE disable).
+        if (millis() - reconnectStart > 500) {
+          mappedInput.suppressNextBackRelease();
+        }
+        // Auto-pop back to the reader on success when the caller opted in
+        // (in-book menu uses exitOnSuccessfulConnect=true). Signals
+        // autoExitParent so the EpubReaderMenu launching us also finishes
+        // itself, taking the user straight back to the book.
+        if (reconnected && exitOnSuccessfulConnect) {
+          MenuResult result;
+          result.autoExitParent = true;
+          setResult(ActivityResult{result});
+          finish();
+          return;
         }
       }
       requestUpdate();
@@ -387,7 +419,7 @@ void BluetoothSettingsActivity::handleLearnInput() {
     return;
   }
 
-  if (learnStep == LearnStep::WAIT_TEST && mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+  if (learnStep == LearnStep::WAIT_TEST && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     DeviceProfiles::setCustomProfile(learnedPrevKey, learnedNextKey, learnedReportIndex);
     if (btMgr) {
       const auto& connected = btMgr->getConnectedDevices();
@@ -405,7 +437,10 @@ void BluetoothSettingsActivity::handleLearnInput() {
     viewMode = ViewMode::MAIN_MENU;
     selectedIndex = 0;
     if (exitOnSuccessfulConnect) {
-      if (onComplete) onComplete();
+      MenuResult result;
+      result.autoExitParent = true;
+      setResult(ActivityResult{result});
+      finish();
       return;
     }
 
@@ -413,7 +448,7 @@ void BluetoothSettingsActivity::handleLearnInput() {
     return;
   }
 
-  if (learnStep == LearnStep::DONE && mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+  if (learnStep == LearnStep::DONE && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (btMgr) {
       btMgr->setLearnInputCallback(nullptr);
     }
@@ -467,7 +502,7 @@ void BluetoothSettingsActivity::handleDeviceListInput() {
     return;
   }
   
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     // Check if "Refresh" is selected
     if (selectedIndex == static_cast<int>(devices.size())) {
       LOG_INF("BT", "Refreshing scan...");
@@ -514,7 +549,10 @@ void BluetoothSettingsActivity::handleDeviceListInput() {
         lastError = "Bluetooth enabled";
         LOG_INF("BT", "Successfully connected to %s", device.name.c_str());
         if (exitOnSuccessfulConnect) {
-          if (onComplete) onComplete();
+          MenuResult result;
+          result.autoExitParent = true;
+          setResult(ActivityResult{result});
+          finish();
           return;
         }
       } else {
@@ -543,7 +581,7 @@ void BluetoothSettingsActivity::handleDebugInput() {
     return;
   }
 
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     const bool next = !btMgr->isDebugCaptureEnabled();
     btMgr->setDebugCaptureEnabled(next);
     lastError = next ? "BT debug capture: ON" : "BT debug capture: OFF";
@@ -640,8 +678,9 @@ void BluetoothSettingsActivity::renderMainMenu() {
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, statusY, statusText.c_str(), true);
   }
 
-  // Button hints
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
+  // Button hints — front L/R are aliased to Up/Down navigation just like
+  // Reader Options / Controls, so label them as Up/Down to match.
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

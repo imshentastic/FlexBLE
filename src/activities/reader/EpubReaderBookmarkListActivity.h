@@ -22,7 +22,10 @@ class EpubReaderBookmarkListActivity final : public Activity {
  private:
   std::vector<Bookmark> bookmarks;
   int selectedIndex = 0;
+  bool longPressConfirmHandled = false;
   ButtonNavigator buttonNavigator;
 
+  void deleteSelectedBookmark();
+  void showBookmarkActionMenu(bool ignoreInitialConfirmRelease = false);
   int getPageItems() const;
 };
