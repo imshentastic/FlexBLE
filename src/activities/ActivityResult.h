@@ -20,8 +20,16 @@ struct KeyboardResult {
 struct MenuResult {
   int action = -1;
   uint8_t orientation = 0;
-  uint8_t pageTurnOption = 0;
   bool settingsChanged = false;
+  // FlexBLE: BookSettingsDrawer's Bluetooth entry sets this when the user
+  // has no bonded remote and we need to launch the BT settings UI for
+  // first-time pairing. The reader's drawer result handler picks it up.
+  bool requestBluetoothFlow = false;
+  // FlexBLE: BluetoothSettingsActivity sets this when it auto-exited after
+  // a successful connect (exitOnSuccessfulConnect=true). The EpubReaderMenu
+  // result handler treats it as a signal to also finish itself so the user
+  // lands directly back in the book instead of in the reader menu.
+  bool autoExitParent = false;
 };
 
 struct ChapterResult {
@@ -30,6 +38,10 @@ struct ChapterResult {
 
 struct PercentResult {
   int percent = 0;
+};
+
+struct IntervalResult {
+  uint32_t value = 0;
 };
 
 struct PageResult {
@@ -60,9 +72,13 @@ struct FileBrowserActionResult {
   int action = -1;
 };
 
-using ResultVariant =
-    std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, PageResult,
-                 SyncResult, NetworkModeResult, FootnoteResult, BookmarkResult, FileBrowserActionResult>;
+struct FilePathResult {
+  std::string path;
+};
+
+using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,
+                                   IntervalResult, PageResult, SyncResult, NetworkModeResult, FootnoteResult,
+                                   BookmarkResult, FileBrowserActionResult, FilePathResult>;
 
 struct ActivityResult {
   bool isCancelled = false;

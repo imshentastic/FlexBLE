@@ -34,8 +34,8 @@ constexpr ThemeMetrics values = [] {
 class LyraFlowTheme : public LyraTheme {
  public:
   void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
-                           const int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
-                           std::function<bool()> storeCoverBuffer, const BookReadingStats* stats = nullptr,
+                           int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
+                           const std::function<bool()>& storeCoverBuffer, const BookReadingStats* stats = nullptr,
                            float progressPercent = -1.0f) const override;
   // Flow-only override of the home menu. Two-anchor pagination with a
   // sticky bit so the second page stays in view as the cursor scrolls

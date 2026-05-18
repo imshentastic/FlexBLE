@@ -8,7 +8,13 @@
 #include "../Activity.h"
 #include "util/ButtonNavigator.h"
 
-enum class FileBrowserAction : int { Delete = 0, PinFavorite = 1, UnpinFavorite = 2 };
+enum class FileBrowserAction : int {
+  Delete = 0,
+  PinFavorite = 1,
+  UnpinFavorite = 2,
+  DeleteCache = 3,
+  ToggleCompleted = 4,
+};
 
 class FileBrowserActionActivity final : public Activity {
  public:

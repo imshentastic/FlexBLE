@@ -10,6 +10,26 @@
 
 HalPowerManager powerManager;  // Singleton instance
 
+namespace {
+void disableWiFiBeforeDeepSleep() {
+  const wifi_mode_t wifiMode = WiFi.getMode();
+  if (wifiMode == WIFI_MODE_NULL) {
+    return;
+  }
+
+  LOG_DBG("PWR", "Disabling WiFi before deep sleep (mode=%d)", static_cast<int>(wifiMode));
+  if (wifiMode & WIFI_MODE_AP) {
+    WiFi.softAPdisconnect(true);
+  }
+  if (wifiMode & WIFI_MODE_STA) {
+    WiFi.disconnect(false);
+  }
+  delay(30);
+  WiFi.mode(WIFI_OFF);
+  delay(30);
+}
+}  // namespace
+
 void HalPowerManager::begin() {
   if (gpio.deviceIsX3()) {
     // X3 uses an I2C fuel gauge for battery monitoring.
@@ -61,6 +81,8 @@ void HalPowerManager::setPowerSaving(bool enabled) {
 }
 
 void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
+  disableWiFiBeforeDeepSleep();
+
   // Ensure that the power button has been released to avoid immediately turning back on if you're holding it
   while (gpio.isPressed(HalGPIO::BTN_POWER)) {
     delay(50);

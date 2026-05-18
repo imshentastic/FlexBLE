@@ -24,7 +24,15 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
     RenderLock lock(*this);
     state = CHECKING_FOR_UPDATE;
   }
-  requestUpdateAndWait();
+  if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
+    LOG_ERR("OTA", "Checking update screen could not be rendered synchronously; aborting update check");
+    {
+      RenderLock lock(*this);
+      state = FAILED;
+    }
+    requestUpdate(true);
+    return;
+  }
 
   const auto res = updater.checkForUpdate();
   if (res != OtaUpdater::OK) {
@@ -33,6 +41,7 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
       RenderLock lock(*this);
       state = FAILED;
     }
+    requestUpdate(true);
     return;
   }
 
@@ -42,6 +51,7 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
       RenderLock lock(*this);
       state = NO_UPDATE;
     }
+    requestUpdate(true);
     return;
   }
 
@@ -49,6 +59,7 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
     RenderLock lock(*this);
     state = WAITING_CONFIRMATION;
   }
+  requestUpdate(true);
 }
 
 void OtaUpdateActivity::onEnter() {
@@ -117,8 +128,8 @@ void OtaUpdateActivity::render(RenderLock&&) {
         static_cast<int>(updaterProgress * 100), 100);
 
     y += metrics.progressBarHeight + metrics.verticalSpacing;
-    renderer.drawCenteredText(UI_10_FONT_ID, y,
-                              (std::to_string(static_cast<int>(updaterProgress * 100)) + "%").c_str());
+    // Percent label is drawn by BaseTheme::drawProgressBar; this slot is left intentionally empty
+    // so the bytes line below stays at the same Y it was at when the activity drew its own percent.
     y += height + metrics.verticalSpacing;
     renderer.drawCenteredText(
         UI_10_FONT_ID, y,
@@ -147,7 +158,15 @@ void OtaUpdateActivity::loop() {
         RenderLock lock(*this);
         state = UPDATE_IN_PROGRESS;
       }
-      requestUpdateAndWait();
+      if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
+        LOG_ERR("OTA", "Update progress screen could not be rendered synchronously; aborting OTA install");
+        {
+          RenderLock lock(*this);
+          state = FAILED;
+        }
+        requestUpdate(true);
+        return;
+      }
       const auto res = updater.installUpdate(
           [](void* ctx) {
             // immediate=true notifies the render task directly. The default deferred path only
@@ -171,9 +190,13 @@ void OtaUpdateActivity::loop() {
         RenderLock lock(*this);
         state = FINISHED;
       }
-      requestUpdateAndWait();
-      // Hold the completion screen briefly so the user sees it, then restart.
-      delay(3000);
+      const auto renderResult = requestUpdateAndWait();
+      if (renderResult == RequestUpdateResult::Rendered) {
+        // Hold the completion screen briefly so the user sees it, then restart.
+        delay(3000);
+      } else {
+        LOG_ERR("OTA", "Completion screen could not be rendered synchronously; restarting without sync confirmation");
+      }
       {
         RenderLock lock(*this);
         state = SHUTTING_DOWN;

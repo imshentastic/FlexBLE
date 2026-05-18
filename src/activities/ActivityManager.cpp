@@ -2,6 +2,8 @@
 
 #include <HalPowerManager.h>
 
+#include <algorithm>
+
 #include "CrossPointState.h"
 #include "OpdsServerStore.h"
 #include "boot_sleep/BootActivity.h"
@@ -47,10 +49,10 @@ void ActivityManager::renderTaskLoop() {
     }
     // Notify any task blocked in requestUpdateAndWait() that the render is done.
     TaskHandle_t waiter = nullptr;
-    taskENTER_CRITICAL(nullptr);
+    taskENTER_CRITICAL(&renderStateMux);
     waiter = waitingTaskHandle;
     waitingTaskHandle = nullptr;
-    taskEXIT_CRITICAL(nullptr);
+    taskEXIT_CRITICAL(&renderStateMux);
     if (waiter) {
       xTaskNotify(waiter, 1, eIncrement);
     }
@@ -104,9 +106,13 @@ void ActivityManager::loop() {
           handler(pendingResult);
         }
 
-        // Request an update to ensure the popped activity gets re-rendered
+        // Queue an update to ensure the popped activity gets re-rendered.
+        // Do not block here: result handlers may transiently take RenderLock while
+        // reconciling state, and a synchronous wait at this point can trip the
+        // deadlock guard even though the queued repaint is sufficient.
         if (pendingAction == PendingAction::None) {
-          requestUpdateAndWait();
+          lock.unlock();
+          requestUpdate();
         }
 
         // Handler may request another pending action, we will handle it in the next loop iteration
@@ -189,7 +195,11 @@ void ActivityManager::goToFileBrowser(std::string path) {
 }
 
 void ActivityManager::goToRecentBooks() {
-  replaceActivity(std::make_unique<RecentBooksGridActivity>(renderer, mappedInput));
+  if (SETTINGS.recentBooksView == CrossPointSettings::RECENT_BOOKS_GRID) {
+    replaceActivity(std::make_unique<RecentBooksGridActivity>(renderer, mappedInput));
+  } else {
+    replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
+  }
 }
 
 void ActivityManager::goToBrowser() {
@@ -243,7 +253,14 @@ void ActivityManager::popActivity() {
 
 bool ActivityManager::preventAutoSleep() const { return currentActivity && currentActivity->preventAutoSleep(); }
 
-bool ActivityManager::isReaderActivity() const { return currentActivity && currentActivity->isReaderActivity(); }
+bool ActivityManager::isReaderActivity() const {
+  if (currentActivity && currentActivity->isReaderActivity()) {
+    return true;
+  }
+
+  return std::any_of(stackActivities.begin(), stackActivities.end(),
+                     [](const auto& activity) { return activity && activity->isReaderActivity(); });
+}
 
 bool ActivityManager::canSnapshotForSleepOverlay() const {
   return currentActivity && currentActivity->canSnapshotForSleepOverlay();
@@ -269,13 +286,13 @@ void ActivityManager::requestUpdate(bool immediate) {
     requestedUpdate = true;
   }
 }
-void ActivityManager::requestUpdateAndWait() {
+RequestUpdateResult ActivityManager::requestUpdateAndWait() {
   if (!renderTaskHandle) {
-    return;
+    return RequestUpdateResult::Rejected;
   }
 
   // Atomic section to perform checks
-  taskENTER_CRITICAL(nullptr);
+  taskENTER_CRITICAL(&renderStateMux);
   auto currTaskHandler = xTaskGetCurrentTaskHandle();
   auto mutexHolder = xSemaphoreGetMutexHolder(renderingMutex);
   bool isRenderTask = (currTaskHandler == renderTaskHandle);
@@ -284,19 +301,27 @@ void ActivityManager::requestUpdateAndWait() {
   if (!alreadyWaiting && !isRenderTask && !holdingRenderLock) {
     waitingTaskHandle = currTaskHandler;
   }
-  taskEXIT_CRITICAL(nullptr);
+  taskEXIT_CRITICAL(&renderStateMux);
 
-  // Render task cannot call requestUpdateAndWait() or it will cause a deadlock
-  assert(!isRenderTask && "Render task cannot call requestUpdateAndWait()");
+  if (isRenderTask) {
+    LOG_ERR("ACT", "requestUpdateAndWait() called from render task; rejecting sync update");
+    return RequestUpdateResult::Rejected;
+  }
 
-  // There should never be the case where 2 tasks are waiting for a render at the same time
-  assert(!alreadyWaiting && "Already waiting for a render to complete");
+  if (alreadyWaiting) {
+    LOG_ERR("ACT", "requestUpdateAndWait() called while another task is waiting; rejecting sync update");
+    return RequestUpdateResult::Rejected;
+  }
 
   // Cannot call while holding RenderLock or it will cause a deadlock
-  assert(!holdingRenderLock && "Cannot call requestUpdateAndWait() while holding RenderLock");
+  if (holdingRenderLock) {
+    LOG_ERR("ACT", "requestUpdateAndWait() called while holding RenderLock; rejecting sync update");
+    return RequestUpdateResult::Rejected;
+  }
 
   xTaskNotify(renderTaskHandle, 1, eIncrement);
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  return RequestUpdateResult::Rendered;
 }
 
 // RenderLock
