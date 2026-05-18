@@ -8,6 +8,18 @@ body:
       value: |
         Thanks for taking the time to report this bug! Please fill out the details below.
 
+  - type: dropdown
+    id: device-type
+    attributes:
+      label: Device
+      description: Which device is this affecting?
+      options:
+        - X4
+        - X3
+        - Both
+    validations:
+      required: true
+
   - type: input
     id: version
     attributes:

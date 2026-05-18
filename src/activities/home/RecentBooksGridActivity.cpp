@@ -6,41 +6,251 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Logging.h>
 #include <Xtc.h>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 
+#include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "RecentBookProgress.h"
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
+#include "components/themes/lyra/LyraTheme.h"
 #include "fontIds.h"
+
+namespace {
+constexpr int kCoverCornerRadius = 2;
+constexpr int kGridColumns = 3;
+constexpr float kCircleRadians = 6.2831853f;
+constexpr float kCircleRadiansPerPercent = kCircleRadians / 100.0f;
+constexpr int kLyraGridContentTop =
+    LyraMetrics::values.topPadding + LyraMetrics::values.headerHeight + LyraMetrics::values.verticalSpacing;
+constexpr int kLyraGridSpacing = LyraMetrics::values.verticalSpacing;
+
+void drawGridHeader(const GfxRenderer& renderer, const int pageWidth) {
+  const Rect rect{0, LyraMetrics::values.topPadding, pageWidth, LyraMetrics::values.headerHeight};
+  renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
+
+  const bool showBatteryPercentage =
+      SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
+  const int batteryX = rect.x + rect.width - 12 - LyraMetrics::values.batteryWidth;
+  GUI.drawBatteryRight(renderer,
+                       Rect{batteryX, rect.y + 5, LyraMetrics::values.batteryWidth, LyraMetrics::values.batteryHeight},
+                       showBatteryPercentage);
+
+  const int titleMaxWidth = rect.width - LyraMetrics::values.contentSidePadding * 3;
+  const std::string title =
+      renderer.truncatedText(UI_12_FONT_ID, tr(STR_MENU_RECENT_BOOKS), titleMaxWidth, EpdFontFamily::BOLD);
+  renderer.drawText(UI_12_FONT_ID, rect.x + LyraMetrics::values.contentSidePadding,
+                    rect.y + LyraMetrics::values.batteryBarHeight + 3, title.c_str(), true, EpdFontFamily::BOLD);
+  renderer.drawLine(rect.x, rect.y + rect.height - 3, rect.x + rect.width - 1, rect.y + rect.height - 3, 3, true);
+}
+
+void drawInlineProgressCircle(const GfxRenderer& renderer, const int x, const int y, const int size,
+                              const float progressPercent) {
+  const int radius = size / 2;
+  if (radius <= 2) return;
+
+  const int centerX = x + radius;
+  const int centerY = y + radius;
+  const int outerRadius = radius;
+  const int innerRadius = std::max(1, radius - std::max(2, size / 4));
+  const int outerRadiusSq = outerRadius * outerRadius;
+  const int innerRadiusSq = innerRadius * innerRadius;
+  const float sweepRadians = std::clamp(progressPercent, 0.0f, 100.0f) * kCircleRadiansPerPercent;
+
+  for (int dy = -outerRadius; dy <= outerRadius; ++dy) {
+    for (int dx = -outerRadius; dx <= outerRadius; ++dx) {
+      const int distanceSq = dx * dx + dy * dy;
+      if (distanceSq > outerRadiusSq || distanceSq < innerRadiusSq) {
+        continue;
+      }
+
+      const int px = centerX + dx;
+      const int py = centerY + dy;
+      renderer.fillRectDither(px, py, 1, 1, Color::LightGray);
+
+      float angle = std::atan2(static_cast<float>(dx), static_cast<float>(-dy));
+      if (angle < 0.0f) {
+        angle += kCircleRadians;
+      }
+      if (angle <= sweepRadians) {
+        renderer.drawPixel(px, py, true);
+      }
+    }
+  }
+}
+
+int moveHorizontalInGrid(const int currentIndex, const int totalItems, const bool moveRight) {
+  if (totalItems <= 0) return 0;
+  return moveRight ? ButtonNavigator::nextIndex(currentIndex, totalItems)
+                   : ButtonNavigator::previousIndex(currentIndex, totalItems);
+}
+
+int moveVerticalInGrid(const int currentIndex, const int totalItems, const int columns, const int itemsPerPage,
+                       const bool moveDown) {
+  if (totalItems <= 0 || columns <= 0) return 0;
+
+  const int safeItemsPerPage = std::max(columns, itemsPerPage);
+  // Contract: safeItemsPerPage should describe whole grid rows. Partial rows
+  // are allowed only on the final page after totalItems is applied below.
+  if (safeItemsPerPage % columns != 0) {
+    LOG_ERR("RBGA", "moveVerticalInGrid requires whole rows (itemsPerPage=%d columns=%d)", safeItemsPerPage, columns);
+    return currentIndex;
+  }
+  const int totalPages = (totalItems + safeItemsPerPage - 1) / safeItemsPerPage;
+  const int currentPage = currentIndex / safeItemsPerPage;
+  const int indexInPage = currentIndex % safeItemsPerPage;
+  const int currentRow = indexInPage / columns;
+  const int currentColumn = indexInPage % columns;
+  const int rowsPerPage = safeItemsPerPage / columns;
+
+  if (moveDown) {
+    if (currentRow < rowsPerPage - 1) {
+      const int nextRowCandidate = currentIndex + columns;
+      if (nextRowCandidate < totalItems && (nextRowCandidate / safeItemsPerPage) == currentPage) {
+        return nextRowCandidate;
+      }
+    }
+
+    const int nextPage = (currentPage + 1) % totalPages;
+    const int nextPageStart = nextPage * safeItemsPerPage;
+    const int nextPageCount = std::min(safeItemsPerPage, totalItems - nextPageStart);
+    if (nextPageCount <= 0) return currentIndex;
+
+    if (currentColumn < nextPageCount) {
+      return nextPageStart + currentColumn;
+    }
+    return nextPageStart + nextPageCount - 1;
+  }
+
+  if (currentRow > 0) {
+    return currentIndex - columns;
+  }
+
+  const int previousPage = (currentPage - 1 + totalPages) % totalPages;
+  const int previousPageStart = previousPage * safeItemsPerPage;
+  const int previousPageCount = std::min(safeItemsPerPage, totalItems - previousPageStart);
+  if (previousPageCount <= 0) return currentIndex;
+
+  int previousPageCandidate = previousPageStart + ((previousPageCount - 1) / columns) * columns + currentColumn;
+  while (previousPageCandidate >= previousPageStart + previousPageCount) {
+    previousPageCandidate -= columns;
+  }
+  return std::max(previousPageStart, previousPageCandidate);
+}
+
+void updateRecentBookCoverPath(const RecentBook& book, const std::string& coverBmpPath) {
+  if (!RECENT_BOOKS.updateBook(book.path, book.title, book.author, coverBmpPath)) {
+    LOG_ERR("RBGA", "failed to update recent book metadata: %s", book.path.c_str());
+  }
+}
+
+bool hasThumbnailPlaceholder(const std::string& coverBmpPath) {
+  return coverBmpPath.find("[WIDTH]") != std::string::npos || coverBmpPath.find("[HEIGHT]") != std::string::npos;
+}
+
+bool needsCoverThumbGeneration(const RecentBook& book, const std::string& thumbPath) {
+  if (thumbPath.empty() || !Storage.exists(thumbPath.c_str())) {
+    return true;
+  }
+  if (!FsHelpers::hasXtcExtension(book.path)) {
+    return false;
+  }
+
+  FsFile file;
+  if (!Storage.openFileForRead("RBGA", thumbPath, file)) {
+    return true;
+  }
+  Bitmap bitmap(file);
+  const bool hasExpectedSize = bitmap.parseHeaders() == BmpReaderError::Ok &&
+                               bitmap.getWidth() == RecentBooksGridActivity::COVER_WIDTH &&
+                               bitmap.getHeight() == RecentBooksGridActivity::COVER_HEIGHT;
+  file.close();
+  return !hasExpectedSize;
+}
+
+void calculateCoverFillCrop(const Bitmap& bitmap, float& cropX, float& cropY) {
+  cropX = 0.0f;
+  cropY = 0.0f;
+  const float srcW = static_cast<float>(bitmap.getWidth());
+  const float srcH = static_cast<float>(bitmap.getHeight());
+  if (srcW <= 0.0f || srcH <= 0.0f) return;
+
+  const float srcRatio = srcW / srcH;
+  const float targetRatio = static_cast<float>(RecentBooksGridActivity::COVER_WIDTH) /
+                            static_cast<float>(RecentBooksGridActivity::COVER_HEIGHT);
+  if (srcRatio > targetRatio) {
+    cropX = std::max(0.0f, 1.0f - (targetRatio / srcRatio));
+  } else if (srcRatio < targetRatio) {
+    cropY = std::max(0.0f, 1.0f - (srcRatio / targetRatio));
+  }
+}
+
+std::string getReusableCoverPath(const RecentBook& book) {
+  if (FsHelpers::hasEpubExtension(book.path)) {
+    return Epub(book.path, "/.crosspoint").getThumbBmpPath();
+  }
+  if (FsHelpers::hasXtcExtension(book.path)) {
+    return Xtc(book.path, "/.crosspoint").getThumbBmpPath();
+  }
+  return book.coverBmpPath;
+}
+
+void ensureReusableCoverPath(RecentBook& book) {
+  if (book.coverBmpPath.empty() || hasThumbnailPlaceholder(book.coverBmpPath)) {
+    return;
+  }
+
+  const std::string reusablePath = getReusableCoverPath(book);
+  if (reusablePath.empty() || reusablePath == book.coverBmpPath) {
+    return;
+  }
+
+  book.coverBmpPath = reusablePath;
+  updateRecentBookCoverPath(book, reusablePath);
+}
+}  // namespace
 
 void RecentBooksGridActivity::loadRecentBooks() {
   recentBooks.clear();
   const auto& books = RECENT_BOOKS.getBooks();
-  recentBooks.reserve(std::min(static_cast<int>(books.size()), MAX_BOOKS));
+  recentBooks.reserve(std::min(books.size(), static_cast<size_t>(MAX_GRID_BOOKS)));
 
   for (const auto& book : books) {
-    if (static_cast<int>(recentBooks.size()) >= MAX_BOOKS) break;
-    // Skip if file is gone — keeps stale entries from showing up as
-    // permanently-broken cover slots. (We don't delete from the store
-    // because RecentBooksStore has no public remove API.)
+    if (recentBooks.size() >= MAX_GRID_BOOKS) break;
     if (!Storage.exists(book.path.c_str())) continue;
-    recentBooks.push_back(book);
+    recentBooks.push_back(BookState{book});
   }
+}
+
+void RecentBooksGridActivity::ensureProgressLoaded(const int index) {
+  if (index < 0 || index >= static_cast<int>(recentBooks.size())) return;
+  if (recentBooks[index].progressLoaded) {
+    return;
+  }
+
+  recentBooks[index].progress = RecentBookProgress::loadPercent(recentBooks[index].book);
+  recentBooks[index].progressLoaded = true;
 }
 
 void RecentBooksGridActivity::loadPageCovers(int pageStart) {
   const int pageEnd = std::min(pageStart + BOOKS_PER_PAGE, static_cast<int>(recentBooks.size()));
 
-  // Cheap pre-pass: if every visible thumb already exists on disk, skip the
-  // heavy Epub/Xtc load entirely (no popup, no flicker).
   bool needsGeneration = false;
   for (int i = pageStart; i < pageEnd; ++i) {
-    if (recentBooks[i].coverBmpPath.empty()) continue;
-    const std::string thumbPath = UITheme::getCoverThumbPath(recentBooks[i].coverBmpPath, COVER_HEIGHT);
-    if (!Storage.exists(thumbPath.c_str())) {
+    RecentBook& book = recentBooks[i].book;
+    ensureReusableCoverPath(book);
+    if (book.coverBmpPath.empty()) {
+      needsGeneration = true;
+      break;
+    }
+    const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, COVER_WIDTH, COVER_HEIGHT);
+    if (needsCoverThumbGeneration(book, thumbPath)) {
       needsGeneration = true;
       break;
     }
@@ -56,21 +266,24 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
   int processedCount = 0;
 
   for (int i = pageStart; i < pageEnd; ++i) {
-    RecentBook& book = recentBooks[i];
+    RecentBook& book = recentBooks[i].book;
     const std::string coverPath =
-        book.coverBmpPath.empty() ? "" : UITheme::getCoverThumbPath(book.coverBmpPath, COVER_HEIGHT);
-    if (coverPath.empty() || !Storage.exists(coverPath.c_str())) {
+        book.coverBmpPath.empty() ? "" : UITheme::getCoverThumbPath(book.coverBmpPath, COVER_WIDTH, COVER_HEIGHT);
+    if (needsCoverThumbGeneration(book, coverPath)) {
       if (FsHelpers::hasEpubExtension(book.path)) {
         Epub epub(book.path, "/.crosspoint");
-        // load(false, true) = skip CSS, metadata only — same flags HomeActivity uses.
         if (epub.load(false, true)) {
           if (!showingLoading) {
             showingLoading = true;
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
           }
-          GUI.fillPopupProgress(renderer, popupRect, 10 + processedCount * (90 / totalToProcess));
-          if (!epub.generateThumbBmp(COVER_HEIGHT)) {
-            RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+          GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
+          if (epub.generateThumbBmp(COVER_WIDTH, COVER_HEIGHT)) {
+            const std::string reusablePath = epub.getThumbBmpPath();
+            book.coverBmpPath = reusablePath;
+            updateRecentBookCoverPath(book, reusablePath);
+          } else {
+            updateRecentBookCoverPath(book, "");
             book.coverBmpPath = "";
           }
         }
@@ -81,9 +294,13 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
             showingLoading = true;
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
           }
-          GUI.fillPopupProgress(renderer, popupRect, 10 + processedCount * (90 / totalToProcess));
-          if (!xtc.generateThumbBmp(COVER_HEIGHT)) {
-            RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+          GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
+          if (xtc.generateThumbBmp(COVER_WIDTH, COVER_HEIGHT)) {
+            const std::string reusablePath = xtc.getThumbBmpPath();
+            book.coverBmpPath = reusablePath;
+            updateRecentBookCoverPath(book, reusablePath);
+          } else {
+            updateRecentBookCoverPath(book, "");
             book.coverBmpPath = "";
           }
         }
@@ -94,8 +311,6 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
 
   loadedPageStart = pageStart;
   if (showingLoading) {
-    // Force a redraw so the freshly-generated covers replace the popup
-    // and any placeholder slots painted earlier.
     requestUpdate();
   }
 }
@@ -104,7 +319,8 @@ void RecentBooksGridActivity::onEnter() {
   Activity::onEnter();
   loadRecentBooks();
   selectorIndex = 0;
-  loadedPageStart = -1;
+  loadedPageStart = NO_PAGE_LOADED;
+  ensureProgressLoaded(selectorIndex);
   requestUpdate();
 }
 
@@ -115,9 +331,9 @@ void RecentBooksGridActivity::onExit() {
 
 void RecentBooksGridActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (!recentBooks.empty() && selectorIndex < recentBooks.size()) {
-      LOG_DBG("RBGA", "Selected recent book: %s", recentBooks[selectorIndex].path.c_str());
-      onSelectBook(recentBooks[selectorIndex].path);
+    if (!recentBooks.empty() && selectorIndex >= 0 && selectorIndex < static_cast<int>(recentBooks.size())) {
+      LOG_DBG("RBGA", "Selected recent book: %s", recentBooks[selectorIndex].book.path.c_str());
+      onSelectBook(recentBooks[selectorIndex].book.path);
       return;
     }
   }
@@ -128,26 +344,35 @@ void RecentBooksGridActivity::loop() {
   }
 
   const int listSize = static_cast<int>(recentBooks.size());
+  enum class NavDirection { Right, Left, Down, Up };
+  auto handleNav = [this, listSize](NavDirection direction) {
+    switch (direction) {
+      case NavDirection::Right:
+        selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, true);
+        break;
+      case NavDirection::Left:
+        selectorIndex = moveHorizontalInGrid(selectorIndex, listSize, false);
+        break;
+      case NavDirection::Down:
+        selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, true);
+        break;
+      case NavDirection::Up:
+        selectorIndex = moveVerticalInGrid(selectorIndex, listSize, kGridColumns, BOOKS_PER_PAGE, false);
+        break;
+    }
+    ensureProgressLoaded(selectorIndex);
+    requestUpdate();
+  };
 
-  buttonNavigator.onNextRelease([this, listSize] {
-    selectorIndex = ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize);
-    requestUpdate();
-  });
-  buttonNavigator.onPreviousRelease([this, listSize] {
-    selectorIndex = ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize);
-    requestUpdate();
-  });
-  // Continuous-press jumps a full row (3 covers) for fast grid traversal,
-  // matching the Lua reference.
-  constexpr int ROW_STEP = 3;
-  buttonNavigator.onNextContinuous([this, listSize] {
-    selectorIndex = ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, ROW_STEP);
-    requestUpdate();
-  });
-  buttonNavigator.onPreviousContinuous([this, listSize] {
-    selectorIndex = ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, ROW_STEP);
-    requestUpdate();
-  });
+  buttonNavigator.onRelease({MappedInputManager::Button::Right}, [&] { handleNav(NavDirection::Right); });
+  buttonNavigator.onRelease({MappedInputManager::Button::Left}, [&] { handleNav(NavDirection::Left); });
+  buttonNavigator.onRelease({MappedInputManager::Button::Down}, [&] { handleNav(NavDirection::Down); });
+  buttonNavigator.onRelease({MappedInputManager::Button::Up}, [&] { handleNav(NavDirection::Up); });
+
+  buttonNavigator.onContinuous({MappedInputManager::Button::Right}, [&] { handleNav(NavDirection::Right); });
+  buttonNavigator.onContinuous({MappedInputManager::Button::Left}, [&] { handleNav(NavDirection::Left); });
+  buttonNavigator.onContinuous({MappedInputManager::Button::Down}, [&] { handleNav(NavDirection::Down); });
+  buttonNavigator.onContinuous({MappedInputManager::Button::Up}, [&] { handleNav(NavDirection::Up); });
 }
 
 void RecentBooksGridActivity::render(RenderLock&&) {
@@ -157,142 +382,130 @@ void RecentBooksGridActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_MENU_RECENT_BOOKS));
-
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  drawGridHeader(renderer, pageWidth);
+  constexpr int contentTop = kLyraGridContentTop;
   constexpr int titleStripHeight = 32;
-  constexpr int titleGridGap = 16;  // breathing room between title strip and the top row of covers
-  constexpr int columns = 3;
-  // Vertical row gap is a bit more than the horizontal one — equal pixel
-  // values read as visually tighter vertically because covers are taller
-  // than they are wide.
-  const int rowSpacing = metrics.verticalSpacing + 4;
-  const int totalGridWidth = columns * COVER_WIDTH + (columns - 1) * metrics.verticalSpacing;
+  constexpr int titleGridGap = 16;
+  constexpr int selectionPadding = 4;
+  constexpr int selectionOutlineGap = 2;
+  constexpr int selectionOuterInset = selectionPadding + selectionOutlineGap;
+  constexpr int gridSpacing = kLyraGridSpacing;
+  constexpr int rowSpacing = gridSpacing + 4;
+  constexpr int totalGridWidth = kGridColumns * COVER_WIDTH + (kGridColumns - 1) * gridSpacing;
   const int startXOffset = (pageWidth - totalGridWidth) / 2;
 
   const int totalBooks = static_cast<int>(recentBooks.size());
   const int totalPages = (totalBooks + BOOKS_PER_PAGE - 1) / BOOKS_PER_PAGE;
-  const int currentPage = (totalBooks > 0) ? (static_cast<int>(selectorIndex) / BOOKS_PER_PAGE) : 0;
+  const int currentPage = (totalBooks > 0) ? (selectorIndex / BOOKS_PER_PAGE) : 0;
   const int pageStart = currentPage * BOOKS_PER_PAGE;
   const int pageCount = std::min(BOOKS_PER_PAGE, totalBooks - pageStart);
 
   if (recentBooks.empty()) {
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, tr(STR_NO_RECENT_BOOKS));
   } else {
-    // Selected-book title strip: 32 px tall, sits between the screen
-    // heading and the grid. Aligned to the grid's left edge (same x as
-    // the leftmost cover) and constrained to the grid's full width so its
-    // side padding mirrors the grid's. Typography only — no border.
-    if (selectorIndex < recentBooks.size()) {
-      const int titleLh = renderer.getLineHeight(UI_12_FONT_ID);
+    if (selectorIndex >= 0 && selectorIndex < static_cast<int>(recentBooks.size())) {
+      const int titleLh = renderer.getLineHeight(UI_10_FONT_ID);
       const int titleY = contentTop + (titleStripHeight - titleLh) / 2;
-      const std::string truncTitle = renderer.truncatedText(
-          UI_12_FONT_ID, recentBooks[selectorIndex].title.c_str(), totalGridWidth, EpdFontFamily::BOLD);
-      renderer.drawText(UI_12_FONT_ID, startXOffset, titleY, truncTitle.c_str(), true, EpdFontFamily::BOLD);
-    }
+      const auto& selectedBook = recentBooks[selectorIndex];
+      const bool hasProgress = selectedBook.progressLoaded && RecentBookProgress::hasPercent(selectedBook.progress);
+      const std::string progressLabel = hasProgress ? RecentBookProgress::formatPercent(selectedBook.progress) : "";
 
-    // Tracks the last loaded book's actual rendered dimensions so empty
-    // grid slots on the same page can match (otherwise empty boxes drawn
-    // at COVER_WIDTH × COVER_HEIGHT look bigger than the aspect-fit covers).
-    int sampleBw = COVER_WIDTH;
-    int sampleBh = COVER_HEIGHT;
-    bool haveSample = false;
+      const int progressIconSize = hasProgress ? std::max(8, titleLh - 2) : 0;
+      const char* progressSeparator = "  |   ";
+      const int separatorWidth =
+          hasProgress ? renderer.getTextWidth(UI_10_FONT_ID, progressSeparator, EpdFontFamily::REGULAR) : 0;
+      const int progressWidth =
+          hasProgress ? renderer.getTextWidth(UI_10_FONT_ID, progressLabel.c_str(), EpdFontFamily::REGULAR) : 0;
+      const int progressIconGap = hasProgress ? renderer.getTextWidth(UI_10_FONT_ID, "  ", EpdFontFamily::REGULAR) : 0;
+      const int progressSuffixWidth =
+          hasProgress ? separatorWidth + progressWidth + progressIconGap + progressIconSize : 0;
+      const int titleMaxWidth = std::max(0, totalGridWidth - progressSuffixWidth);
+      const std::string truncTitle =
+          renderer.truncatedText(UI_10_FONT_ID, selectedBook.book.title.c_str(), titleMaxWidth, EpdFontFamily::REGULAR);
+      renderer.drawText(UI_10_FONT_ID, startXOffset, titleY, truncTitle.c_str(), true, EpdFontFamily::REGULAR);
+      if (hasProgress) {
+        const int titleWidth = renderer.getTextWidth(UI_10_FONT_ID, truncTitle.c_str(), EpdFontFamily::REGULAR);
+        int progressX = startXOffset + titleWidth;
+        progressX = std::min(progressX, startXOffset + totalGridWidth - progressSuffixWidth);
+        renderer.drawText(UI_10_FONT_ID, progressX, titleY, progressSeparator, true, EpdFontFamily::REGULAR);
+        progressX += separatorWidth;
+        renderer.drawText(UI_10_FONT_ID, progressX, titleY, progressLabel.c_str(), true, EpdFontFamily::REGULAR);
+        const int iconX = progressX + progressWidth + progressIconGap;
+        const int iconY = titleY + (titleLh - progressIconSize) / 2;
+        drawInlineProgressCircle(renderer, iconX, iconY, progressIconSize, selectedBook.progress);
+      }
+    }
 
     for (int i = 0; i < pageCount; ++i) {
       const int bookIdx = pageStart + i;
-      const int col = i % columns;
-      const int row = i / columns;
-      const int x = startXOffset + col * (COVER_WIDTH + metrics.verticalSpacing);
+      const int col = i % kGridColumns;
+      const int row = i / kGridColumns;
+      const int x = startXOffset + col * (COVER_WIDTH + gridSpacing);
       const int y = contentTop + titleStripHeight + titleGridGap + row * (COVER_HEIGHT + rowSpacing);
 
-      // Per-cell render bounds. Default to full cell for the placeholder
-      // path; if a real cover loads we shrink these to the cover's true
-      // aspect so the outline + selection border hug the cover and don't
-      // leave a white sliver on books that aren't 123:180.
-      int bx = x;
-      int by = y;
-      int bw = COVER_WIDTH;
-      int bh = COVER_HEIGHT;
+      const int bx = x;
+      const int by = y;
+      constexpr int bw = COVER_WIDTH;
+      constexpr int bh = COVER_HEIGHT;
       bool drawn = false;
       const std::string thumbPath =
-          recentBooks[bookIdx].coverBmpPath.empty()
+          recentBooks[bookIdx].book.coverBmpPath.empty()
               ? ""
-              : UITheme::getCoverThumbPath(recentBooks[bookIdx].coverBmpPath, COVER_HEIGHT);
+              : UITheme::getCoverThumbPath(recentBooks[bookIdx].book.coverBmpPath, COVER_WIDTH, COVER_HEIGHT);
       if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
         FsFile file;
         if (Storage.openFileForRead("RBGA", thumbPath, file)) {
           Bitmap bmp(file);
           if (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0) {
-            bw = std::min(COVER_WIDTH, bmp.getWidth());
-            bh = std::min(COVER_HEIGHT, bmp.getHeight());
-            bx = x + (COVER_WIDTH - bw) / 2;
-            by = y + (COVER_HEIGHT - bh) / 2;
-            renderer.drawBitmap(bmp, bx, by, bw, bh);
-            renderer.drawRect(bx, by, bw, bh, 2, true);
+            float cropX = 0.0f;
+            float cropY = 0.0f;
+            calculateCoverFillCrop(bmp, cropX, cropY);
+            renderer.fillRoundedRect(bx, by, bw, bh, kCoverCornerRadius, Color::White);
+            renderer.drawBitmap(bmp, bx, by, bw, bh, cropX, cropY);
+            renderer.maskRoundedRectOutsideCorners(bx, by, bw, bh, kCoverCornerRadius, Color::White);
+            renderer.drawRoundedRect(bx, by, bw, bh, 2, kCoverCornerRadius, true);
             drawn = true;
-            sampleBw = bw;
-            sampleBh = bh;
-            haveSample = true;
           }
           file.close();
         }
       }
       if (!drawn) {
-        // Empty cover slot: outlined box with a centered book icon.
-        renderer.drawRect(bx, by, bw, bh, 2, true);
-        renderer.fillRect(bx + 2, by + 2, bw - 4, bh - 4, false);
+        renderer.fillRoundedRect(bx, by, bw, bh, kCoverCornerRadius, Color::White);
+        renderer.drawRoundedRect(bx, by, bw, bh, 2, kCoverCornerRadius, true);
         renderer.drawIcon(BookIcon, bx + (bw - 32) / 2, by + (bh - 32) / 2, 32, 32);
       }
       if (bookIdx == static_cast<int>(selectorIndex)) {
-        renderer.drawRect(bx - 2, by - 2, bw + 4, bh + 4, 3, true);
+        renderer.drawRoundedRect(bx - selectionPadding, by - selectionPadding, bw + selectionPadding * 2,
+                                 bh + selectionPadding * 2, 3, kCoverCornerRadius + selectionPadding, true);
+        renderer.drawRoundedRect(bx - selectionOuterInset, by - selectionOuterInset, bw + selectionOuterInset * 2,
+                                 bh + selectionOuterInset * 2, 1, kCoverCornerRadius + selectionOuterInset, true);
       }
     }
 
-    // Empty grid slots get a thinner 1 px border (so the actual books'
-    // 2 px border reads as the dominant element). Sized to match the
-    // sampled book footprint so empty boxes don't look bigger than the
-    // aspect-fit covers around them; falls back to a 0.66 ratio if no
-    // book on this page rendered.
-    if (!haveSample) {
-      sampleBh = COVER_HEIGHT;
-      sampleBw = (COVER_HEIGHT * 66) / 100;
-    }
-    const int sampleXInset = (COVER_WIDTH - sampleBw) / 2;
-    const int sampleYInset = (COVER_HEIGHT - sampleBh) / 2;
-    for (int i = pageCount; i < BOOKS_PER_PAGE; ++i) {
-      const int col = i % columns;
-      const int row = i / columns;
-      const int px = startXOffset + col * (COVER_WIDTH + metrics.verticalSpacing) + sampleXInset;
-      const int py = contentTop + titleStripHeight + titleGridGap + row * (COVER_HEIGHT + rowSpacing) + sampleYInset;
-      renderer.drawRect(px, py, sampleBw, sampleBh, 1, true);
-    }
-
     if (totalPages > 1) {
-      constexpr int dotSize = 10;
-      constexpr int dotSpacing = 8;
+      constexpr int dotSize = 8;
+      constexpr int dotSpacing = 6;
       const int totalDotWidth = totalPages * dotSize + (totalPages - 1) * dotSpacing;
       const int dotsStartX = (pageWidth - totalDotWidth) / 2;
       const int dotY = pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing - 4;
-      constexpr int dotRadius = dotSize / 2;  // 5 → fully-circular bullet on 10x10
       for (int p = 0; p < totalPages; p++) {
         const int dx = dotsStartX + p * (dotSize + dotSpacing);
         if (p == currentPage) {
-          renderer.fillRoundedRect(dx, dotY, dotSize, dotSize, dotRadius, Color::Black);
+          renderer.fillRect(dx, dotY, dotSize, dotSize, true);
         } else {
-          renderer.drawRoundedRect(dx, dotY, dotSize, dotSize, 1, dotRadius, true);
+          renderer.drawRect(dx, dotY, dotSize, dotSize, true);
         }
       }
     }
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_OPEN), tr(STR_DIR_PREV), tr(STR_DIR_NEXT));
+  // The four physical hint slots are already occupied; Up/Down still navigate
+  // the grid but are not rendered in this compact hint bar.
+  const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_OPEN), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();
 
-  // Defer cover generation until AFTER displayBuffer so the user sees
-  // placeholder slots immediately when paging — then the popup appears and
-  // covers stream in. Same ordering as the Lua reference.
   if (!recentBooks.empty() && loadedPageStart != pageStart) {
     loadPageCovers(pageStart);
   }

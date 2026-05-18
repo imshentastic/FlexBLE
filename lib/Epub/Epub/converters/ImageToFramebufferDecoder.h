@@ -1,6 +1,7 @@
 #pragma once
 #include <HalStorage.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -33,8 +34,13 @@ class ImageToFramebufferDecoder {
 
  protected:
   // Size validation helpers
-  static constexpr int MAX_SOURCE_PIXELS = 3145728;  // 2048 * 1536
+  static constexpr int MAX_SOURCE_WIDTH = 2048;
+  // JPEGDEC streams scaled MCU blocks, so moderately wider JPEG sources are
+  // safe as long as the total-pixel and heap guards still pass.
+  static constexpr int MAX_JPEG_SOURCE_WIDTH = 4096;
+  static constexpr int MAX_SOURCE_HEIGHT = 3072;
+  static constexpr int64_t MAX_SOURCE_PIXELS = 2048LL * 3072LL;
 
-  bool validateImageDimensions(int width, int height, const std::string& format);
+  bool validateImageDimensions(int width, int height, const std::string& format, int maxSourceWidth = MAX_SOURCE_WIDTH);
   void warnUnsupportedFeature(const std::string& feature, const std::string& imagePath);
 };

@@ -6,16 +6,29 @@
 #include "../reader/EpubReaderBookmarkListActivity.h"
 #include "BookmarkStore.h"
 #include "CrossPointState.h"
+#include "FileBrowserActionActivity.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
+namespace {
+constexpr unsigned long BOOKMARK_DELETE_HOLD_MS = 1000;
+}
+
+void BookmarksHomeActivity::reloadBookmarks() {
+  books.clear();
+  BookmarkStore::getAllBookmarkedBooks(books);
+  if (books.empty()) {
+    selectedIndex = 0;
+  } else if (selectedIndex >= static_cast<int>(books.size())) {
+    selectedIndex = static_cast<int>(books.size()) - 1;
+  }
+}
+
 void BookmarksHomeActivity::onEnter() {
   Activity::onEnter();
 
-  books.clear();
-  BookmarkStore::getAllBookmarkedBooks(books);
-
+  reloadBookmarks();
   selectedIndex = 0;
   requestUpdate();
 }
@@ -31,7 +44,18 @@ void BookmarksHomeActivity::loop() {
     return;
   }
 
+  if (!books.empty() && !longPressOpenHandled && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() >= BOOKMARK_DELETE_HOLD_MS) {
+    longPressOpenHandled = true;
+    showBookmarkBookActionMenu(selectedIndex, true);
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (longPressOpenHandled) {
+      longPressOpenHandled = false;
+      return;
+    }
     if (!books.empty() && selectedIndex >= 0 && selectedIndex < static_cast<int>(books.size())) {
       openBookmarkList(selectedIndex);
     }
@@ -89,6 +113,29 @@ void BookmarksHomeActivity::render(RenderLock&&) {
   renderer.displayBuffer();
 }
 
+void BookmarksHomeActivity::showBookmarkBookActionMenu(int bookIndex, bool ignoreInitialConfirmRelease) {
+  if (bookIndex < 0 || bookIndex >= static_cast<int>(books.size())) return;
+
+  const BookmarkedBookEntry entry = books[bookIndex];
+  std::vector<FileBrowserActionActivity::MenuItem> items;
+  items.reserve(1);
+  items.push_back({FileBrowserAction::Delete, StrId::STR_DELETE});
+
+  startActivityForResult(std::make_unique<FileBrowserActionActivity>(renderer, mappedInput, entry.bookTitle,
+                                                                     std::move(items), ignoreInitialConfirmRelease),
+                         [this, entry](const ActivityResult& result) {
+                           longPressOpenHandled = false;
+                           const auto* actionResult = std::get_if<FileBrowserActionResult>(&result.data);
+                           if (!result.isCancelled && actionResult &&
+                               static_cast<FileBrowserAction>(actionResult->action) == FileBrowserAction::Delete) {
+                             BOOKMARKS.loadForBook(entry.bookPath, entry.bookTitle, entry.bookAuthor, entry.bookType);
+                             BOOKMARKS.clearAll();
+                           }
+                           reloadBookmarks();
+                           requestUpdate();
+                         });
+}
+
 void BookmarksHomeActivity::openBookmarkList(int bookIndex) {
   const BookmarkedBookEntry entry = books[bookIndex];
   BOOKMARKS.loadForBook(entry.bookPath, entry.bookTitle, entry.bookAuthor, entry.bookType);
@@ -108,6 +155,7 @@ void BookmarksHomeActivity::openBookmarkList(int bookIndex) {
             requestUpdate();
           }
         } else {
+          reloadBookmarks();
           requestUpdate();
         }
       });

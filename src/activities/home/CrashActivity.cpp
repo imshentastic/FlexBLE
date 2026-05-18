@@ -16,7 +16,10 @@ void CrashActivity::onEnter() {
   }
   HalSystem::clearPanic();
 
-  requestUpdateAndWait();
+  if (requestUpdateAndWait() != RequestUpdateResult::Rendered) {
+    LOG_ERR("CRASH", "Crash screen could not be rendered synchronously");
+    requestUpdate();
+  }
 }
 
 void CrashActivity::loop() {

@@ -1,5 +1,6 @@
 #include "BookSettingsDrawerActivity.h"
 
+#include <BluetoothHIDManager.h>
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
 #include <I18n.h>
@@ -106,9 +107,47 @@ void BookSettingsDrawerActivity::buildItems() {
     items.push_back(std::move(item));
   }
 
-  // (BT toggle / Reconnect Bonded Remote intentionally NOT included here.
-  // Those live in the existing reader menu's Bluetooth entry to keep the
-  // drawer focused on reading settings.)
+  // 2) Bluetooth quick-action. One-shot button: enables BLE (if needed) and
+  // reconnects to the bonded remote synchronously, then closes the drawer.
+  // If the user has no bonded remote, instead closes the drawer with a flag
+  // asking the reader to launch the full BT settings UI for pairing.
+  {
+    Item bt;
+    bt.nameId = StrId::STR_BT_QUICK_CONNECT;
+    bt.isAction = true;
+    bt.activate = [this]() {
+      auto& btMgr = BluetoothHIDManager::getInstance();
+      const bool hasBonded = SETTINGS.bleBondedDeviceAddr[0] != '\0';
+      if (!hasBonded) {
+        // No saved remote — bounce out to the BT settings activity so the
+        // user can scan and pair. Reader's drawer result handler picks up
+        // the flag and launches the BT UI.
+        MenuResult result;
+        result.settingsChanged = settingsChanged;
+        result.requestBluetoothFlow = true;
+        setResult(ActivityResult{result});
+        finish();
+        return;
+      }
+      // Show a "Connecting..." popup while the synchronous connect runs
+      // (~2-3 s for NimBLE + GATT handshake). The user is still inside the
+      // drawer render; we just paint over it.
+      GUI.drawPopup(renderer, tr(STR_CONNECTING));
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+      if (!btMgr.isEnabled()) {
+        btMgr.enable();
+      }
+      btMgr.connectToDevice(SETTINGS.bleBondedDeviceAddr);
+      // Whether connect succeeded or not, close the drawer. (If it failed,
+      // the BT stack stays enabled — auto-reconnect will retry on next
+      // button press.) Drawer dismissal mirrors the existing Back path.
+      MenuResult result;
+      result.settingsChanged = settingsChanged;
+      setResult(ActivityResult{result});
+      finish();
+    };
+    items.push_back(std::move(bt));
+  }
 }
 
 void BookSettingsDrawerActivity::layoutDrawer() {

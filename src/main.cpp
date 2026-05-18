@@ -27,13 +27,18 @@
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "SdCardFontSystem.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/boot_sleep/SleepActivity.h"
 #include "activities/reader/KOReaderSyncActivity.h"
 #include "activities/settings/KOReaderSettingsActivity.h"
+#include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#ifdef SIMULATOR
+#include "simulator/SimulatorSmokeTest.h"
+#endif
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 
@@ -41,19 +46,22 @@ MappedInputManager mappedInputManager(gpio);
 GfxRenderer renderer(display);
 ActivityManager activityManager(renderer, mappedInputManager);
 FontDecompressor fontDecompressor;
-FontCacheManager fontCacheManager(renderer.getFontMap());
+SdCardFontSystem sdFontSystem;
+FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts());
 
 // Updated each main-loop iteration; read by the BLE HID manager via a
 // callback so it can decide whether to inject reader-only buttons.
 static bool gBluetoothReaderContext = false;
 
 // Fonts
+#ifndef OMIT_MEDIUM_FONT
 EpdFont lexenddeca14RegularFont(&lexenddeca_14_regular);
 EpdFont lexenddeca14BoldFont(&lexenddeca_14_bold);
 EpdFont lexenddeca14ItalicFont(&lexenddeca_14_italic);
 EpdFont lexenddeca14BoldItalicFont(&lexenddeca_14_bolditalic);
 EpdFontFamily lexenddeca14FontFamily(&lexenddeca14RegularFont, &lexenddeca14BoldFont, &lexenddeca14ItalicFont,
                                      &lexenddeca14BoldItalicFont);
+#endif
 #ifndef OMIT_TEENSY_FONT
 EpdFont charein8RegularFont(&charein_8_regular);
 EpdFont charein8BoldFont(&charein_8_bold);
@@ -77,12 +85,14 @@ EpdFont charein12BoldItalicFont(&charein_12_bolditalic);
 EpdFontFamily charein12FontFamily(&charein12RegularFont, &charein12BoldFont, &charein12ItalicFont,
                                   &charein12BoldItalicFont);
 #endif
+#ifndef OMIT_MEDIUM_FONT
 EpdFont charein14RegularFont(&charein_14_regular);
 EpdFont charein14BoldFont(&charein_14_bold);
 EpdFont charein14ItalicFont(&charein_14_italic);
 EpdFont charein14BoldItalicFont(&charein_14_bolditalic);
 EpdFontFamily charein14FontFamily(&charein14RegularFont, &charein14BoldFont, &charein14ItalicFont,
                                   &charein14BoldItalicFont);
+#endif
 EpdFont charein16RegularFont(&charein_16_regular);
 EpdFont charein16BoldFont(&charein_16_bold);
 EpdFont charein16ItalicFont(&charein_16_italic);
@@ -173,11 +183,13 @@ EpdFont bitter12ItalicFont(&bitter_12_italic);
 EpdFont bitter12BoldItalicFont(&bitter_12_bolditalic);
 EpdFontFamily bitter12FontFamily(&bitter12RegularFont, &bitter12BoldFont, &bitter12ItalicFont, &bitter12BoldItalicFont);
 #endif
+#ifndef OMIT_MEDIUM_FONT
 EpdFont bitter14RegularFont(&bitter_14_regular);
 EpdFont bitter14BoldFont(&bitter_14_bold);
 EpdFont bitter14ItalicFont(&bitter_14_italic);
 EpdFont bitter14BoldItalicFont(&bitter_14_bolditalic);
 EpdFontFamily bitter14FontFamily(&bitter14RegularFont, &bitter14BoldFont, &bitter14ItalicFont, &bitter14BoldItalicFont);
+#endif
 EpdFont bitter16RegularFont(&bitter_16_regular);
 EpdFont bitter16BoldFont(&bitter_16_bold);
 EpdFont bitter16ItalicFont(&bitter_16_italic);
@@ -319,8 +331,14 @@ bool startGlobalSyncProgress() {
     spineIndex = 0;
   }
 
-  activityManager.pushActivity(std::make_unique<KOReaderSyncActivity>(renderer, mappedInputManager, epub, epubPath,
-                                                                      spineIndex, pageNumber, totalPagesInSpine));
+  CrossPointPosition localPos = {spineIndex, pageNumber, totalPagesInSpine};
+  KOReaderPosition localKoPos = ProgressMapper::toKOReader(epub, localPos);
+  const int tocIdx = epub->getTocIndexForSpineIndex(spineIndex);
+  std::string localChapterName = (tocIdx >= 0) ? epub->getTocItem(tocIdx).title : "";
+
+  activityManager.pushActivity(
+      std::make_unique<KOReaderSyncActivity>(renderer, mappedInputManager, epubPath, spineIndex, pageNumber,
+                                             totalPagesInSpine, std::move(localKoPos), std::move(localChapterName)));
   return true;
 }
 
@@ -564,7 +582,9 @@ void setupDisplayAndFonts() {
 #ifndef OMIT_SMALL_FONT
   renderer.insertFont(CHAREINK_12_FONT_ID, charein12FontFamily);
 #endif
+#ifndef OMIT_MEDIUM_FONT
   renderer.insertFont(CHAREINK_14_FONT_ID, charein14FontFamily);
+#endif
   renderer.insertFont(CHAREINK_16_FONT_ID, charein16FontFamily);
 #ifndef OMIT_XLARGE_FONT
   renderer.insertFont(CHAREINK_18_FONT_ID, charein18FontFamily);
@@ -582,7 +602,9 @@ void setupDisplayAndFonts() {
 #ifndef OMIT_SMALL_FONT
   renderer.insertFont(LEXENDDECA_12_FONT_ID, lexenddeca12FontFamily);
 #endif
+#ifndef OMIT_MEDIUM_FONT
   renderer.insertFont(LEXENDDECA_14_FONT_ID, lexenddeca14FontFamily);
+#endif
   renderer.insertFont(LEXENDDECA_16_FONT_ID, lexenddeca16FontFamily);
 #ifndef OMIT_XLARGE_FONT
   renderer.insertFont(LEXENDDECA_18_FONT_ID, lexenddeca18FontFamily);
@@ -600,7 +622,9 @@ void setupDisplayAndFonts() {
 #ifndef OMIT_SMALL_FONT
   renderer.insertFont(BITTER_12_FONT_ID, bitter12FontFamily);
 #endif
+#ifndef OMIT_MEDIUM_FONT
   renderer.insertFont(BITTER_14_FONT_ID, bitter14FontFamily);
+#endif
   renderer.insertFont(BITTER_16_FONT_ID, bitter16FontFamily);
 #ifndef OMIT_XLARGE_FONT
   renderer.insertFont(BITTER_18_FONT_ID, bitter18FontFamily);
@@ -611,6 +635,10 @@ void setupDisplayAndFonts() {
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
+
+  // Discover and load SD card fonts
+  sdFontSystem.begin(renderer);
+
   LOG_DBG("MAIN", "Fonts setup");
 }
 
@@ -689,8 +717,27 @@ void setup() {
       break;
   }
 
+  // Recovery firmware mode: hold left side button (BTN_UP) together with the power button at
+  // boot to skip directly to the SD-card firmware update screen. Useful on devices where USB
+  // flashing has been locked down (e.g. recent X3 firmware).
+  bool recoveryFirmwareMode = false;
+  if (wakeupReason == HalGPIO::WakeupReason::PowerButton) {
+    // Refresh the cached button state a few times — isPressed() needs ~half a second to settle
+    // after boot per the HalGPIO contract. Use a millis-based deadline so we always wait the full
+    // settle window even if the loop body takes longer than expected on slow boots.
+    const unsigned long settleStart = millis();
+    while (millis() - settleStart < 500) {
+      gpio.update();
+      delay(10);
+    }
+    if (gpio.isPressed(HalGPIO::BTN_UP)) {
+      recoveryFirmwareMode = true;
+      LOG_INF("MAIN", "Recovery firmware mode (UP + POWER held at boot)");
+    }
+  }
+
   // First serial output only here to avoid timing inconsistencies for power button press duration verification
-  LOG_DBG("MAIN", "Starting CrossPoint version " CROSSPOINT_VERSION);
+  LOG_DBG("MAIN", "Starting FlexBLE " FLEXBLE_VERSION " (CrossInk " CROSSINK_VERSION ")");
 
   setupDisplayAndFonts();
 
@@ -699,7 +746,11 @@ void setup() {
   APP_STATE.loadFromFile();
   RECENT_BOOKS.loadFromFile();
 
-  if (HalSystem::isRebootFromPanic()) {
+  if (recoveryFirmwareMode) {
+    // Skip normal home/reader routing: jump straight into the SD firmware picker.
+    activityManager.replaceActivity(
+        std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInputManager, /*recoveryMode=*/true));
+  } else if (HalSystem::isRebootFromPanic()) {
     // If we rebooted from a panic, go to crash report screen to show the panic info
     activityManager.goToCrashReport();
   } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
@@ -732,7 +783,17 @@ void loop() {
   auto& btMgr = BluetoothHIDManager::getInstance();
   const bool userInputDetectedForBt = gpio.wasAnyPressed() || gpio.wasAnyReleased();
   btMgr.updateActivity();
+  // checkAutoReconnect can block for 2-3 s calling connectToDevice() when a
+  // reconnect to the bonded remote is in flight. If the user impatiently
+  // taps Back during that freeze, the release lands on the next iteration
+  // and would kick them out of the book (and BLE auto-disables on book
+  // exit). Time the call and swallow one Back release when it actually
+  // blocked, so the hasty tap is treated as the no-op the user intended.
+  const unsigned long btReconnectStart = millis();
   btMgr.checkAutoReconnect(userInputDetectedForBt);
+  if (millis() - btReconnectStart > 500) {
+    mappedInputManager.suppressNextBackRelease();
+  }
   // Drain deferred disable from EpubReaderActivity::onExit. We can't call
   // disable() inline from onExit because the activity manager still holds
   // the render lock during the transition; doing it here, after loop()
@@ -774,7 +835,9 @@ void loop() {
   }
 
   static bool screenshotButtonsReleased = true;
+  static bool screenshotComboActive = false;
   if (gpio.isPressed(HalGPIO::BTN_POWER) && gpio.isPressed(HalGPIO::BTN_DOWN)) {
+    screenshotComboActive = true;
     if (screenshotButtonsReleased) {
       screenshotButtonsReleased = false;
       screenshotComboHandled = true;
@@ -785,9 +848,25 @@ void loop() {
       }
     }
     return;
-  } else {
-    screenshotButtonsReleased = true;
   }
+  if (screenshotComboActive) {
+    if (gpio.isPressed(HalGPIO::BTN_POWER)) return;
+    if (gpio.wasReleased(HalGPIO::BTN_POWER)) {
+      screenshotButtonsReleased = true;
+      screenshotComboActive = false;
+      return;
+    }
+    screenshotButtonsReleased = true;
+    screenshotComboActive = false;
+  }
+
+#ifdef SIMULATOR
+  if (gpio.consumeSimulatorSleepRequest()) {
+    enterDeepSleep();
+    lastActivityTime = millis();
+    return;
+  }
+#endif
 
   const unsigned long sleepTimeoutMs = SETTINGS.getSleepTimeoutMs();
   if (millis() - lastActivityTime >= sleepTimeoutMs) {
@@ -814,6 +893,10 @@ void loop() {
   const unsigned long activityStartTime = millis();
   activityManager.loop();
   const unsigned long activityDuration = millis() - activityStartTime;
+
+#ifdef SIMULATOR
+  runSimulatorSmokeTestTick();
+#endif
 
   const unsigned long loopDuration = millis() - loopStartTime;
   if (loopDuration > maxLoopDuration) {

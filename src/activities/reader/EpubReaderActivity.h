@@ -1,6 +1,7 @@
 #pragma once
 #include <Epub.h>
 #include <Epub/FootnoteEntry.h>
+#include <Epub/Page.h>
 #include <Epub/Section.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -37,13 +38,20 @@ class EpubReaderActivity final : public Activity {
   // Normalized 0.0-1.0 progress within the target spine item, computed from book percentage.
   float pendingSpineProgress = 0.0f;
   bool pendingScreenshot = false;
+  bool pendingSyncSaveError = false;
   bool skipNextButtonCheck = false;  // Skip button processing for one frame after subactivity exit
   bool automaticPageTurnActive = false;
-  uint8_t currentPageTurnOption = 0;
   bool longPressMenuHandled = false;
   bool longPowerButtonHandled = false;
   bool sideButtonLongPressHandled = false;
+  bool frontButtonLongPressHandled = false;
   int pageLoadRetryCount = 0;
+  // FlexBLE: if a chapter layout aborts under heap pressure and BLE is
+  // currently consuming its ~58 KB share, retry the layout once with BLE
+  // disabled (NimBLE will auto-reconnect to the bonded remote on the user's
+  // next button press). Flag gates the retry so we don't loop forever if
+  // the chapter genuinely can't be parsed.
+  bool layoutBleRetryAttempted = false;
   enum class BookmarkFeedbackType : uint8_t {
     Added,
     Removed,
@@ -85,8 +93,9 @@ class EpubReaderActivity final : public Activity {
                       int orientedMarginBottom, int orientedMarginLeft);
   void renderStatusBar() const;
   void silentIndexNextChapterIfNeeded(uint16_t viewportWidth, uint16_t viewportHeight);
-  void saveProgress(int spineIndex, int currentPage, int pageCount);
+  bool saveProgress(int spineIndex, int currentPage, int pageCount);
   void openFileTransfer();
+  void openAutoPageTurnIntervalPicker(bool ignoreInitialConfirmRelease = false);
   // Jump to a percentage of the book (0-100), mapping it to spine and page.
   void jumpToPercent(int percent);
   void reindexCurrentSection();
@@ -98,7 +107,6 @@ class EpubReaderActivity final : public Activity {
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
   void applyOrientation(uint8_t orientation);
   void executeLongPressMenuAction();
-  void toggleAutoPageTurn(uint8_t selectedPageTurnOption);
   void pageTurn(bool isForwardTurn);
   float getCurrentBookProgressPercent() const;
   void initializeCompletionPromptTrigger();
@@ -121,6 +129,8 @@ class EpubReaderActivity final : public Activity {
   bool preventAutoSleep() override { return automaticPageTurnActive; }
   bool isReaderActivity() const override { return true; }
   bool canSnapshotForSleepOverlay() const override { return true; }
+  void setAutoPageTurnIntervalSeconds(uint16_t seconds);
+  uint16_t getAutoPageTurnIntervalSeconds() const;
 
   // Renders the last saved page to the frame buffer without flushing to display.
   // Used by SleepActivity to prepare the background for the overlay sleep mode.
