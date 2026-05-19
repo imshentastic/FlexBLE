@@ -10,6 +10,9 @@
 
 #include "LibraryIndex.h"
 #include "RecentBooksStore.h"
+#include "SeriesIndex.h"
+
+#include <unordered_set>
 
 namespace {
 constexpr char COLLECTIONS_FILE[] = "/.crosspoint/collections.json";
@@ -282,6 +285,92 @@ void CollectionsStore::setSortMode(const std::string& collectionId, CollectionSo
   LOG_ERR("CLN", "setSortMode: unknown collection %s", collectionId.c_str());
 }
 
+void CollectionsStore::setCollapseSeries(const std::string& collectionId, bool on) {
+  for (auto& c : collections) {
+    if (c.id != collectionId) continue;
+    if (c.collapseSeries == on) return;
+    c.collapseSeries = on;
+    if (!c.isVirtual) saveToFile();
+    LOG_DBG("CLN", "Set collapseSeries for %s to %d", collectionId.c_str(), on ? 1 : 0);
+    return;
+  }
+  LOG_ERR("CLN", "setCollapseSeries: unknown collection %s", collectionId.c_str());
+}
+
+std::vector<ShelfEntry> CollectionsStore::resolveShelfEntries(const std::string& collectionId) const {
+  const Collection* c = findCollection(collectionId);
+  if (c == nullptr) return {};
+  const std::vector<std::string> paths = resolveBookPaths(collectionId);
+
+  // Fast path: collapse disabled or empty list — 1:1 wrap into single-
+  // book entries. Same shape, no SeriesIndex lookups.
+  if (!c->collapseSeries || paths.empty()) {
+    std::vector<ShelfEntry> out;
+    out.reserve(paths.size());
+    for (const auto& p : paths) {
+      ShelfEntry e;
+      e.firstPath = p;
+      e.memberPaths.push_back(p);
+      out.push_back(std::move(e));
+    }
+    return out;
+  }
+
+  // Collapse path. Walk paths in their sorted order. The FIRST time we
+  // see a series-key, collect every same-key book in the collection
+  // (might not be consecutive after sort), sort that group by series
+  // index ASC, and emit as one ShelfEntry. Series with only one member
+  // present in this collection stay as single-book entries (the user's
+  // bar is "2+ books" for grouping, per their spec).
+  std::unordered_set<std::string> seenKeys;
+  std::vector<ShelfEntry> out;
+  out.reserve(paths.size());
+  auto& seriesIdx = SeriesIndex::getInstance();
+  for (const auto& p : paths) {
+    const SeriesEntry* se = seriesIdx.find(p);
+    if (se == nullptr || se->name.empty()) {
+      ShelfEntry e;
+      e.firstPath = p;
+      e.memberPaths.push_back(p);
+      out.push_back(std::move(e));
+      continue;
+    }
+    const std::string key = SeriesIndex::seriesKey(se->name);
+    if (seenKeys.count(key)) continue;  // grouped already; subsequent members suppressed.
+    seenKeys.insert(key);
+
+    // Collect every book in this collection that maps to the same key.
+    std::vector<std::string> members;
+    for (const auto& q : paths) {
+      const SeriesEntry* qse = seriesIdx.find(q);
+      if (qse != nullptr && !qse->name.empty() && SeriesIndex::seriesKey(qse->name) == key) {
+        members.push_back(q);
+      }
+    }
+    if (members.size() < 2) {
+      // Singleton: render as a normal cell (no spine). Use the path we
+      // were already iterating on so output order isn't disturbed.
+      ShelfEntry e;
+      e.firstPath = p;
+      e.memberPaths.push_back(p);
+      out.push_back(std::move(e));
+      continue;
+    }
+    // Sort by series index ASC (numeric-aware comparator).
+    std::sort(members.begin(), members.end(), [&](const std::string& a, const std::string& b) {
+      const SeriesEntry* ea = seriesIdx.find(a);
+      const SeriesEntry* eb = seriesIdx.find(b);
+      return SeriesIndex::indexLess(ea ? ea->index : "", eb ? eb->index : "");
+    });
+    ShelfEntry e;
+    e.firstPath = members.front();
+    e.seriesName = se->name;
+    e.memberPaths = std::move(members);
+    out.push_back(std::move(e));
+  }
+  return out;
+}
+
 void CollectionsStore::setActiveId(const std::string& id) {
   if (findCollection(id) == nullptr) {
     LOG_ERR("CLN", "Refusing to set active collection to unknown id: %s", id.c_str());
@@ -322,6 +411,9 @@ bool CollectionsStore::loadFromFile() {
       if (sortRaw <= static_cast<unsigned>(CollectionSort::DateLastReadDesc)) {
         c.sortMode = static_cast<CollectionSort>(sortRaw);
       }
+      // collapseSeries defaults to true (matches struct default). Older
+      // JSON without the key picks up the default automatically.
+      c.collapseSeries = entry["collapseSeries"] | true;
       JsonArrayConst books = entry["books"];
       if (!books.isNull()) {
         c.bookPaths.reserve(books.size());
@@ -351,6 +443,7 @@ bool CollectionsStore::saveToFile() const {
     entry["id"] = c.id;
     entry["name"] = c.name;
     entry["sort"] = static_cast<unsigned>(c.sortMode);
+    entry["collapseSeries"] = c.collapseSeries;
     JsonArray books = entry["books"].to<JsonArray>();
     for (const auto& path : c.bookPaths) books.add(path);
   }

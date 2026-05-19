@@ -71,7 +71,13 @@ class LyraFlowTheme : public LyraTheme {
   void drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const char* collectionName,
                           const std::vector<std::string>& coverPaths, int selectedSpineIndex, int scrollOffset,
                           bool headerFocused, bool hasMultipleCollections,
-                          const char* focusedBookTitle = nullptr) const;
+                          const char* focusedBookTitle = nullptr,
+                          // FlexBLE series collapse: per-cell member counts. Same
+                          // length as coverPaths. count == 1 means single book
+                          // (no spine glyph). count >= 2 means series group —
+                          // theme draws a dark spine to the left of the cover
+                          // and the focused-title overlay reads "Series (N)".
+                          const std::vector<int>* seriesMemberCounts = nullptr) const;
 
  public:
   // Set by HomeActivity right before invoking drawRecentBookCover. When

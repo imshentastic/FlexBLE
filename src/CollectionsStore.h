@@ -41,6 +41,22 @@ struct Collection {
   // collections.json; virtuals default-construct each begin() and
   // accept user overrides at runtime (also persisted).
   CollectionSort sortMode = CollectionSort::Manual;
+  // FlexBLE series collapse: when true and a series has 2+ books in
+  // this collection, those books render as a single shelf cell with
+  // a dark spine glyph. Default ON; user can toggle per-collection
+  // from the shelf header action menu. Persisted in collections.json.
+  bool collapseSeries = true;
+};
+
+// One slot on the bookshelf row. For single books, memberPaths.size()==1
+// and seriesName is empty. For collapsed series groups, memberPaths
+// holds every book in the series (sorted by series index ASC) and
+// seriesName is populated. firstPath is always memberPaths[0] — used
+// by the renderer as the cover thumb path.
+struct ShelfEntry {
+  std::string firstPath;
+  std::string seriesName;
+  std::vector<std::string> memberPaths;
 };
 
 class CollectionsStore {
@@ -83,6 +99,8 @@ class CollectionsStore {
   // for unknown ids. Persists on change. Manual sort is rejected for
   // virtual collections — their book lists aren't user-ordered.
   void setSortMode(const std::string& collectionId, CollectionSort mode);
+  // Sets the collapse-series flag. Persists.
+  void setCollapseSeries(const std::string& collectionId, bool on);
   // Removes the given book from every collection it appears in (used when
   // the book file is being deleted off the SD card). Auto-saves at the
   // end if any change was made. Returns the number of collections that
@@ -103,6 +121,13 @@ class CollectionsStore {
   // view rather than the stored Collection.bookPaths (which is stale or
   // empty for virtuals).
   std::vector<std::string> resolveBookPaths(const std::string& collectionId) const;
+  // Higher-level resolve that also collapses series into single
+  // ShelfEntries when the collection has collapseSeries=true AND
+  // SeriesIndex has 2+ members for the same series-key in this
+  // collection. Books without series info, or singletons of an
+  // identified series, become 1-member ShelfEntries. Used by the
+  // shelf renderer; navigation indexes ShelfEntries 1:1.
+  std::vector<ShelfEntry> resolveShelfEntries(const std::string& collectionId) const;
   // Convenience: returns the count for the active collection without
   // building the full vector. Still triggers a walk for virtuals on
   // first access. Use sparingly — pulls fresh data each call.

@@ -22,9 +22,11 @@
 #include "../reader/BookStatsActivity.h"
 #include "activities/reader/GlobalReadingStats.h"
 #include "activities/util/ConfirmationActivity.h"
+#include "BookMetadataViewerActivity.h"
 #include "BookmarkStore.h"
 #include "BookmarksHomeActivity.h"
 #include "CollectionPickerActivity.h"
+#include "SeriesMiniPickerActivity.h"
 #include "CrossPointSettings.h"
 #include "LibraryIndex.h"
 #include "SeriesIndex.h"
@@ -630,6 +632,61 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   }
 }
 
+void HomeActivity::enrichActiveCollectionForSeries() {
+  // Only meaningful on Flow theme (only theme with a shelf).
+  if (static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) != CrossPointSettings::UI_THEME::LYRA_FLOW) {
+    seriesEnrichmentNeededForActive = false;
+    return;
+  }
+  const Collection* active = CollectionsStore::getInstance().getActiveCollection();
+  if (active == nullptr || !active->collapseSeries) {
+    seriesEnrichmentNeededForActive = false;
+    return;
+  }
+  const std::vector<std::string> paths =
+      CollectionsStore::getInstance().resolveBookPaths(active->id);
+  if (paths.empty()) return;
+
+  // First pass: how many EPUBs need parsing? Avoids drawing a popup
+  // when everything's already cached.
+  std::vector<std::string> toCheck;
+  toCheck.reserve(paths.size());
+  for (const auto& p : paths) {
+    if (!FsHelpers::hasEpubExtension(p)) continue;
+    if (SeriesIndex::getInstance().hasBeenChecked(p)) continue;
+    toCheck.push_back(p);
+  }
+  if (toCheck.empty()) {
+    seriesEnrichmentNeededForActive = false;
+    return;
+  }
+
+  const Rect popupRect = GUI.drawPopup(renderer, "Detecting series...");
+  const int total = static_cast<int>(toCheck.size());
+  int processed = 0;
+  for (const auto& p : toCheck) {
+    Epub epub(p, "/.crosspoint");
+    // extractSeriesFromOpf doesn't touch book.bin — safe to call on
+    // books with or without an existing cache.
+    if (epub.extractSeriesFromOpf()) {
+      SeriesIndex::getInstance().record(p, epub.getSeriesName(), epub.getSeriesIndex());
+    } else {
+      // Couldn't read OPF — record empty so we don't keep retrying
+      // this book on every collection visit. The user can manually
+      // re-trigger via a rescan if they want.
+      SeriesIndex::getInstance().record(p, "", "");
+    }
+    processed++;
+    GUI.fillPopupProgress(renderer, popupRect, 5 + (processed * 90) / total);
+  }
+  seriesEnrichmentNeededForActive = false;
+  // ShelfEntries derived from the new SeriesIndex state — bust the
+  // path cache so the next resolveShelfEntries sees fresh data.
+  invalidateShelfPathsCache();
+  shelfSnapshotValid = false;
+  lastRenderedCoverSelectorValid = false;
+}
+
 void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffset, int visibleCount) {
   // No-op for themes other than LYRA_FLOW (only theme that has a shelf).
   if (static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) != CrossPointSettings::UI_THEME::LYRA_FLOW) {
@@ -726,25 +783,34 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffs
   }
 }
 
-const std::vector<std::string>& HomeActivity::cachedShelfPaths() {
+const std::vector<ShelfEntry>& HomeActivity::cachedShelfEntries() {
   const std::string& activeId = CollectionsStore::getInstance().getActiveId();
   if (activeId.empty()) {
+    shelfEntriesCache.clear();
     shelfPathsCache.clear();
     shelfPathsCacheKey.clear();
-    return shelfPathsCache;
+    return shelfEntriesCache;
   }
-  // Cache hit: same active collection as last call, no invalidation
-  // requested. The active id changes only on cycleActiveCollection (L/R
-  // on the header), and content mutations (picker, file delete,
-  // rescan) explicitly invalidate via invalidateShelfPathsCache().
   if (activeId == shelfPathsCacheKey) {
-    return shelfPathsCache;
+    return shelfEntriesCache;
   }
-  // Cache miss — resolve once and remember. resolveBookPaths is the
-  // expensive call (for virtuals it sorts the full LibraryIndex); the
-  // returned vector is move-assigned into the cache so no extra copy.
-  shelfPathsCache = CollectionsStore::getInstance().resolveBookPaths(activeId);
+  // Cache miss — resolve entries (does the path sort + series collapse
+  // in one pass) and derive the path list as one firstPath per entry.
+  shelfEntriesCache = CollectionsStore::getInstance().resolveShelfEntries(activeId);
+  shelfPathsCache.clear();
+  shelfPathsCache.reserve(shelfEntriesCache.size());
+  for (const auto& e : shelfEntriesCache) shelfPathsCache.push_back(e.firstPath);
   shelfPathsCacheKey = activeId;
+  return shelfEntriesCache;
+}
+
+const std::vector<std::string>& HomeActivity::cachedShelfPaths() {
+  // Ensures the entries cache is fresh (which also populates the
+  // shelfPathsCache vector as a side effect). Existing call sites
+  // that index paths can keep doing so — each path is the firstPath
+  // of the corresponding ShelfEntry, so navigation stays 1:1 with
+  // shelf cells.
+  cachedShelfEntries();
   return shelfPathsCache;
 }
 
@@ -820,6 +886,11 @@ void HomeActivity::showHomeBookActionMenu(const std::string& bookPath) {
       recents.end();
   if (inRecents) {
     items.push_back({FileBrowserAction::RemoveFromRecentBooks, StrId::STR_REMOVE_FROM_RECENT_BOOKS});
+  }
+  // Show metadata: debug inspector. Always offered for any book file
+  // so user can verify what OPF / file metadata is actually present.
+  if (isBookFile) {
+    items.push_back({FileBrowserAction::ShowMetadata, StrId::STR_SHOW_METADATA});
   }
 
   // Title for the picker = the book's filename (matches file browser UX).
@@ -951,15 +1022,76 @@ void HomeActivity::showHomeBookActionMenu(const std::string& bookPath) {
             requestUpdate();
             return;
           }
+          case FileBrowserAction::ShowMetadata: {
+            startActivityForResult(
+                std::make_unique<BookMetadataViewerActivity>(renderer, mappedInput, bookPath),
+                [this](const ActivityResult&) { requestUpdate(); });
+            return;
+          }
           case FileBrowserAction::PinFavorite:
           case FileBrowserAction::UnpinFavorite:
           case FileBrowserAction::RescanLibrary:
           case FileBrowserAction::SortBy:
+          case FileBrowserAction::ToggleCollapseSeries:
             // Not exposed in the home book menu — sleep-image / shelf-
             // header-only actions.
             return;
         }
       });
+}
+
+void HomeActivity::openShelfEntry(const ShelfEntry& entry) {
+  // Single-book cell — same as the pre-series behavior.
+  if (entry.seriesName.empty() || entry.memberPaths.size() < 2) {
+    if (!entry.firstPath.empty()) onSelectBook(entry.firstPath);
+    return;
+  }
+  // Series cell: pick the most-recently-read member from RECENT_BOOKS
+  // if any series book has been opened before. RECENT_BOOKS is ordered
+  // most-recent first so the first match IS the most-recent read.
+  const auto& recents = RECENT_BOOKS.getBooks();
+  for (const auto& recent : recents) {
+    for (const auto& member : entry.memberPaths) {
+      if (member == recent.path) {
+        onSelectBook(member);
+        return;
+      }
+    }
+  }
+  // No prior read — fall back to the mini-picker so user can pick.
+  openSeriesMiniPicker(entry);
+}
+
+void HomeActivity::openSeriesMiniPicker(const ShelfEntry& entry) {
+  if (entry.memberPaths.size() < 2) return;
+  // Capture by value so the picker stays valid even if the source
+  // ShelfEntry goes out of scope during the modal transition.
+  const std::vector<std::string> members = entry.memberPaths;
+  const std::string name = entry.seriesName;
+
+  auto onOpen = [this](const std::string& bookPath) { onSelectBook(bookPath); };
+  auto onLongPress = [this](const std::string& bookPath) { showHomeBookActionMenu(bookPath); };
+  auto onOptions = [this, members]() {
+    // Series-level "Add to collection..." — opens the picker with the
+    // series' first member as the focus (the picker toggles per-book;
+    // for now we apply to the first member as a simple version. A
+    // future refinement would toggle ALL members atomically.)
+    if (members.empty()) return;
+    const size_t ls = members[0].find_last_of('/');
+    const std::string title = (ls != std::string::npos) ? members[0].substr(ls + 1) : members[0];
+    startActivityForResult(std::make_unique<CollectionPickerActivity>(renderer, mappedInput, members[0], title),
+                           [this](const ActivityResult&) {
+                             shelfCoversLoaded = false;
+                             invalidateShelfPathsCache();
+                             shelfSnapshotValid = false;
+                             lastRenderedCoverSelectorValid = false;
+                             requestUpdate();
+                           });
+  };
+  startActivityForResult(std::make_unique<SeriesMiniPickerActivity>(renderer, mappedInput, name, members,
+                                                                    std::move(onOpen), std::move(onLongPress),
+                                                                    std::move(onOptions)),
+                         [this](const ActivityResult&) { requestUpdate(); });
 }
 
 void HomeActivity::showShelfHeaderActionMenu() {
@@ -973,6 +1105,10 @@ void HomeActivity::showShelfHeaderActionMenu() {
       active != nullptr && active->id == CollectionsStore::RECENTLY_ADDED_ID;
   if (active != nullptr && !isRecentlyAdded) {
     items.push_back({FileBrowserAction::SortBy, StrId::STR_SORT_BY});
+  }
+  if (active != nullptr) {
+    items.push_back({FileBrowserAction::ToggleCollapseSeries,
+                     active->collapseSeries ? StrId::STR_COLLAPSE_SERIES_ON : StrId::STR_COLLAPSE_SERIES_OFF});
   }
   items.push_back({FileBrowserAction::RescanLibrary, StrId::STR_RESCAN_LIBRARY});
 
@@ -999,6 +1135,20 @@ void HomeActivity::showShelfHeaderActionMenu() {
           shelfSnapshotValid = false;
           lastRenderedCoverSelectorValid = false;
           drawHomeToast(renderer, tr(STR_LIBRARY_RESCANNED));
+          delay(800);
+          requestUpdate();
+        } else if (action == FileBrowserAction::ToggleCollapseSeries) {
+          const Collection* active = CollectionsStore::getInstance().getActiveCollection();
+          if (active == nullptr) return;
+          const bool newValue = !active->collapseSeries;
+          CollectionsStore::getInstance().setCollapseSeries(active->id, newValue);
+          // ShelfEntries shape changed (collapsed vs flat) — refresh.
+          invalidateShelfPathsCache();
+          shelfSnapshotValid = false;
+          lastRenderedCoverSelectorValid = false;
+          shelfCoversLoaded = false;
+          shelfScrollOffset = 0;  // index space shifted; jump to top.
+          drawHomeToast(renderer, newValue ? tr(STR_COLLAPSE_SERIES_ENABLED) : tr(STR_COLLAPSE_SERIES_DISABLED));
           delay(800);
           requestUpdate();
         } else if (action == FileBrowserAction::SortBy) {
@@ -1052,6 +1202,7 @@ void HomeActivity::onEnter() {
   // press) get their cover generated on the next return to Home.
   shelfCoversLoaded = false;
   shelfHeaderFocused = false;
+  seriesEnrichmentNeededForActive = true;
   // Drop any stale cached path list — the active collection's
   // membership may have changed while we were elsewhere.
   invalidateShelfPathsCache();
@@ -1714,6 +1865,7 @@ void HomeActivity::loop() {
       CollectionsStore::getInstance().setActiveId(collections[idx].id);
       shelfScrollOffset = 0;
       shelfCoversLoaded = false;  // new collection probably has missing thumbs.
+      seriesEnrichmentNeededForActive = true;  // new collection may have un-checked books.
       // The cache key check inside cachedShelfPaths() will detect the
       // new activeId automatically — no explicit invalidate needed.
 
@@ -1855,9 +2007,10 @@ void HomeActivity::loop() {
   }
 
   // Long-press Confirm:
-  //   • on a focused book (carousel or shelf book row) → file-action menu
+  //   • on a focused book (carousel or shelf single-book row) → file-action menu
+  //   • on a focused SERIES cell on the shelf → series mini-picker
   //   • on the shelf header (collection tab) → header action menu
-  //     (currently just "Rescan library")
+  //     (Sort, Rescan library, Collapse series toggle)
   // Threshold matches FileBrowser's GO_HOME_MS so the muscle memory
   // carries over.
   if (!longPressConfirmHandled && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
@@ -1866,6 +2019,21 @@ void HomeActivity::loop() {
       longPressConfirmHandled = true;
       showShelfHeaderActionMenu();
       return;
+    }
+    // Series-cell long-press → mini-picker (per-book action menu is
+    // available via long-press INSIDE the mini-picker).
+    if (static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_FLOW) {
+      const Collection* active = CollectionsStore::getInstance().getActiveCollection();
+      if (active != nullptr) {
+        const std::vector<ShelfEntry>& entries = cachedShelfEntries();
+        const int shelfStart = static_cast<int>(recentBooks.size());
+        const int idx = static_cast<int>(selectorIndex) - shelfStart;
+        if (idx >= 0 && idx < static_cast<int>(entries.size()) && entries[idx].memberPaths.size() >= 2) {
+          longPressConfirmHandled = true;
+          openSeriesMiniPicker(entries[idx]);
+          return;
+        }
+      }
     }
     const std::string focusedPath = getFocusedBookPath();
     if (!focusedPath.empty()) {
@@ -1909,12 +2077,13 @@ void HomeActivity::loop() {
       const Collection* activeCollection = CollectionsStore::getInstance().getActiveCollection();
       if (activeCollection != nullptr) {
         // Per-frame cache — covers both user collections (stored) and
-        // virtuals (LibraryIndex-derived) uniformly.
-        const std::vector<std::string>& paths = cachedShelfPaths();
+        // virtuals (LibraryIndex-derived) uniformly. Indices map 1:1
+        // to ShelfEntries (a series group counts as one entry).
+        const std::vector<ShelfEntry>& entries = cachedShelfEntries();
         const int shelfStart = static_cast<int>(recentBooks.size());
-        shelfBookCount = static_cast<int>(paths.size());
+        shelfBookCount = static_cast<int>(entries.size());
         if (selectorIndex >= shelfStart && selectorIndex < shelfStart + shelfBookCount) {
-          onSelectBook(paths[selectorIndex - shelfStart]);
+          openShelfEntry(entries[selectorIndex - shelfStart]);
           return;
         }
       }
@@ -2166,6 +2335,14 @@ void HomeActivity::render(RenderLock&&) {
     const int shelfCellTotalW = kShelfCellWidth + kShelfCellGap;
     const int shelfVisibleCells = std::max(1, (shelfAvailW + kShelfCellGap) / shelfCellTotalW);
 
+    // Series enrichment — runs once per cycle into a new active
+    // collection, only when collapseSeries is on for that collection.
+    // Shows its own "Detecting series..." progress popup; no-op if
+    // SeriesIndex already has every book covered.
+    if (seriesEnrichmentNeededForActive) {
+      enrichActiveCollectionForSeries();
+    }
+
     // Lazy thumb generation: only build BMPs for the cells currently in
     // view. Collections like "All Books" can hold hundreds of entries;
     // eager generation would freeze the UI for minutes the first time
@@ -2210,15 +2387,34 @@ void HomeActivity::render(RenderLock&&) {
     static thread_local std::string focusedTitleBuf;
     const char* focusedTitle = nullptr;
     if (shelfSelectedSpine >= 0 && activeCollection2 != nullptr) {
-      const std::vector<std::string>& paths = cachedShelfPaths();
-      if (shelfSelectedSpine < static_cast<int>(paths.size())) {
-        const std::string& bp = paths[shelfSelectedSpine];
-        const size_t slash = bp.find_last_of('/');
-        const std::string fname = (slash != std::string::npos) ? bp.substr(slash + 1) : bp;
-        const size_t dot = fname.find_last_of('.');
-        focusedTitleBuf = (dot != std::string::npos && dot > 0) ? fname.substr(0, dot) : fname;
+      const std::vector<ShelfEntry>& entries = cachedShelfEntries();
+      if (shelfSelectedSpine < static_cast<int>(entries.size())) {
+        const ShelfEntry& e = entries[shelfSelectedSpine];
+        if (!e.seriesName.empty() && e.memberPaths.size() >= 2) {
+          // Series cell: show "Series Name (N)" instead of filename.
+          focusedTitleBuf = e.seriesName;
+          focusedTitleBuf += " (";
+          focusedTitleBuf += std::to_string(e.memberPaths.size());
+          focusedTitleBuf += ")";
+        } else {
+          // Single book: filename minus extension, same as before.
+          const std::string& bp = e.firstPath;
+          const size_t slash = bp.find_last_of('/');
+          const std::string fname = (slash != std::string::npos) ? bp.substr(slash + 1) : bp;
+          const size_t dot = fname.find_last_of('.');
+          focusedTitleBuf = (dot != std::string::npos && dot > 0) ? fname.substr(0, dot) : fname;
+        }
         focusedTitle = focusedTitleBuf.c_str();
       }
+    }
+    // Build the parallel per-cell series-member-count vector so the
+    // theme knows which cells deserve the spine glyph. One int per
+    // ShelfEntry; 1 = single book, ≥2 = series group.
+    std::vector<int> seriesMemberCounts;
+    if (activeCollection2 != nullptr && !shelfStateMatchesSnapshot) {
+      const std::vector<ShelfEntry>& entries = cachedShelfEntries();
+      seriesMemberCounts.reserve(entries.size());
+      for (const auto& e : entries) seriesMemberCounts.push_back(static_cast<int>(e.memberPaths.size()));
     }
 
     // Resolve a concrete (dimension-substituted) cover thumbnail path for
@@ -2252,7 +2448,7 @@ void HomeActivity::render(RenderLock&&) {
     if (!shelfStateMatchesSnapshot) {
       static_cast<const LyraFlowTheme&>(GUI).drawBookshelfStrip(
           renderer, shelfRect, collectionName, shelfCoverPaths, shelfSelectedSpine, shelfScrollOffset,
-          shelfHeaderFocused, hasMultipleCollections, focusedTitle);
+          shelfHeaderFocused, hasMultipleCollections, focusedTitle, &seriesMemberCounts);
       // Remember the state of the shelf we just painted so the next
       // render can short-circuit if nothing about it has changed.
       shelfSnapshotActiveId = currentShelfActiveId;

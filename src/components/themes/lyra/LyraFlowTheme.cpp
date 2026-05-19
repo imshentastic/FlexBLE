@@ -394,7 +394,8 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
 void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const char* collectionName,
                                        const std::vector<std::string>& coverPaths, int selectedSpineIndex,
                                        int scrollOffset, bool headerFocused, bool hasMultipleCollections,
-                                       const char* focusedBookTitle) const {
+                                       const char* focusedBookTitle,
+                                       const std::vector<int>* seriesMemberCounts) const {
   // Vertical layout (top → bottom):
   //   [focused book title]  — drawn ABOVE rect.y so the rest of the layout
   //                           doesn't shift when focused vs unfocused
@@ -487,10 +488,23 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
   constexpr int kShadowDepth = 6;   // how far the page stack protrudes (px)
   constexpr int kShadowInset = 3;   // corner inset along the cover edge
 
+  // Width of the dark spine glyph drawn LEFT of a series cell's cover.
+  // The cover itself stays kCellWidth wide; the spine adds visual mass
+  // on the left to signal "this is multiple books bound together".
+  constexpr int kSeriesSpineWidth = 6;
+
   for (int i = 0; i < actualDrawn; ++i) {
     const int spineIdx = scrollOffset + i;
     const int x = rowStartX + i * cellTotalW;
     const int y = shelfRowY;
+    const bool isSeries = seriesMemberCounts != nullptr && spineIdx < static_cast<int>(seriesMemberCounts->size()) &&
+                          (*seriesMemberCounts)[spineIdx] >= 2;
+
+    // Series spine: a solid black bar to the left of the cover. Reads
+    // as a stack of books leaning against the front cover.
+    if (isSeries) {
+      renderer.fillRect(x - kSeriesSpineWidth - 1, y, kSeriesSpineWidth, kCellHeight, true);
+    }
 
     // Right edge: pages stacked along the fore-edge of the book.
     renderer.fillRectDither(x + kCellWidth, y + kShadowInset, kShadowDepth, kCellHeight - kShadowInset, Color::LightGray);

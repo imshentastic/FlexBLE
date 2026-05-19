@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "./FileBrowserActivity.h"
+#include "CollectionsStore.h"  // ShelfEntry
 #include "activities/Activity.h"
 #include "activities/reader/BookReadingStats.h"
 #include "activities/reader/GlobalReadingStats.h"
@@ -43,6 +44,12 @@ class HomeActivity final : public Activity {
   // active id at the time of refresh; an empty key means cold.
   std::string shelfPathsCacheKey;
   std::vector<std::string> shelfPathsCache;
+  // Series-collapsed view of the active collection — derived from the
+  // path list + SeriesIndex. cachedShelfEntries() is the primary cache
+  // and shelfPathsCache is recomputed alongside it (one firstPath per
+  // entry). Navigation indexes ShelfEntries 1:1 with cells on the
+  // shelf row.
+  std::vector<ShelfEntry> shelfEntriesCache;
   // Snapshot of the shelf-relevant state at the moment the cached
   // framebuffer (coverBuffer) was last filled. When this matches the
   // live state AND we successfully restored the framebuffer, the
@@ -55,6 +62,11 @@ class HomeActivity final : public Activity {
   int shelfSnapshotScrollOffset = -1;
   int shelfSnapshotFocusedSpine = -2;  // -1 means "no focus", so use a different sentinel.
   bool shelfSnapshotHeaderFocused = false;
+  // True when we have NOT yet run the series-enrichment pass for the
+  // currently active collection. Set on onEnter and on cycle; cleared
+  // by enrichActiveCollectionForSeries(). Keeps the "Detecting
+  // series..." popup from re-firing on every render of the same shelf.
+  bool seriesEnrichmentNeededForActive = true;
   // The carousel center hint (coverSelectorIndex) painted into the
   // cached framebuffer. When this matches the value we'd compute for
   // the current render AND the buffer was restored, the carousel's 5
@@ -138,12 +150,24 @@ class HomeActivity final : public Activity {
   // window pays the cost; the next batch generates when the user
   // scrolls into uncovered territory.
   void loadShelfCovers(int cellWidth, int cellHeight, int scrollOffset, int visibleCount);
+  // FlexBLE Series — runs the OPF series-only parse for every EPUB in
+  // the active collection that hasn't been checked yet (SeriesIndex
+  // doesn't know about it). Shows a loading popup since this can take
+  // ~50-200 ms per book. Skipped entirely when the active collection
+  // has collapseSeries = false. Records empty entries for books that
+  // turn out not to be in a series, so we don't re-parse them.
+  void enrichActiveCollectionForSeries();
   // Returns the active collection's resolved book-path list, lazily
   // recomputing only when the active id changes since last access (or
   // when invalidateShelfPathsCache() was called). Critical to home
   // smoothness when "All Books" is active — without this cache, every
-  // frame paid 5x resolveBookPaths copies.
+  // frame paid 5x resolveBookPaths copies. The returned vector is
+  // derived from cachedShelfEntries() — one firstPath per entry.
   const std::vector<std::string>& cachedShelfPaths();
+  // Same caching contract as above but returns the rich ShelfEntries
+  // (series-collapsed). Navigation indexes these 1:1 with shelf cells.
+  // For non-series cells, entries[i].memberPaths == {entries[i].firstPath}.
+  const std::vector<ShelfEntry>& cachedShelfEntries();
   // Clear the cache so the next cachedShelfPaths() call re-resolves.
   // Call after any operation that may have changed the active
   // collection's contents (picker toggle, file delete, library rescan).
@@ -165,6 +189,14 @@ class HomeActivity final : public Activity {
   // separate menu (vs. the per-book one) so the items always match the
   // collection-level context.
   void showShelfHeaderActionMenu();
+  // FlexBLE series — Confirm on a shelf cell. For single-book cells
+  // this is just onSelectBook(firstPath). For series cells, opens the
+  // most-recently-read member if any is in RECENT_BOOKS; otherwise
+  // opens the SeriesMiniPicker.
+  void openShelfEntry(const ShelfEntry& entry);
+  // Always opens the SeriesMiniPicker for a series cell (used by the
+  // long-press path).
+  void openSeriesMiniPicker(const ShelfEntry& entry);
 
  public:
   explicit HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
