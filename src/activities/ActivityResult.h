@@ -72,13 +72,18 @@ struct FileBrowserActionResult {
   int action = -1;
 };
 
+// FlexBLE Collections sort picker — value matches CollectionSort enum.
+struct SortPickerResult {
+  int sortMode = 0;  // 0 = Manual, 1 = TitleAlpha, 2 = DateAddedDesc, 3 = DateAddedAsc
+};
+
 struct FilePathResult {
   std::string path;
 };
 
 using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,
                                    IntervalResult, PageResult, SyncResult, NetworkModeResult, FootnoteResult,
-                                   BookmarkResult, FileBrowserActionResult, FilePathResult>;
+                                   BookmarkResult, FileBrowserActionResult, FilePathResult, SortPickerResult>;
 
 struct ActivityResult {
   bool isCancelled = false;

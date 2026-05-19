@@ -89,14 +89,20 @@ void LibraryIndex::rescan(const std::function<void(int)>& progress) {
   knownSet.reserve(entries.size());
   for (const auto& e : entries) knownSet.insert(e.path);
 
-  // millis() is 32-bit and wraps after ~49 days uptime, but we only
-  // care about RELATIVE ordering within a session. Cast to uint64_t so
-  // the stored value has headroom if we ever switch to a real epoch
-  // clock (RTC integration is a future possibility).
-  const uint64_t now = static_cast<uint64_t>(millis());
+  // Each newly-discovered book gets a unique firstSeenMillis: the
+  // walk's start time plus an increasing per-book offset. Without the
+  // offset, an initial walk that discovers 500 books in one call would
+  // give all of them the SAME millis() value — Date Added Newest/Oldest
+  // would then be indistinguishable (just stable-sorted by walk order).
+  // The offset preserves relative ordering AND makes future-added books
+  // (later walks, after the user uploads more) cleanly sort after
+  // anything from this walk.
+  const uint64_t base = static_cast<uint64_t>(millis());
+  uint64_t addOffset = 0;
   for (const auto& path : discovered) {
     if (knownSet.find(path) == knownSet.end()) {
-      entries.push_back({path, now});
+      entries.push_back({path, base + addOffset});
+      ++addOffset;
     }
   }
   if (progress) progress(95);
@@ -128,6 +134,13 @@ std::vector<std::string> LibraryIndex::getRecentlyAddedPaths(int maxCount) const
   out.reserve(n);
   for (int i = 0; i < n; ++i) out.push_back(sorted[i].path);
   return out;
+}
+
+uint64_t LibraryIndex::getFirstSeen(const std::string& path) const {
+  for (const auto& e : entries) {
+    if (e.path == path) return e.firstSeenMillis;
+  }
+  return 0;
 }
 
 void LibraryIndex::forgetPath(const std::string& path) {

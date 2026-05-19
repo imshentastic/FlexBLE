@@ -1,6 +1,22 @@
 #pragma once
+#include <cstdint>
 #include <string>
 #include <vector>
+
+// FlexBLE Collections — per-collection sort order. Affects what
+// `resolveBookPaths()` returns. User collections default to Manual
+// (insertion order), virtual collections default to whatever makes
+// semantic sense (DateAddedDesc for Recently Added, TitleAlpha for All
+// Books). The user can change the sort for any non-Recently-Added
+// collection via the shelf-header "Sort by..." action.
+enum class CollectionSort : uint8_t {
+  Manual = 0,           // user collections only — preserve insertion order
+  TitleAlpha = 1,       // basename A→Z (case-insensitive)
+  DateAddedDesc = 2,    // newest first (by LibraryIndex firstSeenMillis)
+  DateAddedAsc = 3,     // oldest first
+  TitleAlphaDesc = 4,   // basename Z→A
+  DateLastReadDesc = 5, // most recently opened first (by RECENT_BOOKS position; non-recents sort to end)
+};
 
 // FlexBLE Collections — user-defined tag groups that live on top of the
 // filesystem. Books can belong to zero or more collections regardless of where
@@ -20,6 +36,11 @@ struct Collection {
   // derived from another data source (LibraryIndex) at lookup time. Not
   // persisted to collections.json. Seeded on every CollectionsStore::begin().
   bool isVirtual = false;
+  // Per-collection sort. resolveBookPaths() honors this when assembling
+  // the path list. User collections persist their choice in
+  // collections.json; virtuals default-construct each begin() and
+  // accept user overrides at runtime (also persisted).
+  CollectionSort sortMode = CollectionSort::Manual;
 };
 
 class CollectionsStore {
@@ -58,6 +79,10 @@ class CollectionsStore {
   // Returns the new collection's id, or empty string on failure. Persists
   // to SD on success.
   std::string createCollection(const std::string& name);
+  // Sets the sort mode for the given collection. No-op (with error log)
+  // for unknown ids. Persists on change. Manual sort is rejected for
+  // virtual collections — their book lists aren't user-ordered.
+  void setSortMode(const std::string& collectionId, CollectionSort mode);
   // Removes the given book from every collection it appears in (used when
   // the book file is being deleted off the SD card). Auto-saves at the
   // end if any change was made. Returns the number of collections that

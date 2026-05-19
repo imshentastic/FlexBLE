@@ -474,6 +474,7 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
           }
           case FileBrowserAction::RemoveFromRecentBooks:
           case FileBrowserAction::RescanLibrary:
+          case FileBrowserAction::SortBy:
             // Not exposed in the file browser's action menu — only the
             // home shelf paths add these items.
             return;

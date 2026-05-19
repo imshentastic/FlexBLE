@@ -33,6 +33,7 @@
 #include "OpdsServerStore.h"
 #include "RecentBookProgress.h"
 #include "RecentBooksStore.h"
+#include "SortPickerActivity.h"
 #include "components/UITheme.h"
 #include "CollectionsStore.h"
 #include "components/themes/lyra/LyraCarouselTheme.h"
@@ -758,14 +759,20 @@ std::string HomeActivity::getFocusedBookPath() const {
   }
   // Shelf range: only meaningful on the Flow theme. Indices sit between
   // the carousel and the menu icon bar.
+  // BUG-FIX: previously used `active->bookPaths` directly, which is
+  // empty for virtual collections (Recently Added / All Books). Their
+  // book lists come from LibraryIndex via resolveBookPaths. Use that
+  // here so long-press on a shelf book works for ALL collections, not
+  // just user-managed ones.
   if (static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_FLOW) {
-    const Collection* active = CollectionsStore::getInstance().getActiveCollection();
-    if (active != nullptr) {
+    const std::string& activeId = CollectionsStore::getInstance().getActiveId();
+    if (!activeId.empty()) {
+      const std::vector<std::string> paths = CollectionsStore::getInstance().resolveBookPaths(activeId);
       const int shelfStart = static_cast<int>(recentBooks.size());
-      const int shelfCount = static_cast<int>(active->bookPaths.size());
+      const int shelfCount = static_cast<int>(paths.size());
       if (static_cast<int>(selectorIndex) >= shelfStart &&
           static_cast<int>(selectorIndex) < shelfStart + shelfCount) {
-        return active->bookPaths[selectorIndex - shelfStart];
+        return paths[selectorIndex - shelfStart];
       }
     }
   }
@@ -945,6 +952,7 @@ void HomeActivity::showHomeBookActionMenu(const std::string& bookPath) {
           case FileBrowserAction::PinFavorite:
           case FileBrowserAction::UnpinFavorite:
           case FileBrowserAction::RescanLibrary:
+          case FileBrowserAction::SortBy:
             // Not exposed in the home book menu — sleep-image / shelf-
             // header-only actions.
             return;
@@ -953,14 +961,19 @@ void HomeActivity::showHomeBookActionMenu(const std::string& bookPath) {
 }
 
 void HomeActivity::showShelfHeaderActionMenu() {
-  // Header context = the active collection's name tab. Currently the
-  // only action is to rescan the SD card for newly added books — but
-  // structured as a menu so future header-level operations (rename,
-  // delete user collection, change sort order) slot in cleanly.
+  // Header context = the active collection's name tab. Builds a small
+  // menu of collection-level operations. "Sort by..." is hidden for
+  // Recently Added because that collection's order is intrinsic
+  // (newest-first by definition).
   std::vector<FileBrowserActionActivity::MenuItem> items;
+  const Collection* active = CollectionsStore::getInstance().getActiveCollection();
+  const bool isRecentlyAdded =
+      active != nullptr && active->id == CollectionsStore::RECENTLY_ADDED_ID;
+  if (active != nullptr && !isRecentlyAdded) {
+    items.push_back({FileBrowserAction::SortBy, StrId::STR_SORT_BY});
+  }
   items.push_back({FileBrowserAction::RescanLibrary, StrId::STR_RESCAN_LIBRARY});
 
-  const Collection* active = CollectionsStore::getInstance().getActiveCollection();
   const std::string title = (active != nullptr) ? active->name : std::string();
 
   startActivityForResult(
@@ -972,29 +985,45 @@ void HomeActivity::showShelfHeaderActionMenu() {
           return;
         }
         const auto action = static_cast<FileBrowserAction>(std::get<FileBrowserActionResult>(result.data).action);
-        if (action != FileBrowserAction::RescanLibrary) return;
-
-        // Full rescan with the same indexing popup we use on first boot
-        // — keeps the visual language consistent and signals clearly that
-        // the device is doing work.
-        const Rect popupRect = GUI.drawPopup(renderer, tr(STR_RESCAN_LIBRARY));
-        LibraryIndex::getInstance().rescan(
-            [&](int pct) { GUI.fillPopupProgress(renderer, popupRect, pct); });
-        // Invalidate the per-collection thumb cache flag so any newly-
-        // discovered books on the active virtual collection get their
-        // thumbs on the next render.
-        shelfCoversLoaded = false;
-        // The LibraryIndex changed but the activeId didn't — must
-        // explicitly invalidate so virtual collections re-resolve.
-        invalidateShelfPathsCache();
-        shelfSnapshotValid = false;
-        lastRenderedCoverSelectorValid = false;
-        // Brief confirmation toast so the user knows it finished even
-        // if no new books showed up (otherwise the popup just vanishes
-        // and the screen looks unchanged).
-        drawHomeToast(renderer, tr(STR_LIBRARY_RESCANNED));
-        delay(800);
-        requestUpdate();
+        if (action == FileBrowserAction::RescanLibrary) {
+          // Full rescan with the same indexing popup we use on first boot
+          // — keeps the visual language consistent and signals clearly that
+          // the device is doing work.
+          const Rect popupRect = GUI.drawPopup(renderer, tr(STR_RESCAN_LIBRARY));
+          LibraryIndex::getInstance().rescan(
+              [&](int pct) { GUI.fillPopupProgress(renderer, popupRect, pct); });
+          shelfCoversLoaded = false;
+          invalidateShelfPathsCache();
+          shelfSnapshotValid = false;
+          lastRenderedCoverSelectorValid = false;
+          drawHomeToast(renderer, tr(STR_LIBRARY_RESCANNED));
+          delay(800);
+          requestUpdate();
+        } else if (action == FileBrowserAction::SortBy) {
+          // Open the sort picker for the active collection. The picker
+          // returns a SortPickerResult; we persist via setSortMode and
+          // bust the per-frame path cache so the new order takes
+          // effect on the next render.
+          const Collection* active = CollectionsStore::getInstance().getActiveCollection();
+          if (active == nullptr) return;
+          const std::string activeId = active->id;
+          const std::string activeName = active->name;
+          const CollectionSort current = active->sortMode;
+          const bool allowManual = !active->isVirtual;
+          startActivityForResult(
+              std::make_unique<SortPickerActivity>(renderer, mappedInput, activeName, current, allowManual),
+              [this, activeId](const ActivityResult& pickRes) {
+                if (pickRes.isCancelled) return;
+                const auto& sr = std::get<SortPickerResult>(pickRes.data);
+                CollectionsStore::getInstance().setSortMode(activeId,
+                                                             static_cast<CollectionSort>(sr.sortMode));
+                invalidateShelfPathsCache();
+                shelfSnapshotValid = false;
+                shelfCoversLoaded = false;  // thumbs themselves are unchanged, but the visible window shifts.
+                shelfScrollOffset = 0;       // jump back to the top of the freshly-sorted list.
+                requestUpdate();
+              });
+        }
       });
 }
 

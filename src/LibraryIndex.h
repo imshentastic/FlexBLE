@@ -63,6 +63,14 @@ class LibraryIndex {
   // index is small enough that this is cheap.
   std::vector<std::string> getAllBookPaths() const;        // sorted by path (case-insensitive)
   std::vector<std::string> getRecentlyAddedPaths(int maxCount) const;  // newest first
+  // Returns the firstSeenMillis recorded for `path`. Used by
+  // CollectionsStore::resolveBookPaths to sort user collections by
+  // Date Added without duplicating the timestamp into the
+  // collection's stored payload. Returns 0 if the path isn't in the
+  // index (e.g. user added a book to Favorites that hasn't been
+  // walked yet — the unknown books sort to the end / start depending
+  // on Asc/Desc).
+  uint64_t getFirstSeen(const std::string& path) const;
 
   // Bookkeeping after a destructive action elsewhere (e.g. file delete).
   // The next ensureWalked() would pick this up, but for instant UI
