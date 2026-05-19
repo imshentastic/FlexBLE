@@ -29,6 +29,10 @@ enum class FileBrowserAction : int {
   // All Books. Only surfaced from the home shelf header — not the file
   // browser or per-book action menu.
   RescanLibrary = 8,
+  // FlexBLE: also on the shelf-header action menu. Opens a
+  // SortPickerActivity for the active collection. Hidden for the
+  // "Recently Added" virtual collection since its sort is intrinsic.
+  SortBy = 9,
 };
 
 class FileBrowserActionActivity final : public Activity {

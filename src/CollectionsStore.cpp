@@ -6,8 +6,10 @@
 #include <Logging.h>
 
 #include <algorithm>
+#include <unordered_map>
 
 #include "LibraryIndex.h"
+#include "RecentBooksStore.h"
 
 namespace {
 constexpr char COLLECTIONS_FILE[] = "/.crosspoint/collections.json";
@@ -77,23 +79,115 @@ bool CollectionsStore::isBookInCollection(const std::string& collectionId, const
   return std::find(c->bookPaths.begin(), c->bookPaths.end(), bookPath) != c->bookPaths.end();
 }
 
+namespace {
+// Case-insensitive less-than over filenames (basename). Used by both
+// TitleAlpha sort here and the LibraryIndex's All-Books default.
+bool basenameLess(const std::string& a, const std::string& b) {
+  const size_t sa = a.find_last_of('/');
+  const size_t sb = b.find_last_of('/');
+  const char* aBase = a.c_str() + (sa == std::string::npos ? 0 : sa + 1);
+  const char* bBase = b.c_str() + (sb == std::string::npos ? 0 : sb + 1);
+  while (*aBase && *bBase) {
+    const char ca = static_cast<char>(std::tolower(static_cast<unsigned char>(*aBase)));
+    const char cb = static_cast<char>(std::tolower(static_cast<unsigned char>(*bBase)));
+    if (ca != cb) return ca < cb;
+    ++aBase;
+    ++bBase;
+  }
+  return *aBase == 0 && *bBase != 0;
+}
+
+void applySort(std::vector<std::string>& paths, CollectionSort mode) {
+  switch (mode) {
+    case CollectionSort::Manual:
+      // No-op — caller already produced the manual order (user
+      // collection's stored bookPaths, or virtual's natural order).
+      return;
+    case CollectionSort::TitleAlpha:
+      std::sort(paths.begin(), paths.end(), basenameLess);
+      return;
+    case CollectionSort::TitleAlphaDesc:
+      std::sort(paths.begin(), paths.end(), [](const std::string& a, const std::string& b) { return basenameLess(b, a); });
+      return;
+    case CollectionSort::DateAddedDesc:
+    case CollectionSort::DateAddedAsc: {
+      // Cache lookups: for each path, resolve firstSeenMillis once
+      // and stash into a parallel vector. Sort indices, then permute
+      // paths. Avoids O(N^2) LibraryIndex lookups inside the
+      // comparator.
+      const auto& idx = LibraryIndex::getInstance();
+      std::vector<uint64_t> times(paths.size());
+      for (size_t i = 0; i < paths.size(); ++i) times[i] = idx.getFirstSeen(paths[i]);
+      std::vector<size_t> order(paths.size());
+      for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+      const bool desc = mode == CollectionSort::DateAddedDesc;
+      std::sort(order.begin(), order.end(),
+                [&](size_t a, size_t b) { return desc ? times[a] > times[b] : times[a] < times[b]; });
+      std::vector<std::string> sorted;
+      sorted.reserve(paths.size());
+      for (size_t i : order) sorted.push_back(std::move(paths[i]));
+      paths = std::move(sorted);
+      return;
+    }
+    case CollectionSort::DateLastReadDesc: {
+      // Build a map of path → position in RECENT_BOOKS (0 = most
+      // recently read). Books not in RECENT_BOOKS get a sentinel
+      // position past the end so they sort to the back of the list.
+      // Result: most-recently-opened books bubble to the top, never-
+      // opened books form a tail at the bottom (relative order among
+      // tail is the input order).
+      const auto& recents = RECENT_BOOKS.getBooks();
+      std::unordered_map<std::string, size_t> posByPath;
+      posByPath.reserve(recents.size());
+      for (size_t i = 0; i < recents.size(); ++i) posByPath[recents[i].path] = i;
+      const size_t sentinel = recents.size() + 1;
+      std::vector<size_t> rank(paths.size(), sentinel);
+      for (size_t i = 0; i < paths.size(); ++i) {
+        auto it = posByPath.find(paths[i]);
+        if (it != posByPath.end()) rank[i] = it->second;
+      }
+      std::vector<size_t> order(paths.size());
+      for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+      // Stable sort by rank ASC (so RECENT_BOOKS[0] comes first). Ties
+      // (both unread) preserve input order.
+      std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return rank[a] < rank[b]; });
+      std::vector<std::string> sorted;
+      sorted.reserve(paths.size());
+      for (size_t i : order) sorted.push_back(std::move(paths[i]));
+      paths = std::move(sorted);
+      return;
+    }
+  }
+}
+}  // namespace
+
 std::vector<std::string> CollectionsStore::resolveBookPaths(const std::string& collectionId) const {
   const Collection* c = findCollection(collectionId);
   if (c == nullptr) return {};
+  std::vector<std::string> paths;
   if (!c->isVirtual) {
-    return c->bookPaths;  // copy is intentional — caller may want to iterate concurrently.
+    paths = c->bookPaths;  // start from stored manual order.
+  } else {
+    // Virtual collection — pull live data from LibraryIndex. The first
+    // call this session lazily kicks off the SD walk; subsequent calls
+    // are in-memory.
+    LibraryIndex::getInstance().ensureWalked();
+    if (collectionId == RECENTLY_ADDED_ID) {
+      // Recently Added is INTRINSICALLY ordered by firstSeen DESC —
+      // user can't override this. Always return top-18 newest.
+      return LibraryIndex::getInstance().getRecentlyAddedPaths(18);
+    }
+    if (collectionId == ALL_BOOKS_ID) {
+      // Defaults to TitleAlpha (already sorted by getAllBookPaths()).
+      // The sortMode override lets user re-sort by Date Added if they
+      // prefer.
+      paths = LibraryIndex::getInstance().getAllBookPaths();
+    }
   }
-  // Virtual collection — pull live data from LibraryIndex. The first
-  // call this session lazily kicks off the SD walk; subsequent calls
-  // are in-memory.
-  LibraryIndex::getInstance().ensureWalked();
-  if (collectionId == RECENTLY_ADDED_ID) {
-    return LibraryIndex::getInstance().getRecentlyAddedPaths(18);
-  }
-  if (collectionId == ALL_BOOKS_ID) {
-    return LibraryIndex::getInstance().getAllBookPaths();
-  }
-  return {};
+  // Apply user-chosen sort. Manual mode is a no-op so the stored
+  // order survives for user collections.
+  applySort(paths, c->sortMode);
+  return paths;
 }
 
 int CollectionsStore::countBooksInCollection(const std::string& collectionId) const {
@@ -143,7 +237,10 @@ std::string CollectionsStore::createCollection(const std::string& name) {
   while (findCollection(id) != nullptr) {
     id += "_x";
   }
-  collections.push_back({id, name, {}});
+  Collection c;
+  c.id = id;
+  c.name = name;
+  collections.push_back(std::move(c));
   saveToFile();
   LOG_INF("CLN", "Created collection: %s (id=%s)", name.c_str(), id.c_str());
   return id;
@@ -163,6 +260,26 @@ int CollectionsStore::removeBookFromAllCollections(const std::string& bookPath) 
     LOG_DBG("CLN", "Removed %s from %d collection(s)", bookPath.c_str(), touched);
   }
   return touched;
+}
+
+void CollectionsStore::setSortMode(const std::string& collectionId, CollectionSort mode) {
+  for (auto& c : collections) {
+    if (c.id != collectionId) continue;
+    if (c.isVirtual && mode == CollectionSort::Manual) {
+      LOG_ERR("CLN", "Refusing Manual sort on virtual collection: %s", collectionId.c_str());
+      return;
+    }
+    if (c.sortMode == mode) return;
+    c.sortMode = mode;
+    // Only persist for user collections — virtuals reseed every begin()
+    // and would lose their sortMode anyway. (Could persist a separate
+    // map in future if we wanted virtual-collection prefs to survive
+    // reboots; deferred.)
+    if (!c.isVirtual) saveToFile();
+    LOG_DBG("CLN", "Set sort mode for %s to %u", collectionId.c_str(), static_cast<unsigned>(mode));
+    return;
+  }
+  LOG_ERR("CLN", "setSortMode: unknown collection %s", collectionId.c_str());
 }
 
 void CollectionsStore::setActiveId(const std::string& id) {
@@ -199,6 +316,12 @@ bool CollectionsStore::loadFromFile() {
       c.id = entry["id"] | std::string("");
       c.name = entry["name"] | std::string("");
       if (c.id.empty()) continue;
+      // Backwards compat: missing "sort" key (older JSON) defaults to
+      // Manual — same as before sort-mode existed.
+      const unsigned sortRaw = entry["sort"] | 0u;
+      if (sortRaw <= static_cast<unsigned>(CollectionSort::DateLastReadDesc)) {
+        c.sortMode = static_cast<CollectionSort>(sortRaw);
+      }
       JsonArrayConst books = entry["books"];
       if (!books.isNull()) {
         c.bookPaths.reserve(books.size());
@@ -227,6 +350,7 @@ bool CollectionsStore::saveToFile() const {
     JsonObject entry = arr.add<JsonObject>();
     entry["id"] = c.id;
     entry["name"] = c.name;
+    entry["sort"] = static_cast<unsigned>(c.sortMode);
     JsonArray books = entry["books"].to<JsonArray>();
     for (const auto& path : c.bookPaths) books.add(path);
   }
