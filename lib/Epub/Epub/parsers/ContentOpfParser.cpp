@@ -142,12 +142,42 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
   if (self->state == IN_METADATA && (strcmp(name, "meta") == 0 || strcmp(name, "opf:meta") == 0)) {
     bool isCover = false;
     std::string coverItemId;
-
+    // FlexBLE series detection (ported from aalu, MIT-licensed). The
+    // OPF tag carrying series info varies by ecosystem:
+    //   - Calibre / EPUB 2: name="calibre:series" content="The Foundation"
+    //                       name="calibre:series_index" content="2"
+    //   - Sigil / generic:  name="series" / "series_index"
+    //   - EPUB 3:           property="belongs-to-collection" (text body is the name)
+    //                       property="group-position"        (text body is the index)
+    // EPUB 3 uses character data in the body, so we pick up `property`
+    // here and transition to a dedicated state (handled below) so
+    // characterData can accumulate.
+    const char* attrName = nullptr;
+    const char* attrContent = nullptr;
+    const char* attrProperty = nullptr;
     for (int i = 0; atts[i]; i += 2) {
-      if (strcmp(atts[i], "name") == 0 && strcmp(atts[i + 1], "cover") == 0) {
-        isCover = true;
-      } else if (strcmp(atts[i], "content") == 0) {
-        coverItemId = atts[i + 1];
+      if (strcmp(atts[i], "name") == 0) attrName = atts[i + 1];
+      else if (strcmp(atts[i], "content") == 0) attrContent = atts[i + 1];
+      else if (strcmp(atts[i], "property") == 0) attrProperty = atts[i + 1];
+    }
+    if (attrName != nullptr && strcmp(attrName, "cover") == 0) {
+      isCover = true;
+      if (attrContent != nullptr) coverItemId = attrContent;
+    }
+    if (attrName != nullptr && attrContent != nullptr) {
+      if (strcmp(attrName, "calibre:series") == 0 || strcmp(attrName, "series") == 0) {
+        self->seriesName = attrContent;
+      } else if (strcmp(attrName, "calibre:series_index") == 0 || strcmp(attrName, "series_index") == 0) {
+        self->seriesIndex = attrContent;
+      }
+    }
+    if (attrProperty != nullptr) {
+      if (strcmp(attrProperty, "belongs-to-collection") == 0) {
+        self->state = IN_SERIES_NAME;
+        self->seriesName.clear();  // accumulated in characterData
+      } else if (strcmp(attrProperty, "group-position") == 0) {
+        self->state = IN_SERIES_INDEX;
+        self->seriesIndex.clear();
       }
     }
 
@@ -325,6 +355,17 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     self->language.append(s, len);
     return;
   }
+
+  // FlexBLE: EPUB 3 series name / index live as element text bodies.
+  if (self->state == IN_SERIES_NAME) {
+    self->seriesName.append(s, len);
+    return;
+  }
+
+  if (self->state == IN_SERIES_INDEX) {
+    self->seriesIndex.append(s, len);
+    return;
+  }
 }
 
 void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) {
@@ -355,6 +396,16 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
   }
 
   if (self->state == IN_BOOK_AUTHOR && strcmp(name, "dc:creator") == 0) {
+    self->state = IN_METADATA;
+    return;
+  }
+
+  // FlexBLE: EPUB 3 series text-body close. Match any meta close since
+  // the parser's startElement transitioned state without saving the
+  // element name. After capturing we fall back to IN_METADATA so other
+  // meta tags in the same metadata block keep parsing normally.
+  if ((self->state == IN_SERIES_NAME || self->state == IN_SERIES_INDEX) &&
+      (strcmp(name, "meta") == 0 || strcmp(name, "opf:meta") == 0)) {
     self->state = IN_METADATA;
     return;
   }

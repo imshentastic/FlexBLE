@@ -27,6 +27,7 @@
 #include "CollectionPickerActivity.h"
 #include "CrossPointSettings.h"
 #include "LibraryIndex.h"
+#include "SeriesIndex.h"
 #include "CrossPointState.h"
 #include "FileBrowserActionActivity.h"
 #include "MappedInputManager.h"
@@ -862,6 +863,7 @@ void HomeActivity::showHomeBookActionMenu(const std::string& bookPath) {
                   RECENT_BOOKS.removeBook(bookPath);
                   CollectionsStore::getInstance().removeBookFromAllCollections(bookPath);
                   LibraryIndex::getInstance().forgetPath(bookPath);
+                  SeriesIndex::getInstance().forgetPath(bookPath);
                   if (!Storage.remove(bookPath.c_str())) {
                     LOG_ERR("HOME", "Failed to delete file: %s", bookPath.c_str());
                   }

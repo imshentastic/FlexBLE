@@ -102,6 +102,14 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata) {
   bookMetadata.author = opfParser.author;
   bookMetadata.language = opfParser.language;
   bookMetadata.coverItemHref = opfParser.coverItemHref;
+  // FlexBLE series fields (ported from aalu). Stored on the Epub
+  // instance rather than `bookMetadata` because book.bin's binary
+  // layout would need a version bump to add the fields, and we don't
+  // gain much from persisting there — SeriesIndex.json caches across
+  // sessions and is a more natural query target ("which books are in
+  // series X?") than per-book lookup.
+  lastSeriesName = opfParser.seriesName;
+  lastSeriesIndex = opfParser.seriesIndex;
 
   // Guide-based cover fallback: if no cover found via metadata/properties,
   // try extracting the image reference from the guide's cover page XHTML

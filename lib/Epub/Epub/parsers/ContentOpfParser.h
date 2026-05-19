@@ -21,6 +21,14 @@ class ContentOpfParser final : public Print {
     IN_MANIFEST,
     IN_SPINE,
     IN_GUIDE,
+    // FlexBLE: series detection states. EPUB 3 series metadata is
+    // expressed as <meta property="belongs-to-collection">Name</meta>
+    // and <meta property="group-position">1.5</meta> — both need
+    // characterData accumulation, hence the dedicated states.
+    // Calibre's EPUB 2 form uses attribute-only meta tags (handled
+    // inline in startElement) so it doesn't need a state.
+    IN_SERIES_NAME,
+    IN_SERIES_INDEX,
   };
 
   const std::string& cachePath;
@@ -67,6 +75,14 @@ class ContentOpfParser final : public Print {
   std::string guideCoverPageHref;  // Guide reference with type="cover" or "cover-page" (points to XHTML wrapper)
   std::string textReferenceHref;
   std::vector<std::string> cssFiles;  // CSS stylesheet paths
+  // FlexBLE series detection (ported from aalu, MIT-licensed). The
+  // series name + index are extracted opportunistically — most EPUBs
+  // don't declare them. Kept as std::string (not float) so the original
+  // index format ("1", "1.5", "VII") round-trips for display. Empty
+  // when the book doesn't belong to a series, OR when only one of the
+  // two fields was found.
+  std::string seriesName;
+  std::string seriesIndex;
 
   explicit ContentOpfParser(const std::string& cachePath, const std::string& baseContentPath, const size_t xmlSize,
                             BookMetadataCache* cache)
