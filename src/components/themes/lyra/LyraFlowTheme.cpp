@@ -184,47 +184,60 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   const int idx4 = (curIdx + 1) % count;          // right-near
   const int idx5 = (curIdx + 2) % count;          // right-far
 
-  if (count >= 5) drawStackedCover(idx3, true, true);
-  if (count >= 4) drawStackedCover(idx5, false, true);
-  if (count >= 2) drawStackedCover(idx2, true, false);
-  if (count >= 3) drawStackedCover(idx4, false, false);
-
-  // --- Center cover. Peek the bitmap dimensions first so the slot, outline,
-  //     and selection border match the cover's true aspect ratio (otherwise
-  //     drawBitmap aspect-fits but our 220×320 chrome leaves a white sliver
-  //     for narrower covers, e.g. 1720×2600 which is taller than 220:320). ---
+  // Variables that the footer (drawn unconditionally below) depends on.
+  // Initialize to the default centerCoverWidth/Height; the cover-loading
+  // block below may revise them based on the parsed BMP's true aspect.
+  // When skipCarouselCoverLoads is set we keep the defaults — for books
+  // with unusual aspect ratios this can shift the footer position by a
+  // few pixels relative to the customized cover, but the visual jitter
+  // is subtle and only happens when transitioning into the skip path.
   int actualCoverWidth = centerCoverWidth;
   int actualCoverHeight = centerCoverHeight;
-  const std::string cp = UITheme::getCoverThumbPath(recentBooks[curIdx].coverBmpPath, centerCoverHeight);
-  FsFile cf;
-  const bool centerOpened = !cp.empty() && Storage.openFileForRead("HOME", cp, cf);
-  Bitmap centerBitmap(cf);
-  bool centerParsed = false;
-  if (centerOpened) {
-    if (centerBitmap.parseHeaders() == BmpReaderError::Ok && centerBitmap.getWidth() > 0 &&
-        centerBitmap.getHeight() > 0) {
-      const int srcW = centerBitmap.getWidth();
-      const int srcH = centerBitmap.getHeight();
-      const float fitScale = std::min(static_cast<float>(centerCoverWidth) / static_cast<float>(srcW),
-                                      static_cast<float>(centerCoverHeight) / static_cast<float>(srcH));
-      actualCoverWidth = std::min(centerCoverWidth, static_cast<int>(std::round(srcW * fitScale)));
-      actualCoverHeight = std::min(centerCoverHeight, static_cast<int>(std::round(srcH * fitScale)));
-      centerParsed = true;
+  int cX = centerX - actualCoverWidth / 2;
+  int actualY = centerY + (centerCoverHeight - actualCoverHeight) / 2;
+
+  // Skip the entire 5-BMP cover paint block when HomeActivity tells us
+  // the framebuffer was just restored with these same covers. Saves
+  // ~80% of drawRecentBookCover's cost on every "L/R on shelf/menu"
+  // type input where the carousel doesn't visually change.
+  if (!skipCarouselCoverLoads) {
+    if (count >= 5) drawStackedCover(idx3, true, true);
+    if (count >= 4) drawStackedCover(idx5, false, true);
+    if (count >= 2) drawStackedCover(idx2, true, false);
+    if (count >= 3) drawStackedCover(idx4, false, false);
+
+    // --- Center cover. Peek the bitmap dimensions first so the slot, outline,
+    //     and selection border match the cover's true aspect ratio (otherwise
+    //     drawBitmap aspect-fits but our 220×320 chrome leaves a white sliver
+    //     for narrower covers, e.g. 1720×2600 which is taller than 220:320). ---
+    const std::string cp = UITheme::getCoverThumbPath(recentBooks[curIdx].coverBmpPath, centerCoverHeight);
+    FsFile cf;
+    const bool centerOpened = !cp.empty() && Storage.openFileForRead("HOME", cp, cf);
+    Bitmap centerBitmap(cf);
+    bool centerParsed = false;
+    if (centerOpened) {
+      if (centerBitmap.parseHeaders() == BmpReaderError::Ok && centerBitmap.getWidth() > 0 &&
+          centerBitmap.getHeight() > 0) {
+        const int srcW = centerBitmap.getWidth();
+        const int srcH = centerBitmap.getHeight();
+        const float fitScale = std::min(static_cast<float>(centerCoverWidth) / static_cast<float>(srcW),
+                                        static_cast<float>(centerCoverHeight) / static_cast<float>(srcH));
+        actualCoverWidth = std::min(centerCoverWidth, static_cast<int>(std::round(srcW * fitScale)));
+        actualCoverHeight = std::min(centerCoverHeight, static_cast<int>(std::round(srcH * fitScale)));
+        centerParsed = true;
+      }
     }
-  }
 
-  const int cX = centerX - actualCoverWidth / 2;
-  // Vertical-center within the original 320-tall slot in case a cover is wider
-  // than tall (very rare in practice).
-  const int actualY = centerY + (centerCoverHeight - actualCoverHeight) / 2;
+    cX = centerX - actualCoverWidth / 2;
+    actualY = centerY + (centerCoverHeight - actualCoverHeight) / 2;
 
-  // Clear behind it so any side-cover overlap doesn't bleed through.
-  renderer.fillRect(cX, actualY, actualCoverWidth, actualCoverHeight, false);
+    // Clear behind it so any side-cover overlap doesn't bleed through.
+    renderer.fillRect(cX, actualY, actualCoverWidth, actualCoverHeight, false);
 
-  if (centerParsed) {
-    renderer.drawBitmap(centerBitmap, cX, actualY, actualCoverWidth, actualCoverHeight);
-    cutRoundedCorners(renderer, cX, actualY, actualCoverWidth, actualCoverHeight, bookCornerRadius);
-  } else {
+    if (centerParsed) {
+      renderer.drawBitmap(centerBitmap, cX, actualY, actualCoverWidth, actualCoverHeight);
+      cutRoundedCorners(renderer, cX, actualY, actualCoverWidth, actualCoverHeight, bookCornerRadius);
+    } else {
     // Placeholder: black lower-2/3 with the cover icon centered just below
     // the divider, then the wrapped book title in white below the icon.
     // Mirrors LyraCarouselTheme's fallback so un-thumbnailed books still
@@ -266,14 +279,18 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
       lineY += lineHeight;
     }
   }
-  renderer.drawRoundedRect(cX, actualY, actualCoverWidth, actualCoverHeight, 2, bookCornerRadius, true);
+    renderer.drawRoundedRect(cX, actualY, actualCoverWidth, actualCoverHeight, 2, bookCornerRadius, true);
 
-  if (hasSelection) {
-    renderer.drawRoundedRect(cX - 2, actualY - 2, actualCoverWidth + 4, actualCoverHeight + 4, 4,
-                             bookCornerRadius + 2, true);
-  }
+    if (hasSelection) {
+      renderer.drawRoundedRect(cX - 2, actualY - 2, actualCoverWidth + 4, actualCoverHeight + 4, 4,
+                               bookCornerRadius + 2, true);
+    }
 
-  if (centerOpened) cf.close();
+    if (centerOpened) cf.close();
+  }  // end of if (!skipCarouselCoverLoads)
+
+  // One-shot reset so the next render starts from a known default.
+  skipCarouselCoverLoads = false;
 
   // --- Title above the center cover (filename, no extension) ---
   std::string filename = recentBooks[curIdx].title.empty() ? recentBooks[curIdx].path : recentBooks[curIdx].title;
@@ -287,6 +304,16 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   const std::string truncatedTitle =
       renderer.truncatedText(UI_12_FONT_ID, filename.c_str(), pageWidth - 40, EpdFontFamily::BOLD);
   const int titleWidth = renderer.getTextWidth(UI_12_FONT_ID, truncatedTitle.c_str(), EpdFontFamily::BOLD);
+  // Pre-clear the title strip. HomeActivity now snapshots the framebuffer
+  // at end-of-render and restores it at the start of the next render
+  // (lets the shelf paint be skipped when its state is unchanged). The
+  // restored buffer has the PRIOR render's title in it — if the new
+  // title is shorter or differently-positioned, the leftover characters
+  // would show through. drawText is top-anchored (y = top of the text
+  // bbox, not baseline), so the strip extends DOWN from the title's y,
+  // not up.
+  const int titleLineH = renderer.getLineHeight(UI_12_FONT_ID);
+  renderer.fillRect(0, rect.y - 5, pageWidth, titleLineH + 4, false);
   renderer.drawText(UI_12_FONT_ID, centerX - titleWidth / 2, rect.y - 5, truncatedTitle.c_str(), true,
                     EpdFontFamily::BOLD);
 
@@ -305,6 +332,14 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
 
   const bool hasStats = (stats != nullptr && stats->sessionCount > 0);
   const bool hasProgress = progressPercent >= 0.0f;
+
+  // Pre-clear the footer region (bar + label row beneath it) for the
+  // same reason we clear the title above: a buffer restore brings back
+  // the prior render's footer pixels, and width-variable text labels
+  // would stack. Generous height to cover both the bar and the label
+  // row in one fillRect.
+  const int footerStripHeight = kFooterProgressBarHeight + kFooterBarToLabelGap + renderer.getLineHeight(kFooterFontId) + 4;
+  renderer.fillRect(footerX, infoY, footerWidth, footerStripHeight, false);
 
   // New stacking order (per UX feedback): bar on top, then a single row with
   // elapsed-time on the left and percentage on the right beneath it. This
@@ -358,7 +393,8 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
 
 void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const char* collectionName,
                                        const std::vector<std::string>& coverPaths, int selectedSpineIndex,
-                                       int scrollOffset, bool headerFocused, bool hasMultipleCollections) const {
+                                       int scrollOffset, bool headerFocused, bool hasMultipleCollections,
+                                       const char* focusedBookTitle) const {
   // Vertical layout (top → bottom):
   //   [focused book title]  — drawn ABOVE rect.y so the rest of the layout
   //                           doesn't shift when focused vs unfocused
@@ -385,6 +421,15 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
   constexpr int kCellGap = 16;
 
   const int bookCount = static_cast<int>(coverPaths.size());
+
+  // Pre-clear the entire shelf zone (tab + cell row + shadow strip below
+  // + focused-title strip below that). HomeActivity's end-of-render
+  // snapshot means the prior frame's pixels (different focus ring,
+  // different title text, wider arrows) would otherwise show through.
+  // Extends `rect.height` by 40 px to wipe the shadow band (6 px) PLUS
+  // the focused-title strip below it (one full UI_10 line height) with
+  // generous padding so descenders/ascenders never leak past.
+  renderer.fillRect(rect.x, rect.y, rect.width, rect.height + 40, false);
 
   const int tabY = rect.y;
   // Tab font is one step up from the row's prior 8px (SMALL_FONT_ID) to
@@ -510,6 +555,24 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
       const int triYs[3] = {triY - triSize, triY, triY + triSize};
       renderer.fillPolygon(triXs, triYs, 3, true);
     }
+  }
+
+  // Focused book title, centered below the cell row. Same affordance as
+  // the carousel showing the active book name under its cover. Anchored
+  // a few px below the shadow's extent so it doesn't crowd the cells.
+  // The strip rect is sized to JUST the tab + cells, so this drops into
+  // the small breathing-room band between the strip and the icon bar.
+  if (selectedSpineIndex >= 0 && focusedBookTitle != nullptr && *focusedBookTitle != '\0') {
+    constexpr int kTitleFontId = UI_10_FONT_ID;
+    // Title gap from the cell-row bottom (including shadow). Tightened
+    // from 6 → 3 so the title sits closer under the row and leaves more
+    // headroom for descenders before the icon bar.
+    constexpr int kTitleTopGap = 3;
+    const int titleY = shelfRowY + kCellHeight + kShadowDepth + kTitleTopGap;
+    const auto truncated = renderer.truncatedText(kTitleFontId, focusedBookTitle, rect.width - 2 * kSidePad);
+    const int tw = renderer.getTextWidth(kTitleFontId, truncated.c_str(), EpdFontFamily::REGULAR);
+    renderer.drawText(kTitleFontId, rect.x + (rect.width - tw) / 2, titleY, truncated.c_str(), true,
+                      EpdFontFamily::REGULAR);
   }
 }
 

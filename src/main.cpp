@@ -27,6 +27,7 @@
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "CollectionsStore.h"
+#include "LibraryIndex.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
 #include "activities/Activity.h"
@@ -746,7 +747,67 @@ void setup() {
 
   APP_STATE.loadFromFile();
   RECENT_BOOKS.loadFromFile();
+  // LibraryIndex loads its cached JSON now (cheap); the heavy SD walk is
+  // deferred until the user first accesses Recently Added / All Books on
+  // the shelf so boot stays fast.
+  LibraryIndex::getInstance().begin();
   CollectionsStore::getInstance().begin();
+
+  // First-boot library indexing: if no library_index.json existed on SD,
+  // this is either a fresh install or the user wiped their cache. Frame
+  // the unavoidable SD walk as a welcome experience rather than letting
+  // it pop up unexplained the first time they cycle to Recently Added /
+  // All Books on the shelf. The walk is one-time per cache-clear; the
+  // resulting JSON persists across reboots.
+  if (LibraryIndex::getInstance().wasFreshFirstBoot()) {
+    renderer.clearScreen();
+    const int pageW = renderer.getScreenWidth();
+    const int pageH = renderer.getScreenHeight();
+
+    // Title (largest UI font we have on the tiny build = UI_12_FONT_ID).
+    // Centered ~third of the way down so the eye lands on it naturally.
+    const char* title = tr(STR_WELCOME_TITLE);
+    const int titleW = renderer.getTextWidth(UI_12_FONT_ID, title, EpdFontFamily::BOLD);
+    const int titleY = pageH / 3;
+    renderer.drawText(UI_12_FONT_ID, (pageW - titleW) / 2, titleY, title, true, EpdFontFamily::BOLD);
+
+    // Subtitle: what's happening right now.
+    const char* sub = tr(STR_WELCOME_INDEXING);
+    const int subW = renderer.getTextWidth(UI_12_FONT_ID, sub, EpdFontFamily::REGULAR);
+    const int subY = titleY + renderer.getLineHeight(UI_12_FONT_ID) + 16;
+    renderer.drawText(UI_12_FONT_ID, (pageW - subW) / 2, subY, sub, true, EpdFontFamily::REGULAR);
+
+    // Tertiary: reassurance that this is one-time.
+    const char* once = tr(STR_WELCOME_ONCE);
+    const int onceW = renderer.getTextWidth(UI_10_FONT_ID, once, EpdFontFamily::REGULAR);
+    const int onceY = subY + renderer.getLineHeight(UI_12_FONT_ID) + 6;
+    renderer.drawText(UI_10_FONT_ID, (pageW - onceW) / 2, onceY, once, true, EpdFontFamily::REGULAR);
+
+    // Progress bar frame ~halfway down the bottom half. Bar fills as the
+    // walk reports progress 0..100.
+    constexpr int barH = 8;
+    const int barW = static_cast<int>(pageW * 0.6f);
+    const int barX = (pageW - barW) / 2;
+    const int barY = onceY + renderer.getLineHeight(UI_10_FONT_ID) + 30;
+    renderer.fillRect(barX - 2, barY - 2, barW + 4, barH + 4, true);
+    renderer.fillRect(barX, barY, barW, barH, false);
+    renderer.displayBuffer();
+
+    // Run the walk synchronously; the lambda paints the bar fill as
+    // progress accumulates. Refresh is FAST so the bar grows smoothly
+    // without flashing the whole screen.
+    LibraryIndex::getInstance().rescan([&](int pct) {
+      const int fillW = (barW * std::clamp(pct, 0, 100)) / 100;
+      renderer.fillRect(barX, barY, fillW, barH, true);
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    });
+
+    // Settle for a beat so users see the bar hit 100% before the screen
+    // moves on — abrupt transitions feel like the device skipped a step.
+    delay(400);
+    renderer.clearScreen();
+    renderer.displayBuffer();
+  }
 
   if (recoveryFirmwareMode) {
     // Skip normal home/reader routing: jump straight into the SD firmware picker.

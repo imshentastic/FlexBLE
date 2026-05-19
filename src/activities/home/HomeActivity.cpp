@@ -24,7 +24,9 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "BookmarkStore.h"
 #include "BookmarksHomeActivity.h"
+#include "CollectionPickerActivity.h"
 #include "CrossPointSettings.h"
+#include "LibraryIndex.h"
 #include "CrossPointState.h"
 #include "FileBrowserActionActivity.h"
 #include "MappedInputManager.h"
@@ -626,29 +628,44 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   }
 }
 
-void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight) {
+void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffset, int visibleCount) {
   // No-op for themes other than LYRA_FLOW (only theme that has a shelf).
   if (static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) != CrossPointSettings::UI_THEME::LYRA_FLOW) {
     shelfCoversLoaded = true;
     return;
   }
-  const Collection* activeCollection = CollectionsStore::getInstance().getActiveCollection();
-  if (activeCollection == nullptr || activeCollection->bookPaths.empty()) {
+  // Pull the live book list via the per-frame cache so we don't re-sort
+  // the LibraryIndex on every render (was the dominant cause of laggy
+  // home-screen navigation with "All Books" active).
+  const std::vector<std::string>& allPaths = cachedShelfPaths();
+  if (allPaths.empty()) {
     shelfCoversLoaded = true;
     return;
   }
-  if (cellWidth <= 0 || cellHeight <= 0) {
+  if (cellWidth <= 0 || cellHeight <= 0 || visibleCount <= 0) {
+    shelfCoversLoaded = true;
+    return;
+  }
+
+  // Build the window slice. Clamping protects against scroll offsets
+  // that drifted past the new active collection's length (e.g. user
+  // cycled from All Books down to a small Favorites).
+  const int total = static_cast<int>(allPaths.size());
+  const int start = std::clamp(scrollOffset, 0, total);
+  const int end = std::min(start + visibleCount, total);
+  if (start >= end) {
     shelfCoversLoaded = true;
     return;
   }
 
   bool showingLoading = false;
   Rect popupRect;
-  const int total = static_cast<int>(activeCollection->bookPaths.size());
-  const int progressIncrement = 90 / std::max(1, total);
+  const int windowSize = end - start;
+  const int progressIncrement = 90 / std::max(1, windowSize);
   int processed = 0;
 
-  for (const auto& bookPath : activeCollection->bookPaths) {
+  for (int i = start; i < end; ++i) {
+    const auto& bookPath = allPaths[i];
     if (!Storage.exists(bookPath.c_str())) {
       processed++;
       continue;
@@ -707,6 +724,28 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight) {
   }
 }
 
+const std::vector<std::string>& HomeActivity::cachedShelfPaths() {
+  const std::string& activeId = CollectionsStore::getInstance().getActiveId();
+  if (activeId.empty()) {
+    shelfPathsCache.clear();
+    shelfPathsCacheKey.clear();
+    return shelfPathsCache;
+  }
+  // Cache hit: same active collection as last call, no invalidation
+  // requested. The active id changes only on cycleActiveCollection (L/R
+  // on the header), and content mutations (picker, file delete,
+  // rescan) explicitly invalidate via invalidateShelfPathsCache().
+  if (activeId == shelfPathsCacheKey) {
+    return shelfPathsCache;
+  }
+  // Cache miss — resolve once and remember. resolveBookPaths is the
+  // expensive call (for virtuals it sorts the full LibraryIndex); the
+  // returned vector is move-assigned into the cache so no extra copy.
+  shelfPathsCache = CollectionsStore::getInstance().resolveBookPaths(activeId);
+  shelfPathsCacheKey = activeId;
+  return shelfPathsCache;
+}
+
 std::string HomeActivity::getFocusedBookPath() const {
   // Header focus is a separate row that isn't a "book" — long-press there
   // should NOT open an action menu (there's no book to act on).
@@ -760,10 +799,8 @@ void HomeActivity::showHomeBookActionMenu(const std::string& bookPath) {
   const bool isBookFile = isEpub || isXtc || FsHelpers::hasTxtExtension(bookPath) ||
                           FsHelpers::hasMarkdownExtension(bookPath);
   if (isBookFile) {
-    const bool inFavorites =
-        CollectionsStore::getInstance().isBookInCollection(CollectionsStore::FAVORITES_ID, bookPath);
-    items.push_back({inFavorites ? FileBrowserAction::RemoveFromFavorites : FileBrowserAction::AddToFavorites,
-                     inFavorites ? StrId::STR_REMOVE_FROM_FAVORITES : StrId::STR_ADD_TO_FAVORITES});
+    // Phase 2: single entry that drills into a per-book picker.
+    items.push_back({FileBrowserAction::AddToCollection, StrId::STR_ADD_TO_COLLECTION});
   }
 
   // Only show "Remove from Recent Books" if the book is actually in the
@@ -817,6 +854,7 @@ void HomeActivity::showHomeBookActionMenu(const std::string& bookPath) {
                   }
                   RECENT_BOOKS.removeBook(bookPath);
                   CollectionsStore::getInstance().removeBookFromAllCollections(bookPath);
+                  LibraryIndex::getInstance().forgetPath(bookPath);
                   if (!Storage.remove(bookPath.c_str())) {
                     LOG_ERR("HOME", "Failed to delete file: %s", bookPath.c_str());
                   }
@@ -827,6 +865,9 @@ void HomeActivity::showHomeBookActionMenu(const std::string& bookPath) {
                     selectorIndex = recentBooks.empty() ? 0 : static_cast<int>(recentBooks.size()) - 1;
                   }
                   shelfCoversLoaded = false;
+                  invalidateShelfPathsCache();
+                  shelfSnapshotValid = false;
+                  lastRenderedCoverSelectorValid = false;  // book gone from active collection too.
                   requestUpdate(true);
                 });
             return;
@@ -873,16 +914,20 @@ void HomeActivity::showHomeBookActionMenu(const std::string& bookPath) {
             requestUpdate();
             return;
           }
-          case FileBrowserAction::AddToFavorites:
-          case FileBrowserAction::RemoveFromFavorites: {
-            const bool nowIn = CollectionsStore::getInstance().toggleBookInCollection(
-                CollectionsStore::FAVORITES_ID, bookPath);
-            drawHomeToast(renderer, nowIn ? tr(STR_ADDED_TO_FAVORITES) : tr(STR_REMOVED_FROM_FAVORITES));
-            delay(800);
-            // Adding a brand-new book to Favorites means we need to
-            // generate its shelf thumb on next render.
-            shelfCoversLoaded = false;
-            requestUpdate();
+          case FileBrowserAction::AddToCollection: {
+            // Open the picker; it mutates CollectionsStore directly so
+            // we just need to invalidate the shelf thumb cache and
+            // refresh on return.
+            const size_t ls = bookPath.find_last_of('/');
+            const std::string title = (ls != std::string::npos) ? bookPath.substr(ls + 1) : bookPath;
+            startActivityForResult(std::make_unique<CollectionPickerActivity>(renderer, mappedInput, bookPath, title),
+                                   [this](const ActivityResult&) {
+                                     shelfCoversLoaded = false;
+                                     invalidateShelfPathsCache();
+                                     shelfSnapshotValid = false;
+                                     lastRenderedCoverSelectorValid = false;  // picker may have toggled membership of active.
+                                     requestUpdate();
+                                   });
             return;
           }
           case FileBrowserAction::RemoveFromRecentBooks: {
@@ -899,9 +944,57 @@ void HomeActivity::showHomeBookActionMenu(const std::string& bookPath) {
           }
           case FileBrowserAction::PinFavorite:
           case FileBrowserAction::UnpinFavorite:
-            // Not exposed in the home menu — sleep-image-only actions.
+          case FileBrowserAction::RescanLibrary:
+            // Not exposed in the home book menu — sleep-image / shelf-
+            // header-only actions.
             return;
         }
+      });
+}
+
+void HomeActivity::showShelfHeaderActionMenu() {
+  // Header context = the active collection's name tab. Currently the
+  // only action is to rescan the SD card for newly added books — but
+  // structured as a menu so future header-level operations (rename,
+  // delete user collection, change sort order) slot in cleanly.
+  std::vector<FileBrowserActionActivity::MenuItem> items;
+  items.push_back({FileBrowserAction::RescanLibrary, StrId::STR_RESCAN_LIBRARY});
+
+  const Collection* active = CollectionsStore::getInstance().getActiveCollection();
+  const std::string title = (active != nullptr) ? active->name : std::string();
+
+  startActivityForResult(
+      std::make_unique<FileBrowserActionActivity>(renderer, mappedInput, title, std::move(items),
+                                                  /*ignoreInitialConfirmRelease=*/true),
+      [this](const ActivityResult& result) {
+        longPressConfirmHandled = false;
+        if (result.isCancelled) {
+          return;
+        }
+        const auto action = static_cast<FileBrowserAction>(std::get<FileBrowserActionResult>(result.data).action);
+        if (action != FileBrowserAction::RescanLibrary) return;
+
+        // Full rescan with the same indexing popup we use on first boot
+        // — keeps the visual language consistent and signals clearly that
+        // the device is doing work.
+        const Rect popupRect = GUI.drawPopup(renderer, tr(STR_RESCAN_LIBRARY));
+        LibraryIndex::getInstance().rescan(
+            [&](int pct) { GUI.fillPopupProgress(renderer, popupRect, pct); });
+        // Invalidate the per-collection thumb cache flag so any newly-
+        // discovered books on the active virtual collection get their
+        // thumbs on the next render.
+        shelfCoversLoaded = false;
+        // The LibraryIndex changed but the activeId didn't — must
+        // explicitly invalidate so virtual collections re-resolve.
+        invalidateShelfPathsCache();
+        shelfSnapshotValid = false;
+        lastRenderedCoverSelectorValid = false;
+        // Brief confirmation toast so the user knows it finished even
+        // if no new books showed up (otherwise the popup just vanishes
+        // and the screen looks unchanged).
+        drawHomeToast(renderer, tr(STR_LIBRARY_RESCANNED));
+        delay(800);
+        requestUpdate();
       });
 }
 
@@ -928,6 +1021,11 @@ void HomeActivity::onEnter() {
   // press) get their cover generated on the next return to Home.
   shelfCoversLoaded = false;
   shelfHeaderFocused = false;
+  // Drop any stale cached path list — the active collection's
+  // membership may have changed while we were elsewhere.
+  invalidateShelfPathsCache();
+  shelfSnapshotValid = false;
+  lastRenderedCoverSelectorValid = false;
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   loadRecentBooks(metrics.homeRecentBooksCount);
@@ -1543,9 +1641,14 @@ void HomeActivity::loop() {
     if (!isLyraFlow) {
       shelfHeaderFocused = false;  // safety: defensive reset off-Flow
     }
+    // For virtual collections (Recently Added / All Books) the path list
+    // comes from LibraryIndex, not from Collection::bookPaths. The
+    // per-frame cache below means the heavy work (sort + copy) only
+    // runs when the active collection actually changes.
     const Collection* activeCollection =
         isLyraFlow ? CollectionsStore::getInstance().getActiveCollection() : nullptr;
-    const int shelfCount = activeCollection ? static_cast<int>(activeCollection->bookPaths.size()) : 0;
+    const int shelfCount = (isLyraFlow && activeCollection != nullptr) ? static_cast<int>(cachedShelfPaths().size())
+                                                                       : 0;
     const int shelfStart = bookCount;
     const int shelfEnd = shelfStart + shelfCount;
     const int menuStart = shelfEnd;
@@ -1560,7 +1663,11 @@ void HomeActivity::loop() {
     // Cycles the active collection. direction is +1 (next) or -1 (prev).
     // Wraps. Resets shelf-side render state so the new collection's
     // thumbs regenerate on next render. Persists the new activeId via
-    // CollectionsStore::setActiveId which writes to SD.
+    // CollectionsStore::setActiveId which writes to SD. If the new
+    // active is a virtual collection (Recently Added / All Books) and
+    // the LibraryIndex hasn't been built this session, pre-warms it
+    // here with a visible progress popup so the user sees feedback
+    // instead of an unexplained pause.
     auto cycleActiveCollection = [this, &collections](int direction) {
       if (collections.size() <= 1) return;
       const std::string& currentActive = CollectionsStore::getInstance().getActiveId();
@@ -1576,6 +1683,18 @@ void HomeActivity::loop() {
       CollectionsStore::getInstance().setActiveId(collections[idx].id);
       shelfScrollOffset = 0;
       shelfCoversLoaded = false;  // new collection probably has missing thumbs.
+      // The cache key check inside cachedShelfPaths() will detect the
+      // new activeId automatically — no explicit invalidate needed.
+
+      const Collection* newActive = CollectionsStore::getInstance().getActiveCollection();
+      if (newActive != nullptr && newActive->isVirtual) {
+        // Pre-warm the SD walk if it hasn't happened yet. ensureWalked
+        // self-skips after the first walk this session so this is free
+        // on subsequent cycles between virtuals.
+        const Rect popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+        LibraryIndex::getInstance().ensureWalked(
+            [&](int pct) { GUI.fillPopupProgress(renderer, popupRect, pct); });
+      }
     };
 
     if (mappedInput.wasPressed(MappedInputManager::Button::Right)) {
@@ -1677,7 +1796,9 @@ void HomeActivity::loop() {
   if (isLyraFlow) {
     const Collection* activeCollection = CollectionsStore::getInstance().getActiveCollection();
     if (activeCollection != nullptr) {
-      const int shelfCount = static_cast<int>(activeCollection->bookPaths.size());
+      // Virtual collections have empty stored bookPaths — use the per-
+      // frame cache so the scroll math doesn't pay for a fresh resolve.
+      const int shelfCount = static_cast<int>(cachedShelfPaths().size());
       const int shelfStart = static_cast<int>(recentBooks.size());
       // Mirror the visible-cell math used inside drawBookshelfStrip so the
       // scroll window matches the renderer's view exactly. Keep these in
@@ -1702,14 +1823,19 @@ void HomeActivity::loop() {
     }
   }
 
-  // Long-press Confirm on a focused book (carousel or shelf) → open the
-  // file-action menu instead of opening the book. Mirrors the same gesture
-  // in FileBrowserActivity. Threshold matches FileBrowser's GO_HOME_MS so
-  // the muscle memory carries over. We require a non-empty book path so
-  // long-pressing on the menu icon bar still falls through to the menu's
-  // existing short-press handler.
+  // Long-press Confirm:
+  //   • on a focused book (carousel or shelf book row) → file-action menu
+  //   • on the shelf header (collection tab) → header action menu
+  //     (currently just "Rescan library")
+  // Threshold matches FileBrowser's GO_HOME_MS so the muscle memory
+  // carries over.
   if (!longPressConfirmHandled && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
       mappedInput.getHeldTime() >= 1000) {
+    if (shelfHeaderFocused) {
+      longPressConfirmHandled = true;
+      showShelfHeaderActionMenu();
+      return;
+    }
     const std::string focusedPath = getFocusedBookPath();
     if (!focusedPath.empty()) {
       longPressConfirmHandled = true;
@@ -1751,10 +1877,13 @@ void HomeActivity::loop() {
     if (activeThemeForConfirm == CrossPointSettings::UI_THEME::LYRA_FLOW) {
       const Collection* activeCollection = CollectionsStore::getInstance().getActiveCollection();
       if (activeCollection != nullptr) {
+        // Per-frame cache — covers both user collections (stored) and
+        // virtuals (LibraryIndex-derived) uniformly.
+        const std::vector<std::string>& paths = cachedShelfPaths();
         const int shelfStart = static_cast<int>(recentBooks.size());
-        shelfBookCount = static_cast<int>(activeCollection->bookPaths.size());
+        shelfBookCount = static_cast<int>(paths.size());
         if (selectorIndex >= shelfStart && selectorIndex < shelfStart + shelfBookCount) {
-          onSelectBook(activeCollection->bookPaths[selectorIndex - shelfStart]);
+          onSelectBook(paths[selectorIndex - shelfStart]);
           return;
         }
       }
@@ -1926,10 +2055,39 @@ void HomeActivity::render(RenderLock&&) {
                                : 0))
                        : selectorIndex;
 
+  // On Flow theme we defer the framebuffer snapshot until AFTER the shelf
+  // is painted (see end of render). The theme's built-in storer would
+  // snapshot a pre-cover, pre-shelf state — too early to be useful for
+  // the shelf skip-fast-path. Passing a no-op lets the theme keep its
+  // flag bookkeeping while we own the snapshot timing. Non-Flow themes
+  // continue to use the in-theme snapshot since they don't have a shelf.
+  const bool isLyraFlowForRender = activeThemeForRender == CrossPointSettings::UI_THEME::LYRA_FLOW;
+  auto storer =
+      isLyraFlowForRender ? std::function<bool()>([] { return true; })
+                          : std::function<bool()>(std::bind(&HomeActivity::storeCoverBuffer, this));
+
+  // Carousel cover-load skip fast-path. When the buffer restore brought
+  // back the previous frame's carousel pixels AND the current carousel
+  // center hint matches the one that was painted into the buffer, the
+  // theme can skip its 5 BMP loads. Saves ~80% of drawRecentBookCover's
+  // cost on every "L/R within shelf/menu" type input — those don't
+  // change the carousel but currently force it to repaint anyway.
+  if (isLyraFlowForRender) {
+    const bool canSkipCovers =
+        bufferRestored && lastRenderedCoverSelectorValid && coverSelectorIndex == lastRenderedCoverSelectorIdx;
+    // skipCarouselCoverLoads is declared `mutable` precisely to allow
+    // a single-flight assignment through the const theme reference.
+    static_cast<const LyraFlowTheme&>(GUI).skipCarouselCoverLoads = canSkipCovers;
+  }
   GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
                           recentBooks, coverSelectorIndex, coverRendered, coverBufferStored, bufferRestored,
-                          std::bind(&HomeActivity::storeCoverBuffer, this),
+                          storer,
                           hasAnyBookStats(currentBookStats) ? &currentBookStats : nullptr, currentBookProgressPercent);
+  // Remember what we just painted so the next render can short-circuit.
+  if (isLyraFlowForRender) {
+    lastRenderedCoverSelectorIdx = coverSelectorIndex;
+    lastRenderedCoverSelectorValid = true;
+  }
 
   auto menuItems = buildHomeMenuItems(hasOpdsServers, hasReadingStats, hasBookmarks);
 
@@ -1952,7 +2110,9 @@ void HomeActivity::render(RenderLock&&) {
   if (activeThemeForShelf == CrossPointSettings::UI_THEME::LYRA_FLOW) {
     const Collection* activeCollection = CollectionsStore::getInstance().getActiveCollection();
     if (activeCollection != nullptr) {
-      shelfBookCount = static_cast<int>(activeCollection->bookPaths.size());
+      // Per-frame cache — counts are derived from the same resolved
+      // vector that the render uses below, so this is free.
+      shelfBookCount = static_cast<int>(cachedShelfPaths().size());
       const int shelfStart = static_cast<int>(recentBooks.size());
       if (selectorIndex >= shelfStart && selectorIndex < shelfStart + shelfBookCount) {
         shelfSelectedSpine = selectorIndex - shelfStart;
@@ -1969,23 +2129,39 @@ void HomeActivity::render(RenderLock&&) {
     constexpr int kShelfCellWidth = 100;         // matches drawBookshelfStrip
     constexpr int kShelfCellHeight = 150;        // matches drawBookshelfStrip
     constexpr int kShelfStripHeight = kShelfTabHeight + kShelfTabBottomGap + kShelfCellHeight;
+    constexpr int kShelfSidePad = 16;            // matches drawBookshelfStrip
+    constexpr int kShelfCellGap = 16;            // matches drawBookshelfStrip
+    const int shelfAvailW = pageWidth - 2 * kShelfSidePad;
+    const int shelfCellTotalW = kShelfCellWidth + kShelfCellGap;
+    const int shelfVisibleCells = std::max(1, (shelfAvailW + kShelfCellGap) / shelfCellTotalW);
 
-    // Generate any missing cover thumbnails for this collection. First call
-    // per onEnter pays the cost (load EPUB + write BMP per missing book);
-    // subsequent calls short-circuit because Storage.exists() is true.
-    if (!shelfCoversLoaded) {
-      loadShelfCovers(kShelfCellWidth, kShelfCellHeight);
-    }
+    // Lazy thumb generation: only build BMPs for the cells currently in
+    // view. Collections like "All Books" can hold hundreds of entries;
+    // eager generation would freeze the UI for minutes the first time
+    // the user switched to it. Storage.exists short-circuits visited
+    // cells, so subsequent renders are near-free once a window's thumbs
+    // are on SD.
+    loadShelfCovers(kShelfCellWidth, kShelfCellHeight, shelfScrollOffset, shelfVisibleCells);
+
+    // Fast-path skip: if the framebuffer was restored from the last
+    // render AND every shelf-affecting state value is unchanged, the
+    // shelf pixels are already on screen — no need to repeat the
+    // 4-cells-of-SD-BMP load that drawBookshelfStrip does. This is the
+    // single biggest contributor to home-screen lag for navigation that
+    // doesn't touch the shelf row.
+    const std::string& currentShelfActiveId = CollectionsStore::getInstance().getActiveId();
+    const bool shelfStateMatchesSnapshot =
+        bufferRestored && shelfSnapshotValid && currentShelfActiveId == shelfSnapshotActiveId &&
+        shelfScrollOffset == shelfSnapshotScrollOffset && shelfSelectedSpine == shelfSnapshotFocusedSpine &&
+        shelfHeaderFocused == shelfSnapshotHeaderFocused;
 
     // Position the strip slightly below the geometric midpoint of the empty
     // band between cover tile bottom (~y=401) and icon-bar label top (~y=686).
-    // User feedback iter 3: cells now show real cover art, so the strip can
-    // sit closer to the icon bar without crowding — earlier high anchor was
-    // a defensive choice when placeholders looked like UI chrome.
-    // Re-tuned in iter 4 after cells grew to 100x150 (strip is now 180 tall):
-    // 240 keeps the gap to the icon bar around 36 px so the row doesn't run
-    // into the menu labels.
-    constexpr int kEmptySpaceMidpointFromBottom = 240;
+    // Re-tuned in iter 5 to make room for the focused-book title under the
+    // row: previous value (240) clipped the title's bottom ~1/3 against
+    // the icon bar's label area. 260 raises the strip ~20px so the title
+    // sits with comfortable headroom above the icons.
+    constexpr int kEmptySpaceMidpointFromBottom = 260;
     const int shelfStripY = pageHeight - kEmptySpaceMidpointFromBottom - (kShelfStripHeight / 2);
     const Rect shelfRect{0, shelfStripY, pageWidth, kShelfStripHeight};
 
@@ -1995,6 +2171,24 @@ void HomeActivity::render(RenderLock&&) {
     // the "◀ Collection ▶" affordance only when both apply. Otherwise the
     // arrows would be misleading (single-collection case can't cycle).
     const bool hasMultipleCollections = CollectionsStore::getInstance().getCollections().size() > 1;
+    // Compute the focused book title (filename minus extension) only when
+    // a shelf book is focused — same trick the carousel uses to caption
+    // a cover without having to load the EPUB metadata up front.
+    // thread_local buffer avoids reallocating per render while still
+    // keeping the c_str pointer stable until the next call.
+    static thread_local std::string focusedTitleBuf;
+    const char* focusedTitle = nullptr;
+    if (shelfSelectedSpine >= 0 && activeCollection2 != nullptr) {
+      const std::vector<std::string>& paths = cachedShelfPaths();
+      if (shelfSelectedSpine < static_cast<int>(paths.size())) {
+        const std::string& bp = paths[shelfSelectedSpine];
+        const size_t slash = bp.find_last_of('/');
+        const std::string fname = (slash != std::string::npos) ? bp.substr(slash + 1) : bp;
+        const size_t dot = fname.find_last_of('.');
+        focusedTitleBuf = (dot != std::string::npos && dot > 0) ? fname.substr(0, dot) : fname;
+        focusedTitle = focusedTitleBuf.c_str();
+      }
+    }
 
     // Resolve a concrete (dimension-substituted) cover thumbnail path for
     // each book. getThumbBmpPath() returns a template like
@@ -2004,9 +2198,10 @@ void HomeActivity::render(RenderLock&&) {
     // failed in loadShelfCovers) get an empty string so the renderer draws
     // the placeholder card instead of trying to open a non-existent file.
     std::vector<std::string> shelfCoverPaths;
-    if (activeCollection2 != nullptr) {
-      shelfCoverPaths.reserve(activeCollection2->bookPaths.size());
-      for (const auto& path : activeCollection2->bookPaths) {
+    if (activeCollection2 != nullptr && !shelfStateMatchesSnapshot) {
+      const std::vector<std::string>& renderPaths = cachedShelfPaths();
+      shelfCoverPaths.reserve(renderPaths.size());
+      for (const auto& path : renderPaths) {
         std::string templatePath;
         if (FsHelpers::hasEpubExtension(path)) {
           templatePath = Epub(path, "/.crosspoint").getThumbBmpPath();
@@ -2023,9 +2218,18 @@ void HomeActivity::render(RenderLock&&) {
         shelfCoverPaths.push_back(std::move(resolved));
       }
     }
-    static_cast<const LyraFlowTheme&>(GUI).drawBookshelfStrip(renderer, shelfRect, collectionName, shelfCoverPaths,
-                                                              shelfSelectedSpine, shelfScrollOffset,
-                                                              shelfHeaderFocused, hasMultipleCollections);
+    if (!shelfStateMatchesSnapshot) {
+      static_cast<const LyraFlowTheme&>(GUI).drawBookshelfStrip(
+          renderer, shelfRect, collectionName, shelfCoverPaths, shelfSelectedSpine, shelfScrollOffset,
+          shelfHeaderFocused, hasMultipleCollections, focusedTitle);
+      // Remember the state of the shelf we just painted so the next
+      // render can short-circuit if nothing about it has changed.
+      shelfSnapshotActiveId = currentShelfActiveId;
+      shelfSnapshotScrollOffset = shelfScrollOffset;
+      shelfSnapshotFocusedSpine = shelfSelectedSpine;
+      shelfSnapshotHeaderFocused = shelfHeaderFocused;
+      shelfSnapshotValid = true;
+    }
   }
 
   // While the shelf header is focused, force "no menu selection" so the
@@ -2052,6 +2256,19 @@ void HomeActivity::render(RenderLock&&) {
     labels = mappedInput.mapLabels("", tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   }
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+
+  // Flow theme: snapshot the framebuffer AFTER the whole home screen is
+  // composed (header + carousel + shelf + menu + hints). Next render's
+  // restoreCoverBuffer() brings everything back, letting the shelf
+  // fast-path skip its expensive BMP reads when nothing about it has
+  // changed. We deliberately store before displayBuffer() so the panel
+  // I/O isn't blocked waiting for the memcpy, and `coverBufferStored`
+  // flag drives the restore on the next render.
+  if (isLyraFlowForRender) {
+    if (storeCoverBuffer()) {
+      coverBufferStored = true;
+    }
+  }
 
   renderer.displayBuffer();
 

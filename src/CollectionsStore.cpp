@@ -1,10 +1,13 @@
 #include "CollectionsStore.h"
 
+#include <Arduino.h>  // millis() for createCollection
 #include <ArduinoJson.h>
 #include <HalStorage.h>
 #include <Logging.h>
 
 #include <algorithm>
+
+#include "LibraryIndex.h"
 
 namespace {
 constexpr char COLLECTIONS_FILE[] = "/.crosspoint/collections.json";
@@ -26,6 +29,22 @@ void CollectionsStore::begin() {
     seedDefaults();
     saveToFile();
   }
+  // Always re-pin the virtual collections at the end of the list so they
+  // appear AFTER user-created ones in the L/R cycle. We re-create them
+  // every begin() because they're not persisted (their book lists come
+  // from LibraryIndex at access time, not from collections.json).
+  auto seedVirtual = [this](const char* id, const char* name) {
+    if (findCollection(id) == nullptr) {
+      Collection v;
+      v.id = id;
+      v.name = name;
+      v.isVirtual = true;
+      collections.push_back(std::move(v));
+    }
+  };
+  seedVirtual(RECENTLY_ADDED_ID, RECENTLY_ADDED_NAME);
+  seedVirtual(ALL_BOOKS_ID, ALL_BOOKS_NAME);
+
   if (activeId.empty() || findCollection(activeId) == nullptr) {
     activeId = FAVORITES_ID;
   }
@@ -50,12 +69,47 @@ const Collection* CollectionsStore::findCollection(const std::string& collection
 bool CollectionsStore::isBookInCollection(const std::string& collectionId, const std::string& bookPath) const {
   const Collection* c = findCollection(collectionId);
   if (!c) return false;
+  // For user collections we have an exact in-memory list. For virtuals
+  // we'd have to scan LibraryIndex, which is expensive — and the picker
+  // (the only realistic caller) hides virtuals anyway. So virtual
+  // membership lookup returns false here, which is the safe default.
+  if (c->isVirtual) return false;
   return std::find(c->bookPaths.begin(), c->bookPaths.end(), bookPath) != c->bookPaths.end();
+}
+
+std::vector<std::string> CollectionsStore::resolveBookPaths(const std::string& collectionId) const {
+  const Collection* c = findCollection(collectionId);
+  if (c == nullptr) return {};
+  if (!c->isVirtual) {
+    return c->bookPaths;  // copy is intentional — caller may want to iterate concurrently.
+  }
+  // Virtual collection — pull live data from LibraryIndex. The first
+  // call this session lazily kicks off the SD walk; subsequent calls
+  // are in-memory.
+  LibraryIndex::getInstance().ensureWalked();
+  if (collectionId == RECENTLY_ADDED_ID) {
+    return LibraryIndex::getInstance().getRecentlyAddedPaths(18);
+  }
+  if (collectionId == ALL_BOOKS_ID) {
+    return LibraryIndex::getInstance().getAllBookPaths();
+  }
+  return {};
+}
+
+int CollectionsStore::countBooksInCollection(const std::string& collectionId) const {
+  const Collection* c = findCollection(collectionId);
+  if (c == nullptr) return 0;
+  if (!c->isVirtual) return static_cast<int>(c->bookPaths.size());
+  return static_cast<int>(resolveBookPaths(collectionId).size());
 }
 
 bool CollectionsStore::toggleBookInCollection(const std::string& collectionId, const std::string& bookPath) {
   for (auto& c : collections) {
     if (c.id != collectionId) continue;
+    if (c.isVirtual) {
+      LOG_ERR("CLN", "Refusing to toggle membership on virtual collection: %s", collectionId.c_str());
+      return false;
+    }
     auto it = std::find(c.bookPaths.begin(), c.bookPaths.end(), bookPath);
     bool nowIn;
     if (it != c.bookPaths.end()) {
@@ -72,6 +126,27 @@ bool CollectionsStore::toggleBookInCollection(const std::string& collectionId, c
   }
   LOG_ERR("CLN", "Toggle requested for unknown collection: %s", collectionId.c_str());
   return false;
+}
+
+std::string CollectionsStore::createCollection(const std::string& name) {
+  if (name.empty()) {
+    LOG_ERR("CLN", "createCollection refused: empty name");
+    return {};
+  }
+  // ID derived from millis() — guaranteed unique on any human-paced
+  // create cadence, and avoids needing a stable hash of the (possibly
+  // user-edited) name. Prefix "c_" so ids never collide with the seeded
+  // FAVORITES_ID (which is plain "favorites").
+  std::string id = "c_" + std::to_string(millis());
+  // Defensive: if two creates happen in the same millisecond (e.g. a
+  // batch import), suffix with the existing count to disambiguate.
+  while (findCollection(id) != nullptr) {
+    id += "_x";
+  }
+  collections.push_back({id, name, {}});
+  saveToFile();
+  LOG_INF("CLN", "Created collection: %s (id=%s)", name.c_str(), id.c_str());
+  return id;
 }
 
 int CollectionsStore::removeBookFromAllCollections(const std::string& bookPath) {
@@ -148,6 +223,7 @@ bool CollectionsStore::saveToFile() const {
   doc["active"] = activeId;
   JsonArray arr = doc["collections"].to<JsonArray>();
   for (const auto& c : collections) {
+    if (c.isVirtual) continue;  // virtuals are rebuilt every begin() — don't waste SD space persisting them.
     JsonObject entry = arr.add<JsonObject>();
     entry["id"] = c.id;
     entry["name"] = c.name;

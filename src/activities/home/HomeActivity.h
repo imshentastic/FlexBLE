@@ -34,6 +34,35 @@ class HomeActivity final : public Activity {
   // Down/Confirm enters the books, Up returns to the carousel. Reset on
   // onEnter so navigation always starts on the carousel.
   bool shelfHeaderFocused = false;
+  // Cache of the active collection's resolved book paths. Without this,
+  // every frame called resolveBookPaths() up to 5 times — for "All Books"
+  // with hundreds of entries that meant ~250 KB of string-vector copies
+  // and sorts per frame, causing visible home-screen lag. Refresh only
+  // when the active collection id changes, when membership mutates
+  // (picker, rescan, file delete), or on onEnter. Cache key holds the
+  // active id at the time of refresh; an empty key means cold.
+  std::string shelfPathsCacheKey;
+  std::vector<std::string> shelfPathsCache;
+  // Snapshot of the shelf-relevant state at the moment the cached
+  // framebuffer (coverBuffer) was last filled. When this matches the
+  // live state AND we successfully restored the framebuffer, the
+  // shelf's pixels are already on-screen and we can skip the expensive
+  // BMP loads for each visible cell — this is the dominant cost of a
+  // home re-render. Reset whenever the shelf could possibly look
+  // different (active collection, scroll, focused index/header).
+  bool shelfSnapshotValid = false;
+  std::string shelfSnapshotActiveId;
+  int shelfSnapshotScrollOffset = -1;
+  int shelfSnapshotFocusedSpine = -2;  // -1 means "no focus", so use a different sentinel.
+  bool shelfSnapshotHeaderFocused = false;
+  // The carousel center hint (coverSelectorIndex) painted into the
+  // cached framebuffer. When this matches the value we'd compute for
+  // the current render AND the buffer was restored, the carousel's 5
+  // covers are still correct on screen — set
+  // LyraFlowTheme::skipCarouselCoverLoads so the theme bypasses its
+  // SD reads. Sentinel = -1 means "no prior snapshot exists".
+  int lastRenderedCoverSelectorIdx = -1;
+  bool lastRenderedCoverSelectorValid = false;
   // Set once shelf cover BMPs have been resolved + generated-if-missing for
   // the current home session. Reset on onEnter so a freshly added book picks
   // up its thumbnail on the next return-to-Home.
@@ -102,11 +131,24 @@ class HomeActivity final : public Activity {
   void loadAllBookStats();
   void loadRecentCovers(int coverHeight);
   // FlexBLE Collections — generate BMP thumbnails at the bookshelf's exact
-  // cell dimensions for every book in the active collection that doesn't
-  // already have one cached on SD. Mirrors loadRecentCovers but uses the
-  // shelf cell size instead of the home cover size. Cheap on subsequent
-  // calls because Storage.exists() short-circuits once thumbs are written.
-  void loadShelfCovers(int cellWidth, int cellHeight);
+  // cell dimensions for the books that are currently visible on the
+  // shelf. Lazy by design: an active collection like "All Books" can
+  // have hundreds of entries and eager generation would freeze the UI
+  // for minutes. Only the [scrollOffset, scrollOffset+visibleCount)
+  // window pays the cost; the next batch generates when the user
+  // scrolls into uncovered territory.
+  void loadShelfCovers(int cellWidth, int cellHeight, int scrollOffset, int visibleCount);
+  // Returns the active collection's resolved book-path list, lazily
+  // recomputing only when the active id changes since last access (or
+  // when invalidateShelfPathsCache() was called). Critical to home
+  // smoothness when "All Books" is active — without this cache, every
+  // frame paid 5x resolveBookPaths copies.
+  const std::vector<std::string>& cachedShelfPaths();
+  // Clear the cache so the next cachedShelfPaths() call re-resolves.
+  // Call after any operation that may have changed the active
+  // collection's contents (picker toggle, file delete, library rescan).
+  void invalidateShelfPathsCache() { shelfPathsCacheKey.clear(); }
+
   // Long-press Confirm helpers (used by both the carousel and the Flow
   // bookshelf). getFocusedBookPath returns the file path of the book under
   // the cursor when the user is on either a carousel slot or a shelf slot.
@@ -117,6 +159,12 @@ class HomeActivity final : public Activity {
   // unfinished, add/remove favorites, remove from recent books). Result
   // handler performs the action, refreshes recents, and requests a redraw.
   void showHomeBookActionMenu(const std::string& bookPath);
+  // Action menu invoked by long-pressing the shelf header (collection
+  // name tab). Currently exposes a single "Rescan library" action that
+  // re-walks the SD card and refreshes the LibraryIndex. Carved off as a
+  // separate menu (vs. the per-book one) so the items always match the
+  // collection-level context.
+  void showShelfHeaderActionMenu();
 
  public:
   explicit HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
