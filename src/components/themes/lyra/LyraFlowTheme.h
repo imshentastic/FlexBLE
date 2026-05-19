@@ -45,6 +45,28 @@ class LyraFlowTheme : public LyraTheme {
                       const std::function<std::string(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;
 
+  // FlexBLE Collections — bookshelf strip between the carousel and the icon
+  // bar. Renders the collection name above a row of cover thumbnails. Each
+  // entry in `coverPaths` is the absolute path to a BMP thumb on SD (empty
+  // string => render a placeholder card for that book).
+  //
+  // Selection model has THREE focus states on this row (driven by the
+  // caller, encoded across the two flags):
+  //   • `headerFocused = true` and `selectedSpineIndex = -1`: the user is
+  //     on the collection tab itself; tab is drawn bold and flanked with
+  //     left/right arrows when `hasMultipleCollections` is true to hint at
+  //     L/R cycling.
+  //   • `headerFocused = false` and `selectedSpineIndex >= 0`: the user is
+  //     on one of the books; the matching cell gets a focus ring.
+  //   • `headerFocused = false` and `selectedSpineIndex = -1`: nothing on
+  //     this row is focused (cursor is on the carousel or icon bar).
+  //
+  // `scrollOffset` is the leftmost visible book index when the collection
+  // overflows the viewport — pass 0 if no scroll.
+  void drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const char* collectionName,
+                          const std::vector<std::string>& coverPaths, int selectedSpineIndex, int scrollOffset,
+                          bool headerFocused, bool hasMultipleCollections) const;
+
  private:
   // Tracks "is page 2 currently shown" across renders. mutable because
   // drawButtonMenu is a const method (theme contract). State is purely

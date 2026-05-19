@@ -55,6 +55,12 @@ class RecentBooksStore {
   void updatePath(const std::string& oldPath, const std::string& newPath, const std::string& oldCachePath,
                   const std::string& newCachePath);
 
+  // Remove a book from the recents list. Returns true if a matching entry
+  // existed and was removed (and the store was saved). False if no match.
+  // Used by the home long-press action menu's "Remove from Recent Books"
+  // item — does NOT delete the underlying file or its cache.
+  bool removeBook(const std::string& path);
+
   // Get the list of recent books (most recent first)
   const std::vector<RecentBook>& getBooks() const { return recentBooks; }
 

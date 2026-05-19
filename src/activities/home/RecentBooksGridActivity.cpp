@@ -272,7 +272,11 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
     if (needsCoverThumbGeneration(book, coverPath)) {
       if (FsHelpers::hasEpubExtension(book.path)) {
         Epub epub(book.path, "/.crosspoint");
-        if (epub.load(false, true)) {
+        // buildIfMissing=true so EPUBs the user hasn't opened yet (no
+        // book.bin metadata cache) still get their thumbnail extracted.
+        // Without this, page 2+ of Recent Books silently skipped any book
+        // that had never been opened in this firmware version.
+        if (epub.load(/*buildIfMissing=*/true, /*skipLoadingCss=*/true)) {
           if (!showingLoading) {
             showingLoading = true;
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));

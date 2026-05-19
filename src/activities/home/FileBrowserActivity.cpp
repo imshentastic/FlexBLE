@@ -13,6 +13,7 @@
 #include "BookmarkStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "CollectionsStore.h"
 #include "FileBrowserActionActivity.h"
 #include "MappedInputManager.h"
 #include "activities/reader/BookReadingStats.h"
@@ -392,7 +393,7 @@ void FileBrowserActivity::toggleEpubCompleted(const std::string& fullPath, const
 void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool ignoreInitialConfirmRelease) {
   const std::string fullPath = buildFullPath(basepath, entry);
   std::vector<FileBrowserActionActivity::MenuItem> items;
-  items.reserve(4);
+  items.reserve(5);
   items.push_back({FileBrowserAction::Delete, StrId::STR_DELETE});
   if (hasClearableBookCache(fullPath)) {
     items.push_back({FileBrowserAction::DeleteCache, StrId::STR_DELETE_CACHE});
@@ -400,6 +401,17 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
   if (FsHelpers::hasEpubExtension(fullPath)) {
     items.push_back({FileBrowserAction::ToggleCompleted,
                      isEpubCompleted(fullPath) ? StrId::STR_MARK_UNFINISHED : StrId::STR_MARK_FINISHED});
+  }
+
+  // FlexBLE Collections (phase 1): toggle Favorites membership on any book
+  // file. Phase 2 will replace this with a generic "Add to collection..."
+  // picker that lets the user pick which collection(s).
+  const bool isBookFile = FsHelpers::hasEpubExtension(fullPath) || FsHelpers::hasXtcExtension(fullPath) ||
+                          FsHelpers::hasTxtExtension(fullPath) || FsHelpers::hasMarkdownExtension(fullPath);
+  if (isBookFile) {
+    const bool inFavorites = CollectionsStore::getInstance().isBookInCollection(CollectionsStore::FAVORITES_ID, fullPath);
+    items.push_back({inFavorites ? FileBrowserAction::RemoveFromFavorites : FileBrowserAction::AddToFavorites,
+                     inFavorites ? StrId::STR_REMOVE_FROM_FAVORITES : StrId::STR_ADD_TO_FAVORITES});
   }
 
   const bool canPinFavorite = isSleepFolderPath(basepath) && isSleepImageFile(entry);
@@ -451,6 +463,15 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
           case FileBrowserAction::UnpinFavorite:
             unpinSleepFavorite();
             return;
+          case FileBrowserAction::AddToFavorites:
+          case FileBrowserAction::RemoveFromFavorites: {
+            const bool nowIn = CollectionsStore::getInstance().toggleBookInCollection(
+                CollectionsStore::FAVORITES_ID, fullPath);
+            drawToast(renderer, nowIn ? tr(STR_ADDED_TO_FAVORITES) : tr(STR_REMOVED_FROM_FAVORITES));
+            delay(800);
+            requestUpdate();
+            return;
+          }
         }
       });
 }
