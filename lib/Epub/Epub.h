@@ -29,6 +29,12 @@ class Epub {
   std::unique_ptr<CssParser> cssParser;
   // CSS files
   std::vector<std::string> cssFiles;
+  // FlexBLE: series captured from the most recent parseContentOpf
+  // pass. Not persisted to book.bin (cache version compatibility),
+  // so getSeriesName/Index returns empty if load() reused the on-disk
+  // cache. SeriesIndex caches across sessions instead.
+  std::string lastSeriesName;
+  std::string lastSeriesIndex;
 
   bool findContentOpfFile(std::string* contentOpfFile) const;
   bool parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata);
@@ -51,6 +57,14 @@ class Epub {
   const std::string& getTitle() const;
   const std::string& getAuthor() const;
   const std::string& getLanguage() const;
+  // FlexBLE series detection (ported from aalu, MIT-licensed by Dave
+  // Allie 2025; original repo: dawsonfi/aalu). Both values are
+  // populated by parseContentOpf — empty when the OPF didn't declare
+  // series, OR when load() short-circuited from the on-disk cache
+  // (book.bin doesn't persist series fields; SeriesIndex handles
+  // cross-session caching instead).
+  const std::string& getSeriesName() const { return lastSeriesName; }
+  const std::string& getSeriesIndex() const { return lastSeriesIndex; }
   std::string getCoverBmpPath(bool cropped = false) const;
   bool generateCoverBmp(bool cropped = false) const;
   std::string getThumbBmpPath() const;

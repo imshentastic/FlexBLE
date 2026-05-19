@@ -29,6 +29,7 @@
 #include "CollectionsStore.h"
 #include "LibraryIndex.h"
 #include "RecentBooksStore.h"
+#include "SeriesIndex.h"
 #include "SdCardFontSystem.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
@@ -751,6 +752,7 @@ void setup() {
   // deferred until the user first accesses Recently Added / All Books on
   // the shelf so boot stays fast.
   LibraryIndex::getInstance().begin();
+  SeriesIndex::getInstance().begin();
   CollectionsStore::getInstance().begin();
 
   // First-boot library indexing: if no library_index.json existed on SD,
