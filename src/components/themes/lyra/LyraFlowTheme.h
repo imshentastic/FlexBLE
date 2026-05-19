@@ -63,9 +63,31 @@ class LyraFlowTheme : public LyraTheme {
   //
   // `scrollOffset` is the leftmost visible book index when the collection
   // overflows the viewport — pass 0 if no scroll.
+  //
+  // `focusedBookTitle` is rendered centered BELOW the cell row when a
+  // book is focused (`selectedSpineIndex >= 0`). Pass nullptr or empty
+  // when nothing is focused or when the title shouldn't render. Pattern
+  // mirrors the Lyra carousel's title affordance under the cover.
   void drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const char* collectionName,
                           const std::vector<std::string>& coverPaths, int selectedSpineIndex, int scrollOffset,
-                          bool headerFocused, bool hasMultipleCollections) const;
+                          bool headerFocused, bool hasMultipleCollections,
+                          const char* focusedBookTitle = nullptr) const;
+
+ public:
+  // Set by HomeActivity right before invoking drawRecentBookCover. When
+  // true, the theme bypasses the 5 BMP loads (4 side covers + 1 center
+  // cover) and trusts that the framebuffer was restored from a previous
+  // render where the same covers were painted at the same positions.
+  // Title and footer text still render because drawHeader's fillRect
+  // partially wipes the title strip on every frame. The flag is one-
+  // shot: drawRecentBookCover resets it before returning, so a stale
+  // value can't leak into the next paint.
+  //
+  // Lives on the theme rather than a function parameter because the
+  // drawRecentBookCover signature is part of the BaseTheme virtual
+  // contract — overloading it would touch every other theme. mutable
+  // because drawRecentBookCover is const.
+  mutable bool skipCarouselCoverLoads = false;
 
  private:
   // Tracks "is page 2 currently shown" across renders. mutable because

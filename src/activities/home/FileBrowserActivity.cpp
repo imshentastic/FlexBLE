@@ -11,6 +11,7 @@
 #include <algorithm>
 
 #include "BookmarkStore.h"
+#include "CollectionPickerActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "CollectionsStore.h"
@@ -403,15 +404,14 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
                      isEpubCompleted(fullPath) ? StrId::STR_MARK_UNFINISHED : StrId::STR_MARK_FINISHED});
   }
 
-  // FlexBLE Collections (phase 1): toggle Favorites membership on any book
-  // file. Phase 2 will replace this with a generic "Add to collection..."
-  // picker that lets the user pick which collection(s).
+  // FlexBLE Collections (phase 2): single picker entry that drills into a
+  // checklist of every collection. The picker handles the per-membership
+  // toggle and the "+ New collection..." flow itself, so the action menu
+  // doesn't need separate add/remove items per collection anymore.
   const bool isBookFile = FsHelpers::hasEpubExtension(fullPath) || FsHelpers::hasXtcExtension(fullPath) ||
                           FsHelpers::hasTxtExtension(fullPath) || FsHelpers::hasMarkdownExtension(fullPath);
   if (isBookFile) {
-    const bool inFavorites = CollectionsStore::getInstance().isBookInCollection(CollectionsStore::FAVORITES_ID, fullPath);
-    items.push_back({inFavorites ? FileBrowserAction::RemoveFromFavorites : FileBrowserAction::AddToFavorites,
-                     inFavorites ? StrId::STR_REMOVE_FROM_FAVORITES : StrId::STR_ADD_TO_FAVORITES});
+    items.push_back({FileBrowserAction::AddToCollection, StrId::STR_ADD_TO_COLLECTION});
   }
 
   const bool canPinFavorite = isSleepFolderPath(basepath) && isSleepImageFile(entry);
@@ -463,15 +463,20 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
           case FileBrowserAction::UnpinFavorite:
             unpinSleepFavorite();
             return;
-          case FileBrowserAction::AddToFavorites:
-          case FileBrowserAction::RemoveFromFavorites: {
-            const bool nowIn = CollectionsStore::getInstance().toggleBookInCollection(
-                CollectionsStore::FAVORITES_ID, fullPath);
-            drawToast(renderer, nowIn ? tr(STR_ADDED_TO_FAVORITES) : tr(STR_REMOVED_FROM_FAVORITES));
-            delay(800);
-            requestUpdate();
+          case FileBrowserAction::AddToCollection: {
+            // Open the dedicated picker. Membership changes are persisted
+            // by the picker itself; we only need to redraw on return.
+            const std::string filename = getFileName(entry);
+            startActivityForResult(
+                std::make_unique<CollectionPickerActivity>(renderer, mappedInput, fullPath, filename),
+                [this](const ActivityResult&) { requestUpdate(); });
             return;
           }
+          case FileBrowserAction::RemoveFromRecentBooks:
+          case FileBrowserAction::RescanLibrary:
+            // Not exposed in the file browser's action menu — only the
+            // home shelf paths add these items.
+            return;
         }
       });
 }
