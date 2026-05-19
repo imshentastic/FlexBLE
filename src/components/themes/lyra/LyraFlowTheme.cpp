@@ -87,7 +87,7 @@ void cutRoundedCorners(GfxRenderer& renderer, int x, int y, int w, int h, int r)
 void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                         int selectorIndex, bool& coverRendered, bool& coverBufferStored,
                                         bool& bufferRestored, const std::function<bool()>& storeCoverBuffer,
-                                        const BookReadingStats* stats, float /*progressPercent*/) const {
+                                        const BookReadingStats* stats, float progressPercent) const {
   if (recentBooks.empty()) {
     drawEmptyRecents(renderer, rect);
     return;
@@ -225,10 +225,46 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
     renderer.drawBitmap(centerBitmap, cX, actualY, actualCoverWidth, actualCoverHeight);
     cutRoundedCorners(renderer, cX, actualY, actualCoverWidth, actualCoverHeight, bookCornerRadius);
   } else {
-    // Placeholder: black lower-2/3 with the cover icon, matches reference fallback.
+    // Placeholder: black lower-2/3 with the cover icon centered just below
+    // the divider, then the wrapped book title in white below the icon.
+    // Mirrors LyraCarouselTheme's fallback so un-thumbnailed books still
+    // look like intentional cards instead of half-blank slots.
     renderer.fillRoundedRect(cX, actualY + actualCoverHeight / 3, actualCoverWidth, 2 * actualCoverHeight / 3,
                              bookCornerRadius, false, false, true, true, Color::Black);
-    renderer.drawIcon(CoverIcon, cX + actualCoverWidth / 2 - 16, actualY + actualCoverHeight / 2 - 16, 32, 32);
+
+    constexpr int kFallbackTitlePadX = 14;
+    constexpr int kFallbackTitlePadBottom = 14;
+    constexpr int kFallbackIconGap = 10;
+    const int iconX = cX + actualCoverWidth / 2 - 16;
+    const int iconY = actualY + actualCoverHeight / 3 + 14;
+    renderer.drawIcon(CoverIcon, iconX, iconY, 32, 32);
+
+    const int titleY = iconY + 32 + kFallbackIconGap;
+    const int titleW = actualCoverWidth - kFallbackTitlePadX * 2;
+    const int titleH = actualY + actualCoverHeight - kFallbackTitlePadBottom - titleY;
+    const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+    const int maxLines = std::clamp(titleH / std::max(1, lineHeight), 1, 4);
+    // Fall back to the filename (sans extension) when the EPUB had no title
+    // metadata — same logic the Flow theme uses for the heading above.
+    std::string title = recentBooks[curIdx].title;
+    if (title.empty()) {
+      title = recentBooks[curIdx].path;
+      const size_t lastSlash = title.find_last_of('/');
+      if (lastSlash != std::string::npos) title = title.substr(lastSlash + 1);
+      const size_t lastDot = title.find_last_of('.');
+      if (lastDot != std::string::npos && lastDot > 0) title = title.substr(0, lastDot);
+    }
+    const auto titleLines = renderer.wrappedText(UI_10_FONT_ID, title.c_str(), titleW, maxLines, EpdFontFamily::BOLD);
+    const int blockH = lineHeight * static_cast<int>(titleLines.size());
+    int lineY = titleY + std::max(0, (titleH - blockH) / 2);
+    for (const auto& line : titleLines) {
+      const int lineW = renderer.getTextWidth(UI_10_FONT_ID, line.c_str(), EpdFontFamily::BOLD);
+      // White text on the black backdrop — drawText's `black` param is the
+      // pixel state to write, so `false` puts down white pixels.
+      renderer.drawText(UI_10_FONT_ID, cX + (actualCoverWidth - lineW) / 2, lineY, line.c_str(), false,
+                        EpdFontFamily::BOLD);
+      lineY += lineHeight;
+    }
   }
   renderer.drawRoundedRect(cX, actualY, actualCoverWidth, actualCoverHeight, 2, bookCornerRadius, true);
 
@@ -254,119 +290,308 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   renderer.drawText(UI_12_FONT_ID, centerX - titleWidth / 2, rect.y - 5, truncatedTitle.c_str(), true,
                     EpdFontFamily::BOLD);
 
-  // --- Per-book reading time, centered below the center cover. Mirrors the
-  //     reference Lua FlowTheme: "Xh Ym" in SMALL_FONT, 8 px under the cover.
-  //     Always rendered (even "0h 0m") so the layout is stable whether the
-  //     user has read the book or not. ---
-  char timeStr[16];
-  const uint32_t bookSeconds = (stats != nullptr) ? stats->totalReadingSeconds : 0;
-  const uint32_t hours = bookSeconds / 3600;
-  const uint32_t minutes = (bookSeconds % 3600) / 60;
-  snprintf(timeStr, sizeof(timeStr), "%uh %um", static_cast<unsigned>(hours), static_cast<unsigned>(minutes));
-  const int timeWidth = renderer.getTextWidth(SMALL_FONT_ID, timeStr);
-  const int timeY = centerY + centerCoverHeight + 8;
-  renderer.drawText(SMALL_FONT_ID, centerX - timeWidth / 2, timeY, timeStr, true);
-}
+  // --- Reading-progress footer below the center cover. Modelled on the
+  //     LyraCarousel footer: compact elapsed-time label on the top-left,
+  //     a 5-px dithered-track progress bar across the cover width, and a
+  //     right-aligned percentage below the bar. ---
+  constexpr int kFooterFontId = UI_10_FONT_ID;
+  constexpr int kFooterTopGap = 8;             // gap below the center cover
+  constexpr int kFooterProgressBarHeight = 5;
+  constexpr int kFooterBarToLabelGap = 2;      // gap between bar and time/percent row
 
-void LyraFlowTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
-                                   const std::function<std::string(int index)>& buttonLabel,
-                                   const std::function<UIIcon(int index)>& rowIcon) const {
-  const auto& menuMetrics = UITheme::getInstance().getMetrics();
-  const int rowStep = menuMetrics.menuRowHeight + menuMetrics.menuSpacing;
-  // Reserve a thin strip at the bottom for page-indicator dots. Reserving
-  // unconditionally keeps tile geometry stable whether dots are visible or not.
-  constexpr int dotSize = 10;
-  constexpr int dotSpacing = 8;
-  constexpr int dotStripHeight = 18;
-  const int usableHeight = std::max(0, rect.height - dotStripHeight);
-  const int pageItems = std::max(1, usableHeight / rowStep);
-  const int safeSelectedIndex = std::max(0, selectedIndex);
+  const int footerWidth = actualCoverWidth;
+  const int footerX = cX;
+  int infoY = centerY + centerCoverHeight + kFooterTopGap;
 
-  // Two-anchor pagination: page 1 = items [0..pageItems), page 2 =
-  // last `pageItems` items. The pages overlap; we resolve which one
-  // to render via a sticky bit so the cursor "pulls" the visible
-  // window with it asymmetrically — page 2 holds while the cursor
-  // scrolls up through the overlap, and only flips back to page 1
-  // when the cursor crosses page 2's top boundary.
-  const bool needsPaging = buttonCount > pageItems;
-  const int page2StartIndex = std::max(0, buttonCount - pageItems);
-  if (!needsPaging) {
-    stickyMenuPage2 = false;
-  } else if (safeSelectedIndex >= pageItems) {
-    // Cursor is in page 2's exclusive zone — we're definitely on page 2.
-    stickyMenuPage2 = true;
-  } else if (safeSelectedIndex < page2StartIndex) {
-    // Cursor crossed page 2's top boundary going up — back to page 1.
-    stickyMenuPage2 = false;
-  }
-  // Else: cursor in the overlap zone, keep whichever page we were on.
-  const bool onPage2 = needsPaging && stickyMenuPage2;
-  const int pageStartIndex = onPage2 ? page2StartIndex : 0;
-  const int totalPages = needsPaging ? 2 : 1;
-  const int currentPage = onPage2 ? 1 : 0;
+  const bool hasStats = (stats != nullptr && stats->sessionCount > 0);
+  const bool hasProgress = progressPercent >= 0.0f;
 
-  for (int i = pageStartIndex; i < buttonCount && i < pageStartIndex + pageItems; ++i) {
-    const int displayIndex = i - pageStartIndex;
-    const int tileWidth = rect.width - menuMetrics.contentSidePadding * 2;
-    const Rect tileRect{rect.x + menuMetrics.contentSidePadding, rect.y + displayIndex * rowStep, tileWidth,
-                        menuMetrics.menuRowHeight};
-
-    const bool selected = (i == selectedIndex);
-    if (selected) {
-      renderer.fillRoundedRect(tileRect.x, tileRect.y, tileRect.width, tileRect.height, menuTileCornerRadius,
-                               Color::LightGray);
+  // New stacking order (per UX feedback): bar on top, then a single row with
+  // elapsed-time on the left and percentage on the right beneath it. This
+  // keeps the numeric data clustered visually rather than splitting time
+  // above the bar and percent below.
+  if (hasProgress) {
+    const float clampedProgress = std::clamp(progressPercent, 0.0f, 100.0f);
+    const int filledWidth = std::clamp(static_cast<int>((clampedProgress / 100.0f) * footerWidth), 0, footerWidth);
+    renderer.fillRectDither(footerX, infoY, footerWidth, kFooterProgressBarHeight, Color::LightGray);
+    if (filledWidth > 0) {
+      renderer.fillRect(footerX, infoY, filledWidth, kFooterProgressBarHeight, true);
     }
 
-    const std::string labelStr = buttonLabel(i);
-    const char* label = labelStr.c_str();
-    int textX = tileRect.x + 16;
-    const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
-    const int textY = tileRect.y + (menuMetrics.menuRowHeight - lineHeight) / 2;
+    const int labelRowY = infoY + kFooterProgressBarHeight + kFooterBarToLabelGap;
+    if (hasStats) {
+      char buf[24];
+      const uint32_t seconds = stats->totalReadingSeconds;
+      if (seconds < 60) {
+        snprintf(buf, sizeof(buf), "<1m");
+      } else if (seconds < 3600) {
+        snprintf(buf, sizeof(buf), "%um", static_cast<unsigned>(seconds / 60));
+      } else {
+        snprintf(buf, sizeof(buf), "%uh %um", static_cast<unsigned>(seconds / 3600),
+                 static_cast<unsigned>((seconds % 3600) / 60));
+      }
+      renderer.drawText(kFooterFontId, footerX, labelRowY, buf, true, EpdFontFamily::REGULAR);
+    }
+
+    char percentBuf[8];
+    snprintf(percentBuf, sizeof(percentBuf), "%.0f%%", clampedProgress);
+    const int percentW = renderer.getTextWidth(kFooterFontId, percentBuf, EpdFontFamily::REGULAR);
+    renderer.drawText(kFooterFontId, footerX + footerWidth - percentW, labelRowY, percentBuf, true,
+                      EpdFontFamily::REGULAR);
+  } else if (hasStats) {
+    // Edge case: stats exist but progress doesn't (e.g. book just opened
+    // for the first time, no last-read marker yet). Fall back to time-only
+    // on a single line, where the bar would have sat.
+    char buf[24];
+    const uint32_t seconds = stats->totalReadingSeconds;
+    if (seconds < 60) {
+      snprintf(buf, sizeof(buf), "<1m");
+    } else if (seconds < 3600) {
+      snprintf(buf, sizeof(buf), "%um", static_cast<unsigned>(seconds / 60));
+    } else {
+      snprintf(buf, sizeof(buf), "%uh %um", static_cast<unsigned>(seconds / 3600),
+               static_cast<unsigned>((seconds % 3600) / 60));
+    }
+    renderer.drawText(kFooterFontId, footerX, infoY, buf, true, EpdFontFamily::REGULAR);
+  }
+}
+
+void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const char* collectionName,
+                                       const std::vector<std::string>& coverPaths, int selectedSpineIndex,
+                                       int scrollOffset, bool headerFocused, bool hasMultipleCollections) const {
+  // Vertical layout (top → bottom):
+  //   [focused book title]  — drawn ABOVE rect.y so the rest of the layout
+  //                           doesn't shift when focused vs unfocused
+  //   [collection tab]      — collection name centered, bold when focused
+  //   [thumbnail row]       — fixed-cell-size cover thumbnails, aspect-fill
+  //                           with crop (same pattern as Recent Books grid)
+  //
+  // Cell aspect is ~2:3 (book-cover proportion) so a row of thumbnails
+  // reads as a row of actual books standing up rather than abstract bars.
+  // Tab is the "Favorites" / collection-name heading rendered above the
+  // book row. kTabBottomGap is the vertical padding between the heading
+  // baseline and the top of the cover row — user feedback iter 4 asked
+  // for more breathing room there so the heading doesn't crowd the row.
+  constexpr int kTabHeight = 18;
+  constexpr int kTabBottomGap = 12;
+  // 4 thumbs across at 480px wide: 2*16 (side pad) + 4*100 (cells) + 3*16
+  // (gaps) = 480 exactly. Dropped from 5 cells @ 84x126 to 4 cells @
+  // 100x150 to fill the empty band below the carousel that the smaller
+  // cells left behind. Aspect still ~2:3 book-cover; renderer can blit
+  // 1:1 because loadShelfCovers caches BMPs at exactly this size.
+  constexpr int kCellWidth = 100;
+  constexpr int kCellHeight = 150;
+  constexpr int kSidePad = 16;
+  constexpr int kCellGap = 16;
+
+  const int bookCount = static_cast<int>(coverPaths.size());
+
+  const int tabY = rect.y;
+  // Tab font is one step up from the row's prior 8px (SMALL_FONT_ID) to
+  // 10px (UI_10_FONT_ID) so the collection name is readable from a glance
+  // without dominating the strip vs. the cover thumbs.
+  constexpr int kTabFontId = UI_10_FONT_ID;
+  if (collectionName != nullptr && *collectionName != '\0') {
+    // Bold + flanking left/right arrow glyphs when the header itself is
+    // the focus, so the user has an obvious visual cue that L/R cycles
+    // collections (and not, say, books within a row).
+    const auto style = headerFocused ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+    const int nw = renderer.getTextWidth(kTabFontId, collectionName, style);
+    const int nameX = rect.x + (rect.width - nw) / 2;
+    renderer.drawText(kTabFontId, nameX, tabY, collectionName, true, style);
+
+    if (headerFocused && hasMultipleCollections) {
+      // Triangle hints flanking the name. Drawn as filled polygons so
+      // they read as clear arrowheads at 10px font scale. Vertically
+      // centered on the cap-height of the name.
+      const int lineH = renderer.getLineHeight(kTabFontId);
+      const int cy = tabY + lineH / 2;
+      constexpr int kArrowSize = 4;
+      constexpr int kArrowGap = 6;
+      // Left ◀
+      const int lTip = nameX - kArrowGap - kArrowSize;
+      const int lBase = nameX - kArrowGap;
+      const int lXs[3] = {lTip, lBase, lBase};
+      const int lYs[3] = {cy, cy - kArrowSize, cy + kArrowSize};
+      renderer.fillPolygon(lXs, lYs, 3, true);
+      // Right ▶
+      const int rTip = nameX + nw + kArrowGap + kArrowSize;
+      const int rBase = nameX + nw + kArrowGap;
+      const int rXs[3] = {rTip, rBase, rBase};
+      const int rYs[3] = {cy, cy - kArrowSize, cy + kArrowSize};
+      renderer.fillPolygon(rXs, rYs, 3, true);
+    }
+  }
+
+  if (bookCount <= 0) return;
+
+  const int availW = rect.width - 2 * kSidePad;
+  const int cellTotalW = kCellWidth + kCellGap;
+  const int visibleCells = std::max(1, (availW + kCellGap) / cellTotalW);
+  const int shelfRowY = tabY + kTabHeight + kTabBottomGap;
+  const int actualDrawn = std::min(visibleCells, bookCount - scrollOffset);
+  const int rowDrawW = actualDrawn * kCellWidth + (actualDrawn - 1) * kCellGap;
+  const int rowStartX = rect.x + (rect.width - rowDrawW) / 2;
+
+  // Page-stack depth cue: draw two dithered light-gray strips only on the
+  // right and bottom of each cell (not behind the cover — that part was
+  // wasted ink in the previous L-shape implementation). kShadowInset
+  // pulls the strips in from the top-right and bottom-left corners so
+  // the protrusion fades at the corners — same as how page edges aren't
+  // visible at the corners of a real bound book.
+  constexpr int kShadowDepth = 6;   // how far the page stack protrudes (px)
+  constexpr int kShadowInset = 3;   // corner inset along the cover edge
+
+  for (int i = 0; i < actualDrawn; ++i) {
+    const int spineIdx = scrollOffset + i;
+    const int x = rowStartX + i * cellTotalW;
+    const int y = shelfRowY;
+
+    // Right edge: pages stacked along the fore-edge of the book.
+    renderer.fillRectDither(x + kCellWidth, y + kShadowInset, kShadowDepth, kCellHeight - kShadowInset, Color::LightGray);
+    // Bottom edge: pages along the tail of the book.
+    renderer.fillRectDither(x + kShadowInset, y + kCellHeight, kCellWidth - kShadowInset, kShadowDepth, Color::LightGray);
+    // Corner block where the two strips meet — fills the gap so the L
+    // looks contiguous rather than missing its outer corner.
+    renderer.fillRectDither(x + kCellWidth, y + kCellHeight, kShadowDepth, kShadowDepth, Color::LightGray);
+
+    bool drewThumb = false;
+    if (spineIdx < static_cast<int>(coverPaths.size()) && !coverPaths[spineIdx].empty()) {
+      FsFile file;
+      if (Storage.openFileForRead("LFT", coverPaths[spineIdx], file)) {
+        Bitmap bitmap(file);
+        if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
+          // Aspect-fill into the cell, cropping the longer axis. Same math
+          // as RecentBooksGridActivity::loadPageCovers.
+          const float srcW = static_cast<float>(bitmap.getWidth());
+          const float srcH = static_cast<float>(bitmap.getHeight());
+          const float srcRatio = srcW / srcH;
+          const float targetRatio = static_cast<float>(kCellWidth) / static_cast<float>(kCellHeight);
+          float cropX = 0.0f;
+          float cropY = 0.0f;
+          if (srcRatio > targetRatio) {
+            cropX = std::max(0.0f, 1.0f - (targetRatio / srcRatio));
+          } else if (srcRatio < targetRatio) {
+            cropY = std::max(0.0f, 1.0f - (srcRatio / targetRatio));
+          }
+          renderer.drawBitmap(bitmap, x, y, kCellWidth, kCellHeight, cropX, cropY);
+          drewThumb = true;
+        }
+        file.close();
+      }
+    }
+    if (!drewThumb) {
+      // Placeholder cell: thin outline + small book icon centered.
+      renderer.drawRoundedRect(x, y, kCellWidth, kCellHeight, 1, 3, true);
+      constexpr int kIconSize = 24;
+      const int iconX = x + (kCellWidth - kIconSize) / 2;
+      const int iconY = y + (kCellHeight - kIconSize) / 2;
+      renderer.drawIcon(CoverIcon, iconX, iconY, kIconSize, kIconSize);
+    }
+
+    if (spineIdx == selectedSpineIndex) {
+      // Focus ring outside the cell so the cover itself isn't covered.
+      renderer.drawRoundedRect(x - 3, y - 3, kCellWidth + 6, kCellHeight + 6, 2, 5, true);
+    }
+  }
+
+  if (bookCount > visibleCells) {
+    const int triY = shelfRowY + kCellHeight / 2;
+    constexpr int triSize = 4;
+    if (scrollOffset > 0) {
+      const int tx = rect.x + kSidePad / 2;
+      const int triXs[3] = {tx + triSize, tx - 1, tx + triSize};
+      const int triYs[3] = {triY - triSize, triY, triY + triSize};
+      renderer.fillPolygon(triXs, triYs, 3, true);
+    }
+    if (scrollOffset + visibleCells < bookCount) {
+      const int tx = rect.x + rect.width - kSidePad / 2;
+      const int triXs[3] = {tx - triSize, tx + 1, tx - triSize};
+      const int triYs[3] = {triY - triSize, triY, triY + triSize};
+      renderer.fillPolygon(triXs, triYs, 3, true);
+    }
+  }
+}
+
+void LyraFlowTheme::drawButtonMenu(GfxRenderer& renderer, Rect /*rect*/, int buttonCount, int selectedIndex,
+                                   const std::function<std::string(int index)>& buttonLabel,
+                                   const std::function<UIIcon(int index)>& rowIcon) const {
+  // Bottom-anchored horizontal icon bar, modelled on LyraCarouselTheme.
+  // The selected icon gets a rounded black highlight and its label is
+  // centered just above the row. The passed `rect` is ignored — the bar
+  // always anchors to the screen bottom regardless of where the home
+  // carousel placed its menu area.
+  if (buttonCount <= 0) return;
+
+  constexpr int kMenuIconSize = 32;
+  constexpr int kMenuIconPad = 14;          // → tile height = 14+32+14 = 60
+  constexpr int kHighlightPad = 7;          // ring of padding around selected icon
+  constexpr int kHighlightCorner = 6;
+  constexpr int kMenuLabelTopGap = 3;       // gap between label and icon row
+  constexpr int kMenuLabelBottomGap = 4;    // gap below label baseline
+  constexpr int kMenuRowDrop = 31;          // pushes the bar closer to the screen bottom
+
+  const int screenW = renderer.getScreenWidth();
+  const int screenH = renderer.getScreenHeight();
+  const int hintsH = LyraFlowMetrics::values.buttonHintsHeight;
+  const int tileH = kMenuIconPad + kMenuIconSize + kMenuIconPad;
+  const int tileW = screenW / buttonCount;
+  const int labelLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  const int rowY = screenH - hintsH - tileH - kMenuLabelTopGap - labelLineHeight - kMenuLabelBottomGap + kMenuRowDrop;
+  const int labelY = rowY - kMenuLabelTopGap - labelLineHeight;
+
+  // Wipe the bar's vertical span so any prior render of the previous list
+  // layout doesn't bleed through under the new tighter geometry.
+  renderer.fillRect(0, labelY, screenW, screenH - hintsH - labelY, false);
+
+  for (int i = 0; i < buttonCount; ++i) {
+    const int tileX = i * tileW;
+    const int iconX = tileX + (tileW - kMenuIconSize) / 2;
+    const int iconY = rowY + kMenuIconPad;
+    const bool selected = (selectedIndex == i);
+
+    if (selected) {
+      const int highlightSize = kMenuIconSize + 2 * kHighlightPad;
+      const int highlightY = rowY + (tileH - highlightSize) / 2;
+      renderer.fillRoundedRect(iconX - kHighlightPad, highlightY, highlightSize, highlightSize, kHighlightCorner,
+                               Color::Black);
+    }
 
     if (rowIcon != nullptr) {
       const UIIcon icon = rowIcon(i);
       if (icon == UIIcon::BookmarkIcon) {
-        // Match the status-bar bookmark ribbon shape (LyraTheme parity).
-        const int ribbonWidth = 16;
-        const int ribbonHeight = 22;
-        const int notchSize = 6;
-        const int iconX = textX + (menuIconSize - ribbonWidth) / 2;
-        const int iconY = textY + 4;
-        const int centerX = iconX + ribbonWidth / 2;
-        const int polyX[5] = {iconX, iconX + ribbonWidth, iconX + ribbonWidth, centerX, iconX};
-        const int polyY[5] = {iconY, iconY, iconY + ribbonHeight, iconY + ribbonHeight - notchSize,
-                              iconY + ribbonHeight};
-        renderer.fillPolygon(polyX, polyY, 5, true);
-        textX += menuIconSize + menuTilePadding + 2;
+        // Status-bar bookmark ribbon shape, drawn in the same slot as a
+        // regular icon. Mirrors the Flow list version, just centered in
+        // the tile instead of left-aligned.
+        constexpr int ribbonWidth = 16;
+        constexpr int ribbonHeight = 22;
+        constexpr int notchSize = 6;
+        const int ribbonX = iconX + (kMenuIconSize - ribbonWidth) / 2;
+        const int ribbonY = iconY + (kMenuIconSize - ribbonHeight) / 2;
+        const int centerX = ribbonX + ribbonWidth / 2;
+        const int polyX[5] = {ribbonX, ribbonX + ribbonWidth, ribbonX + ribbonWidth, centerX, ribbonX};
+        const int polyY[5] = {ribbonY, ribbonY, ribbonY + ribbonHeight, ribbonY + ribbonHeight - notchSize,
+                              ribbonY + ribbonHeight};
+        renderer.fillPolygon(polyX, polyY, 5, !selected);
       } else {
-        const uint8_t* iconBitmap = lyraFlowMenuIcon(icon);
-        if (iconBitmap != nullptr) {
-          renderer.drawIcon(iconBitmap, textX, textY + 3, menuIconSize, menuIconSize);
-          textX += menuIconSize + menuTilePadding + 2;
+        const uint8_t* bmp = LyraTheme::iconForName(icon, kMenuIconSize);
+        if (bmp != nullptr) {
+          if (selected) {
+            renderer.drawIconInverted(bmp, iconX, iconY, kMenuIconSize, kMenuIconSize);
+          } else {
+            renderer.drawIcon(bmp, iconX, iconY, kMenuIconSize, kMenuIconSize);
+          }
         }
       }
     }
-
-    renderer.drawText(UI_12_FONT_ID, textX, textY, label, true);
   }
 
-  // Page-indicator dots — pattern lifted from RecentBooksGridActivity::render.
-  // Anchor at the same vertical offset above the button hints as Recent Books
-  // does (rect.y + rect.height == pageHeight - buttonHintsHeight for the home
-  // menu rect, so this formula resolves to the same Y as Recent Books's
-  // pageHeight - buttonHintsHeight - verticalSpacing - 4).
-  if (totalPages > 1) {
-    const int totalDotWidth = totalPages * dotSize + (totalPages - 1) * dotSpacing;
-    const int dotsStartX = rect.x + (rect.width - totalDotWidth) / 2;
-    const int dotY = rect.y + rect.height - menuMetrics.verticalSpacing - 4;
-    constexpr int dotRadius = dotSize / 2;  // 5 → fully-circular bullet on 10x10
-    for (int p = 0; p < totalPages; ++p) {
-      const int dx = dotsStartX + p * (dotSize + dotSpacing);
-      if (p == currentPage) {
-        renderer.fillRoundedRect(dx, dotY, dotSize, dotSize, dotRadius, Color::Black);
-      } else {
-        renderer.drawRoundedRect(dx, dotY, dotSize, dotSize, 1, dotRadius, true);
-      }
-    }
+  // Centered label above the row, showing only the selected item's name.
+  if (selectedIndex >= 0 && selectedIndex < buttonCount && buttonLabel != nullptr) {
+    const std::string labelStr = buttonLabel(selectedIndex);
+    const auto centered = renderer.truncatedText(SMALL_FONT_ID, labelStr.c_str(), screenW - 40);
+    const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, centered.c_str(), EpdFontFamily::REGULAR);
+    renderer.drawText(SMALL_FONT_ID, (screenW - labelWidth) / 2, labelY + 2, centered.c_str(), true,
+                      EpdFontFamily::REGULAR);
   }
 }

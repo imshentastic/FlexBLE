@@ -25,6 +25,24 @@ class HomeActivity final : public Activity {
   ButtonNavigator buttonNavigator;
   int selectorIndex = 0;
   int lastCarouselBookIndex = 0;  // remembered position when leaving carousel row
+  // FlexBLE Collections — leftmost visible spine index on the bookshelf
+  // strip; adjusted when the focused spine would otherwise scroll out of view.
+  int shelfScrollOffset = 0;
+  // True when the cursor is on the collection-name header (the "Favorites"
+  // tab) rather than on a book in the shelf row. Header is a separate
+  // focus state above the books — L/R cycles the active collection,
+  // Down/Confirm enters the books, Up returns to the carousel. Reset on
+  // onEnter so navigation always starts on the carousel.
+  bool shelfHeaderFocused = false;
+  // Set once shelf cover BMPs have been resolved + generated-if-missing for
+  // the current home session. Reset on onEnter so a freshly added book picks
+  // up its thumbnail on the next return-to-Home.
+  bool shelfCoversLoaded = false;
+  // Suppresses the short-press Confirm handler when the user just held Confirm
+  // long enough to trigger the book action menu — otherwise the matching
+  // release would immediately open the book they were just acting on. Same
+  // pattern as FileBrowserActivity::longPressConfirmHandled.
+  bool longPressConfirmHandled = false;
   bool recentsLoading = false;
   bool recentsLoaded = false;
   bool firstRenderDone = false;
@@ -83,6 +101,22 @@ class HomeActivity final : public Activity {
   void loadRecentBooks(int maxBooks);
   void loadAllBookStats();
   void loadRecentCovers(int coverHeight);
+  // FlexBLE Collections — generate BMP thumbnails at the bookshelf's exact
+  // cell dimensions for every book in the active collection that doesn't
+  // already have one cached on SD. Mirrors loadRecentCovers but uses the
+  // shelf cell size instead of the home cover size. Cheap on subsequent
+  // calls because Storage.exists() short-circuits once thumbs are written.
+  void loadShelfCovers(int cellWidth, int cellHeight);
+  // Long-press Confirm helpers (used by both the carousel and the Flow
+  // bookshelf). getFocusedBookPath returns the file path of the book under
+  // the cursor when the user is on either a carousel slot or a shelf slot.
+  // Empty string => not on a book (e.g. cursor is on the menu icon bar).
+  std::string getFocusedBookPath() const;
+  // Opens the FileBrowserActionActivity picker for `bookPath` with a menu
+  // tailored to the home screen (delete, delete cache, mark finished /
+  // unfinished, add/remove favorites, remove from recent books). Result
+  // handler performs the action, refreshes recents, and requests a redraw.
+  void showHomeBookActionMenu(const std::string& bookPath);
 
  public:
   explicit HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)

@@ -14,6 +14,15 @@ enum class FileBrowserAction : int {
   UnpinFavorite = 2,
   DeleteCache = 3,
   ToggleCompleted = 4,
+  // FlexBLE Collections (phase 1): toggle membership in the Favorites
+  // collection. Replaced by a generic picker in phase 2.
+  AddToFavorites = 5,
+  RemoveFromFavorites = 6,
+  // FlexBLE: long-press action menu on the home carousel / shelf shows this
+  // so the user can clear a book off the Recent Books list without having
+  // to clear its read state in the file browser. Only meaningful from the
+  // home screen; the file browser doesn't expose it.
+  RemoveFromRecentBooks = 7,
 };
 
 class FileBrowserActionActivity final : public Activity {
