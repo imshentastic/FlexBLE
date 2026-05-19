@@ -33,6 +33,16 @@ enum class FileBrowserAction : int {
   // SortPickerActivity for the active collection. Hidden for the
   // "Recently Added" virtual collection since its sort is intrinsic.
   SortBy = 9,
+  // FlexBLE: shelf-header item that flips the collapseSeries flag
+  // on the active collection. Label updates to reflect current
+  // state ("Series collapse: ON" vs "...: OFF").
+  ToggleCollapseSeries = 10,
+  // FlexBLE debug: opens a viewer listing the book's OPF metadata
+  // (title, author, language, series name + index). Useful when
+  // series collapse isn't grouping books as expected — lets the user
+  // verify whether the calibre:series tag is actually present in the
+  // EPUB.
+  ShowMetadata = 11,
 };
 
 class FileBrowserActionActivity final : public Activity {

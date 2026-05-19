@@ -10,6 +10,7 @@
 
 #include <algorithm>
 
+#include "BookMetadataViewerActivity.h"
 #include "BookmarkStore.h"
 #include "CollectionPickerActivity.h"
 #include "CrossPointSettings.h"
@@ -412,6 +413,10 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
                           FsHelpers::hasTxtExtension(fullPath) || FsHelpers::hasMarkdownExtension(fullPath);
   if (isBookFile) {
     items.push_back({FileBrowserAction::AddToCollection, StrId::STR_ADD_TO_COLLECTION});
+    // Show-metadata debug inspector — same on both home and file-
+    // browser long-press paths so the user can verify metadata from
+    // either context.
+    items.push_back({FileBrowserAction::ShowMetadata, StrId::STR_SHOW_METADATA});
   }
 
   const bool canPinFavorite = isSleepFolderPath(basepath) && isSleepImageFile(entry);
@@ -472,9 +477,16 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
                 [this](const ActivityResult&) { requestUpdate(); });
             return;
           }
+          case FileBrowserAction::ShowMetadata: {
+            startActivityForResult(
+                std::make_unique<BookMetadataViewerActivity>(renderer, mappedInput, fullPath),
+                [this](const ActivityResult&) { requestUpdate(); });
+            return;
+          }
           case FileBrowserAction::RemoveFromRecentBooks:
           case FileBrowserAction::RescanLibrary:
           case FileBrowserAction::SortBy:
+          case FileBrowserAction::ToggleCollapseSeries:
             // Not exposed in the file browser's action menu — only the
             // home shelf paths add these items.
             return;

@@ -65,6 +65,14 @@ class Epub {
   // cross-session caching instead).
   const std::string& getSeriesName() const { return lastSeriesName; }
   const std::string& getSeriesIndex() const { return lastSeriesIndex; }
+  // Lightweight OPF parse that captures ONLY series metadata into the
+  // lastSeriesName/lastSeriesIndex fields. Doesn't touch book.bin so
+  // it's safe to run on already-cached books without invalidating the
+  // spine/TOC cache. Used by the lazy series-enrichment pass — the
+  // caller reads getSeriesName()/getSeriesIndex() afterwards and
+  // persists into SeriesIndex.  Returns true if the OPF was readable
+  // (regardless of whether series info was found).
+  bool extractSeriesFromOpf();
   std::string getCoverBmpPath(bool cropped = false) const;
   bool generateCoverBmp(bool cropped = false) const;
   std::string getThumbBmpPath() const;
