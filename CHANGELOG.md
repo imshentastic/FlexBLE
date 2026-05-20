@@ -3,12 +3,12 @@
 ## [Unreleased]
 
 ## [crumble-v2.0.0] - 2026-05-20
-**Rebrand: FlexBLE → CrumBle.** The fork's identity changed; major bump to mark v1.x as the FlexBLE era and v2.x as the CrumBle era. No upstream version sync (still on CrossInk 1.2.11.1).
+**Rebrand: FlexBLE → CrumBLE.** The fork's identity changed; major bump to mark v1.x as the FlexBLE era and v2.x as the CrumBLE era. No upstream version sync (still on CrossInk 1.2.11.1).
 
 ### Changed (rebrand)
-- Project renamed FlexBLE → CrumBle across all source files, build flags, i18n strings, and boot/sleep screens. `FLEXBLE_VERSION` → `CRUMBLE_VERSION`, `STR_FLEXBLE` → `STR_CRUMBLE`, `flexble_version` → `crumble_version` in `platformio.ini`.
+- Project renamed FlexBLE → CrumBLE across all source files, build flags, i18n strings, and boot/sleep screens. `FLEXBLE_VERSION` → `CRUMBLE_VERSION`, `STR_FLEXBLE` → `STR_CRUMBLE`, `flexble_version` → `crumble_version` in `platformio.ini`.
 - New boot/sleep logo: chocolate-chip cookie with a bite taken out, replacing the previous triangle mark. 1-bit silhouette at 120×120 traced from brand reference; generator preserved at `src/images/gen_logo.py`.
-- Local folder renamed `FlexBLE/` → `CrumBle/`. GitHub repo renamed to match.
+- Local folder renamed `FlexBLE/` → `CrumBLE/`. GitHub repo renamed to match.
 
 ### Added (Collections)
 - **Collections system** (Phases 1–3): user-defined book collections backed by `collections.json` on SD. Virtual collections (All Books, Favorites, Recent, Currently Reading, Finished) computed lazily. Long-press Confirm on a book in the shelf to add/remove from collections; long-press on a shelf header for collection-level actions.
@@ -36,29 +36,29 @@
 - **Never lose reading time** on power-off: deep-sleep commit path now flushes the active session segment; idempotent re-commit via `sessionSegmentStartMs` prevents double-counting; the 10 s floor was dropped so very short sessions count. Ported from aalu's reading-stats fix (MIT, attributed).
 
 ## [crumble-v1.0.0] - 2026-05-17
-First stable CrumBle release post-upstream-merge. CrumBle now uses its own semver (`crumble_version`) independent of upstream CrossInk's versioning. The `crossink_version` field continues to track the upstream sync point (currently 1.2.11.1).
+First stable CrumBLE release post-upstream-merge. CrumBLE now uses its own semver (`crumble_version`) independent of upstream CrossInk's versioning. The `crossink_version` field continues to track the upstream sync point (currently 1.2.11.1).
 
-### Added (CrumBle fork)
+### Added (CrumBLE fork)
 - BLE HID page-turner support. From inside a book, open the reader menu and select **Bluetooth** to pair a Bluetooth remote (e.g. IINE GameBrick) and use its buttons as virtual page-turn keys. Reader-session-only: BLE auto-disables when you exit the book. Pairing is remembered across reboots; enable Bluetooth in a later reader session to auto-reconnect.
 - **BT Quick Connect** action in the Global Book Settings drawer. From inside a book, long-press the menu button → scroll to "BT Quick Connect" → activates BLE and reconnects to the last bonded remote (or launches the pairing UI if no remote is saved). Closes the drawer back to the book on success.
-- After a successful BT connection from the in-book Bluetooth menu, CrumBle now auto-pops both the BT settings and the reader menu so the user lands straight back in the book — no manual back-tapping required.
+- After a successful BT connection from the in-book Bluetooth menu, CrumBLE now auto-pops both the BT settings and the reader menu so the user lands straight back in the book — no manual back-tapping required.
 - New "Tap Power While Asleep to Cycle" display setting. When on, a brief power-button tap from sleep picks a fresh random image from `/.sleep` and re-enters deep sleep, instead of waking. Off by default — each cycle costs a boot + e-ink half-refresh worth of battery. Pinned sleep images are skipped in cycle mode (always random).
 - `.png` sleep images (including transparency) are now accepted in **Custom** Sleep Screen mode, not just Page Overlay. Transparent regions compose over the last reader page so a transparent PNG sleep screen reveals book text underneath. On the deep-sleep cycle path (tap-power-while-asleep), the last reader page is restored from a small SD-cached snapshot written when leaving a book.
 - **Global Book Settings** drawer. Long-press the menu button in a book to pop up a bottom-drawer-style quick-settings panel with a "Global Book Settings" tab on top. Lists every reader setting (font, layout, hyphenation, bionic, images, etc.) and uses e-ink fast refresh so toggling is snappy. Closing the drawer re-flows the page immediately when a setting was actually changed; a no-op visit skips the re-layout. Triggered via the existing `longPressMenuAction` setting (default flipped to the new "Book Settings" option). Architecture adapted from [inx by Dave Allie](https://github.com/obijuankenobiii/inx) (MIT).
 - **PackBits-compressed BW backup** for the grayscale anti-aliasing pass. Replaces the chunked 12 × 4 KB lazy allocation with a single 16-32 KB worst-case bounded buffer. Typical reader pages compress to 2-5 KB, dramatically reducing the fragmentation pressure that caused grayscale to fail when BLE was active.
-- Auto-retry on chapter-layout abort: if the parser trips the low-heap floor while BLE is consuming its ~58 KB share, CrumBle silently drops BLE, retries the layout (now with the extra headroom), and lets the existing auto-reconnect logic re-establish the link on the user's next remote button press.
+- Auto-retry on chapter-layout abort: if the parser trips the low-heap floor while BLE is consuming its ~58 KB share, CrumBLE silently drops BLE, retries the layout (now with the extra headroom), and lets the existing auto-reconnect logic re-establish the link on the user's next remote button press.
 
-### Changed (CrumBle fork)
+### Changed (CrumBLE fork)
 - Bluetooth main menu now uses Up/Down labels and binds both side U/D and front L/R to navigation, matching Reader Options and Controls Options conventions.
 - LYRA_FLOW (5-book carousel) preserved as a first-class theme option through the upstream merge. Front Prev/Next iterates within the carousel only; side Up/Down jumps to the menu list and iterates through it, with the carousel staying pinned to the last selected book.
 - Reader setting labels dropped the redundant "Reader" prefix ("Font Family", "Font Size", "Line Spacing", "Screen Margin", "Paragraph Alignment") so they fit better in the drawer.
 - Default `tiny` build now omits the Teensy (8px) font variant to make room for the NimBLE-Arduino BLE stack. Re-enable by removing `OMIT_TEENSY_FONT` from `platformio.ini` if you don't need Bluetooth.
 - EPUB layout heap thresholds relaxed for BLE-paired sessions: text-layout floor 48 → 16 KB free, image-extraction floor 72 → 56 KB free. Brings parser within reach of the heap remaining after NimBLE allocations; failures still degrade gracefully (image extraction falls back to "page rendered without images"; layout aborts trigger the new BLE-disable-and-retry path).
 - BookSettingsDrawer hint area enlarged so the bottom button labels render fully (were clipped against the screen edge at the previous height).
-- Settings → System now displays `CrumBle x.y.z (CrossInk x.y.z.z)` so both the fork and upstream sync version are visible.
+- Settings → System now displays `CrumBLE x.y.z (CrossInk x.y.z.z)` so both the fork and upstream sync version are visible.
 - Merged upstream CrossInk v1.2.10 and v1.2.11/v1.2.11.1 (see entries below for what those releases brought).
 
-### Fixed (CrumBle fork)
+### Fixed (CrumBLE fork)
 - BLE page-turner could hang at chapter boundaries when a release HID frame was dropped (NimBLE task starvation during the heavy section-load render is a common trigger). Subsequent presses were silently filtered out by both the BLE-side `activeInjectedButton` gate and HalGPIO's same-state short-circuit, requiring a book exit/re-enter to recover. Added two backstops: a 2 s max-hold auto-release on virtual buttons (suppressed release edge so no phantom page turn fires), and a force-release of a stuck injection in Game Brick's same-key re-press promotion path.
 - BluetoothSettings used `wasPressed(Confirm)` for action triggers instead of `wasReleased`, causing the Confirm release to leak through pop transitions and re-launch the BT menu from the reader menu underneath. All five action handlers now consistently use `wasReleased`.
 - Reader exit during BLE reconnect: tapping Back impatiently during the 2-3 s connect freeze used to leak the release through to the reader's home-on-back-release handler, exiting the book and auto-disabling BLE. The next Back release is now suppressed when `checkAutoReconnect` blocked for >500 ms.

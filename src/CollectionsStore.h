@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-// CrumBle Collections — per-collection sort order. Affects what
+// CrumBLE Collections — per-collection sort order. Affects what
 // `resolveBookPaths()` returns. User collections default to Manual
 // (insertion order), virtual collections default to whatever makes
 // semantic sense (DateAddedDesc for Recently Added, TitleAlpha for All
@@ -18,7 +18,7 @@ enum class CollectionSort : uint8_t {
   DateLastReadDesc = 5, // most recently opened first (by RECENT_BOOKS position; non-recents sort to end)
 };
 
-// CrumBle Collections — user-defined tag groups that live on top of the
+// CrumBLE Collections — user-defined tag groups that live on top of the
 // filesystem. Books can belong to zero or more collections regardless of where
 // they sit on the SD card. Phase 1 ships with a single hardcoded "Favorites"
 // collection; later phases add a picker, custom collections, and series
@@ -41,7 +41,7 @@ struct Collection {
   // collections.json; virtuals default-construct each begin() and
   // accept user overrides at runtime (also persisted).
   CollectionSort sortMode = CollectionSort::Manual;
-  // CrumBle series collapse: when true and a series has 2+ books in
+  // CrumBLE series collapse: when true and a series has 2+ books in
   // this collection, those books render as a single shelf cell with
   // a dark spine glyph. Default ON; user can toggle per-collection
   // from the shelf header action menu. Persisted in collections.json.

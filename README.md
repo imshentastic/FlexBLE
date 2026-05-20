@@ -1,8 +1,8 @@
 <div align="center">
 
-# CrumBle
+# CrumBLE
 
-<img src="./docs/images/crumble/01-boot.jpg" alt="CrumBle boot screen" width="280"/>
+<img src="./docs/images/crumble/01-boot.jpg" alt="CrumBLE boot screen" width="280"/>
 
 **A personal fork of [CrossInk Carousel](https://github.com/chintanvajariya/CrossInk-Carousel) for the Xteink X4 — adds a Bluetooth page-turner, a Collections system, an on-demand sleep-screen cycler, and a long-press quick-settings drawer inside books.**
 
@@ -12,9 +12,9 @@
 
 ---
 
-## What CrumBle adds
+## What CrumBLE adds
 
-CrumBle sits on top of CrossInk Carousel's feature set — see the [CrossInk Carousel README](https://github.com/chintanvajariya/CrossInk-Carousel#whats-different-from-crossink) and [CrossInk's docs](https://github.com/uxjulia/CrossInk) for those features. The sections below cover what's distinct to this fork.
+CrumBLE sits on top of CrossInk Carousel's feature set — see the [CrossInk Carousel README](https://github.com/chintanvajariya/CrossInk-Carousel#whats-different-from-crossink) and [CrossInk's docs](https://github.com/uxjulia/CrossInk) for those features. The sections below cover what's distinct to this fork.
 
 ### Bluetooth remote page-turner
 
@@ -71,7 +71,7 @@ Architecture adapted from [inx by Dave Allie](https://github.com/obijuankenobiii
 - **Carousel ghosting fixes** on the Lyra Flow theme — max-size cover-slot clear before each paint, thinned selection border (4 px → 2 px), and dropped the always-on inner frame so successive scrolls don't leave outline residue.
 - **Remember last position** — switching between the shelf and the bottom menu row restores your previous position on each side instead of jumping to index 0.
 - **PackBits-compressed BW backup** for the grayscale AA pass — a single 16–32 KB bounded buffer replaces the chunked 12 × 4 KB lazy allocation, dropping the fragmentation pressure that made grayscale fail when BLE was active.
-- **Auto-retry on chapter-layout abort** — if the parser trips the low-heap floor with BLE consuming its ~58 KB share, CrumBle silently drops BLE, retries the layout with the recovered headroom, and lets the existing auto-reconnect logic re-pair on your next remote press.
+- **Auto-retry on chapter-layout abort** — if the parser trips the low-heap floor with BLE consuming its ~58 KB share, CrumBLE silently drops BLE, retries the layout with the recovered headroom, and lets the existing auto-reconnect logic re-pair on your next remote press.
 
 For the full changelog, see [CHANGELOG.md](./CHANGELOG.md).
 
@@ -80,21 +80,21 @@ For the full changelog, see [CHANGELOG.md](./CHANGELOG.md).
 ## Lineage
 
 ```
-CrossPoint Reader  →  CrossInk (uxjulia)  →  CrossInk Carousel (chintanvajariya)  →  CrumBle
+CrossPoint Reader  →  CrossInk (uxjulia)  →  CrossInk Carousel (chintanvajariya)  →  CrumBLE
 ```
 
 - **[CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)** — the further-upstream foundation. Most reader features (fonts, BookSettings, sleep screens, web UI) come from here.
 - **[CrossInk](https://github.com/uxjulia/CrossInk)** — uxjulia's fork. UI polish, localization, additional reader fonts.
 - **[CrossInk Carousel](https://github.com/chintanvajariya/CrossInk-Carousel)** — chintanvajariya's fork. Adds the Flow theme (3D book carousel), 3×3 Recent Books grid, and the multi-book Reading Stats redesign.
-- **CrumBle** — this fork. Adds BLE, Collections, sleep-screen cycling, and the in-book quick-settings drawer.
+- **CrumBLE** — this fork. Adds BLE, Collections, sleep-screen cycling, and the in-book quick-settings drawer.
 
-CrumBle is named after — and themed around — the chocolate-chip cookie boot logo. The "BLE" remained from the previous fork name (FlexBLE) because that's still the headline feature.
+CrumBLE is named after — and themed around — the chocolate-chip cookie boot logo. The "BLE" remained from the previous fork name (FlexBLE) because that's still the headline feature.
 
 ---
 
 ## Install firmware
 
-1. Download the `crumble-firmware-*.bin` for your variant from the [Releases](https://github.com/imshentastic/CrumBle/releases) page (`tiny` = standard build with BLE; `xlarge` = no BLE, larger fonts; `no_emoji` = all font sizes, no emoji rendering).
+1. Download the `crumble-firmware-*.bin` for your variant from the [Releases](https://github.com/imshentastic/CrumBLE/releases) page (`tiny` = standard build with BLE; `xlarge` = no BLE, larger fonts; `no_emoji` = all font sizes, no emoji rendering).
 2. Connect your Xteink X4 via USB-C and wake / unlock the device.
 3. Go to https://crosspointreader.com/#flash-tools, select your device, choose **Custom .bin**, pick the file you downloaded, and click **Flash**.
 
@@ -104,11 +104,11 @@ To revert to official Xteink firmware, flash the latest stock build from the sam
 
 ## USB-locked devices
 
-Some Xteink units sold through third-party stores (e.g. AliExpress) ship with USB flashing locked from the factory. If your device is locked, you'll need the **Xteink Unlocker** at https://crosspointreader.com/#unlock-tool before you can flash CrumBle.
+Some Xteink units sold through third-party stores (e.g. AliExpress) ship with USB flashing locked from the factory. If your device is locked, you'll need the **Xteink Unlocker** at https://crosspointreader.com/#unlock-tool before you can flash CrumBLE.
 
 **You do not need the unlocker if you bought directly from xteink.com** — those units aren't locked.
 
-**Critical warning:** The unlocker officially supports only CrossPoint and CrossInk firmwares. Flashing a non-supported firmware on a USB-locked device can permanently brick it or leave it stuck on that firmware with no recovery path. **CrumBle does support OTA**, but verify the boot logo appears after first flash before assuming you have an out. If in doubt, flash CrossInk first, confirm OTA works, then OTA-upgrade to CrumBle.
+**Critical warning:** The unlocker officially supports only CrossPoint and CrossInk firmwares. Flashing a non-supported firmware on a USB-locked device can permanently brick it or leave it stuck on that firmware with no recovery path. **CrumBLE does support OTA**, but verify the boot logo appears after first flash before assuming you have an out. If in doubt, flash CrossInk first, confirm OTA works, then OTA-upgrade to CrumBLE.
 
 ---
 

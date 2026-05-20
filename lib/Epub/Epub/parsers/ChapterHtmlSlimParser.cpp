@@ -24,7 +24,7 @@
 constexpr size_t MIN_SIZE_FOR_POPUP = 10 * 1024;  // 10KB
 constexpr size_t PARSE_BUFFER_SIZE = 1024;
 constexpr size_t IMAGE_EXTRACT_CHUNK_SIZE = 1024;
-// CrumBle: NimBLE eats ~50-58 KB once a remote is paired, which pushes the
+// CrumBLE: NimBLE eats ~50-58 KB once a remote is paired, which pushes the
 // reader very close to upstream's original 48 KB / 24 KB floor. Layout
 // genuinely works on tighter budgets; v1.2.9.4 had no floor at all and
 // chapters loaded fine. Field measurement on a Game-Brick-paired session:

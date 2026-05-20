@@ -19,7 +19,7 @@
 namespace {
 constexpr int kDefaultThumbHeight = 180;
 
-// CrumBle: minimal expat-based parser used ONLY by extractSeriesFromOpf
+// CrumBLE: minimal expat-based parser used ONLY by extractSeriesFromOpf
 // to read series metadata without touching the BookMetadataCache. We
 // can't reuse ContentOpfParser for this because that parser writes to
 // book.bin's intermediate files (tempItemStore, cache->createSpineEntry)
@@ -211,7 +211,7 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata) {
   bookMetadata.author = opfParser.author;
   bookMetadata.language = opfParser.language;
   bookMetadata.coverItemHref = opfParser.coverItemHref;
-  // CrumBle series fields (ported from aalu). Stored on the Epub
+  // CrumBLE series fields (ported from aalu). Stored on the Epub
   // instance rather than `bookMetadata` because book.bin's binary
   // layout would need a version bump to add the fields, and we don't
   // gain much from persisting there — SeriesIndex.json caches across

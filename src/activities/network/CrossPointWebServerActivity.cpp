@@ -74,7 +74,7 @@ void CrossPointWebServerActivity::onExit() {
 
   LOG_DBG("WEBACT", "Free heap at onExit start: %d bytes", ESP.getFreeHeap());
 
-  // CrumBle: books may have just been uploaded over the file-transfer
+  // CrumBLE: books may have just been uploaded over the file-transfer
   // web UI (USB or hotspot). Mark the LibraryIndex stale so the next
   // visit to Recently Added / All Books re-walks SD and discovers them.
   // The walk itself is lazy — onExit stays snappy.
