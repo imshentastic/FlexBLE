@@ -112,7 +112,7 @@ class ActivityManager {
   bool canSnapshotForSleepOverlay() const;
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;
-  // CrumBle: called from main.cpp::enterDeepSleep so the current
+  // CrumBLE: called from main.cpp::enterDeepSleep so the current
   // activity can flush in-flight state (e.g. reader session time)
   // before the chip powers off. See Activity::onBeforeDeepSleep().
   void notifyBeforeDeepSleep();

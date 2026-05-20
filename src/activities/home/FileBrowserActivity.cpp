@@ -405,7 +405,7 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
                      isEpubCompleted(fullPath) ? StrId::STR_MARK_UNFINISHED : StrId::STR_MARK_FINISHED});
   }
 
-  // CrumBle Collections (phase 2): single picker entry that drills into a
+  // CrumBLE Collections (phase 2): single picker entry that drills into a
   // checklist of every collection. The picker handles the per-membership
   // toggle and the "+ New collection..." flow itself, so the action menu
   // doesn't need separate add/remove items per collection anymore.

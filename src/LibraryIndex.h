@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-// CrumBle — persistent index of every book file the device has seen on
+// CrumBLE — persistent index of every book file the device has seen on
 // SD, with a first-seen timestamp per entry. Backs the auto-managed
 // virtual collections "All Books" and "Recently Added" (sorted by
 // firstSeen DESC). Lives at /.crosspoint/library_index.json so a full SD

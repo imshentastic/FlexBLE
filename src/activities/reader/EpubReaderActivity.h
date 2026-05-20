@@ -60,7 +60,7 @@ class EpubReaderActivity final : public Activity {
   bool sideButtonLongPressHandled = false;
   bool frontButtonLongPressHandled = false;
   int pageLoadRetryCount = 0;
-  // CrumBle: if a chapter layout aborts under heap pressure and BLE is
+  // CrumBLE: if a chapter layout aborts under heap pressure and BLE is
   // currently consuming its ~58 KB share, retry the layout once with BLE
   // disabled (NimBLE will auto-reconnect to the bonded remote on the user's
   // next button press). Flag gates the retry so we don't loop forever if

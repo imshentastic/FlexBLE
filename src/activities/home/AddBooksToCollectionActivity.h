@@ -6,7 +6,7 @@
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
-// CrumBle — bulk-add picker for a user collection. Lists the books
+// CrumBLE — bulk-add picker for a user collection. Lists the books
 // currently in RECENT_BOOKS (most-recently-opened first) with a
 // checkbox prefix showing current membership in the target
 // collection. Confirm on a row toggles membership immediately.

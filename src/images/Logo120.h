@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-// CrumBle boot/sleep logo — chocolate-chip cookie with a bite
+// CrumBLE boot/sleep logo — chocolate-chip cookie with a bite
 // taken out. 1-bit silhouette traced from the brand reference
 // image. 120x120, MSB-first packed, 1800 bytes total.
 // bit=1 white, bit=0 black.

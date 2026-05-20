@@ -2162,7 +2162,7 @@ void HomeActivity::loop() {
     updateHighlightedBookContext();
   }
 
-  // CrumBle Collections — keep the shelf's selected spine visible. Recompute
+  // CrumBLE Collections — keep the shelf's selected spine visible. Recompute
   // from the live collection size each iteration; cheap and avoids stale
   // offsets if the user added/removed books from another activity.
   if (isLyraFlow) {
@@ -2257,7 +2257,7 @@ void HomeActivity::loop() {
       return;
     }
 
-    // CrumBle Collections — Flow theme's bookshelf row. Selection indices
+    // CrumBLE Collections — Flow theme's bookshelf row. Selection indices
     // sit between the carousel and the menu icon bar; open the matching
     // book path directly.
     const auto activeThemeForConfirm = static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme);
@@ -2489,7 +2489,7 @@ void HomeActivity::render(RenderLock&&) {
     menuItems.insert(menuItems.begin(), {tr(STR_CONTINUE_READING), Book, HomeMenuAction::ContinueReading});
   }
 
-  // CrumBle Flow bookshelf — render strip between cover footer and icon bar,
+  // CrumBLE Flow bookshelf — render strip between cover footer and icon bar,
   // and offset the menu's selected-index calculation so the icon-bar
   // selection-highlight tracks the right item when the cursor moves past
   // the shelf.
@@ -2771,7 +2771,7 @@ void HomeActivity::onReadingStatsOpen() {
   const std::string bookPath = highlightedBookIdx >= 0 ? recentBooks[highlightedBookIdx].path : std::string();
   const std::string coverBmpPath =
       highlightedBookIdx >= 0 ? recentBooks[highlightedBookIdx].coverBmpPath : std::string();
-  // CrumBle inherits chintanvajariya's richer BookStatsActivity (recent-books
+  // CrumBLE inherits chintanvajariya's richer BookStatsActivity (recent-books
   // navigation + cover image). The richer constructor needs path/cover and a
   // backToHome flag; launched from home, so back returns here.
   startActivityForResult(

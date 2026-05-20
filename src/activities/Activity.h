@@ -30,7 +30,7 @@ class Activity {
   virtual ~Activity() = default;
   virtual void onEnter();
   virtual void onExit();
-  // CrumBle: called by main.cpp::enterDeepSleep BEFORE the hardware
+  // CrumBLE: called by main.cpp::enterDeepSleep BEFORE the hardware
   // sleep enters. Activities can use this to commit in-flight state
   // (reading sessions, draft inputs, etc.) that would otherwise be
   // lost — the normal onExit() path doesn't fire when going to deep
