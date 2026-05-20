@@ -151,7 +151,7 @@ const DeviceProfile* findDeviceProfile(const char* macAddress, const char* devic
         }
         
         if (matches) {
-          LOG_INF("DEV", "✓ Matched device profile by MAC: %s -> %s", macAddress, KNOWN_DEVICES[i].name);
+          LOG_INF("DEV", "Matched device profile by MAC: %s -> %s", macAddress, KNOWN_DEVICES[i].name);
           return &KNOWN_DEVICES[i];
         }
       }
@@ -166,7 +166,7 @@ const DeviceProfile* findDeviceProfile(const char* macAddress, const char* devic
       
       // Try exact match first
       if (strcmp(deviceName, profileName) == 0) {
-        LOG_INF("DEV", "✓ Matched device profile by exact name: %s", profileName);
+        LOG_INF("DEV", "Matched device profile by exact name: %s", profileName);
         return &KNOWN_DEVICES[i];
       }
       
@@ -176,7 +176,7 @@ const DeviceProfile* findDeviceProfile(const char* macAddress, const char* devic
           strstr(deviceName, "GAME")) {
         if (strstr(deviceName, "Brick") || strstr(deviceName, "brick") || 
             strstr(deviceName, "BRICK")) {
-          LOG_INF("DEV", "✓ Matched GameBrick by name pattern: %s -> IINE Game Brick", deviceName);
+          LOG_INF("DEV", "Matched GameBrick by name pattern: %s -> IINE Game Brick", deviceName);
           if (const DeviceProfile* profile = findKnownProfileByName("IINE Game Brick")) {
             return profile;
           }
@@ -186,7 +186,7 @@ const DeviceProfile* findDeviceProfile(const char* macAddress, const char* devic
       // Match IINE_control naming used by some GameBrick remotes
       if (strstr(deviceName, "IINE") || strstr(deviceName, "iine") ||
           strstr(deviceName, "IINE_control") || strstr(deviceName, "iine_control")) {
-        LOG_INF("DEV", "✓ Matched GameBrick by IINE naming: %s", deviceName);
+        LOG_INF("DEV", "Matched GameBrick by IINE naming: %s", deviceName);
         if (const DeviceProfile* profile = findKnownProfileByName("IINE Game Brick")) {
           return profile;
         }
@@ -197,7 +197,7 @@ const DeviceProfile* findDeviceProfile(const char* macAddress, const char* devic
           strstr(deviceName, "Mini")) {
         if (strstr(deviceName, "KEYBOARD") || strstr(deviceName, "keyboard") || 
             strstr(deviceName, "Keyboard")) {
-          LOG_INF("DEV", "✓ Matched MINI_KEYBOARD by name pattern: %s", deviceName);
+          LOG_INF("DEV", "Matched MINI_KEYBOARD by name pattern: %s", deviceName);
           if (const DeviceProfile* profile = findKnownProfileByName("MINI_KEYBOARD")) {
             return profile;
           }
@@ -208,7 +208,7 @@ const DeviceProfile* findDeviceProfile(const char* macAddress, const char* devic
       if (strstr(deviceName, "Free2") || strstr(deviceName, "FREE2") || strstr(deviceName, "free2") ||
           strstr(deviceName, "Free 2") || strstr(deviceName, "FREE 2") || strstr(deviceName, "free 2") ||
           strstr(deviceName, "Free-2") || strstr(deviceName, "FREE-2") || strstr(deviceName, "free-2")) {
-        LOG_INF("DEV", "✓ Matched Free2 by name pattern: %s", deviceName);
+        LOG_INF("DEV", "Matched Free2 by name pattern: %s", deviceName);
         if (const DeviceProfile* profile = findKnownProfileByName("Free2-M")) {
           return profile;
         }
@@ -218,7 +218,7 @@ const DeviceProfile* findDeviceProfile(const char* macAddress, const char* devic
       if (strstr(deviceName, "Free3") || strstr(deviceName, "FREE3") || strstr(deviceName, "free3") ||
           strstr(deviceName, "Free 3") || strstr(deviceName, "FREE 3") || strstr(deviceName, "free 3") ||
           strstr(deviceName, "Free-3") || strstr(deviceName, "FREE-3") || strstr(deviceName, "free-3")) {
-        LOG_INF("DEV", "✓ Matched Free3 by name pattern: %s", deviceName);
+        LOG_INF("DEV", "Matched Free3 by name pattern: %s", deviceName);
         if (const DeviceProfile* profile = findKnownProfileByName("Free3-M")) {
           return profile;
         }
