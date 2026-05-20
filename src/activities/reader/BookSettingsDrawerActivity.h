@@ -33,12 +33,12 @@ class BookSettingsDrawerActivity final : public Activity {
 
  private:
   // A single row in the drawer.
-  //   - Setting-bound rows wrap a SettingInfo for value-getter/toggler.
-  //   - The two BLE rows are special and use the activate callback.
+  //   - Setting-bound rows have non-null change/getValueText callbacks; each
+  //     closure carries its own SettingInfo copy (see buildItems for why).
+  //   - The BLE quick-action rows are special and use the activate callback.
   struct Item {
     StrId nameId;
     bool isAction = false;            // true: Confirm activates; false: Confirm toggles/cycles value
-    const SettingInfo* settingInfo = nullptr;  // non-null for setting-bound rows
     std::function<std::string()> getValueText;
     std::function<void(int delta)> change;
     std::function<void()> activate;

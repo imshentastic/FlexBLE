@@ -1028,6 +1028,19 @@ void HomeActivity::showHomeBookActionMenu(const std::string& bookPath) {
               if (selectorIndex >= recentBooks.size() + 1) {
                 selectorIndex = recentBooks.empty() ? 0 : static_cast<int>(recentBooks.size()) - 1;
               }
+              // The removed book just disappeared from the recent list, but
+              // the Flow carousel paints from `carouselFrames` (cached
+              // pre-rasterized covers) and the Lyra shelf from
+              // `shelfSnapshot` — neither of which knows the book set
+              // changed. Without invalidation, the next paint replayed the
+              // stale snapshot showing the removed cover until the user
+              // moved the selector, which finally forced a re-layout. Flush
+              // every relevant cache so the removal is visible immediately.
+              carouselFramesReady = false;
+              shelfCoversLoaded = false;
+              invalidateShelfPathsCache();
+              shelfSnapshotValid = false;
+              lastRenderedCoverSelectorValid = false;
             }
             requestUpdate();
             return;
