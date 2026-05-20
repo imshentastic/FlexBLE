@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <unordered_map>
 
+#include "CrossPointSettings.h"
 #include "LibraryIndex.h"
 #include "RecentBooksStore.h"
 #include "SeriesIndex.h"
@@ -249,6 +250,59 @@ std::string CollectionsStore::createCollection(const std::string& name) {
   return id;
 }
 
+bool CollectionsStore::renameCollection(const std::string& collectionId, const std::string& newName) {
+  if (newName.empty()) {
+    LOG_ERR("CLN", "renameCollection refused: empty name for %s", collectionId.c_str());
+    return false;
+  }
+  for (auto& c : collections) {
+    if (c.id != collectionId) continue;
+    if (c.isVirtual) {
+      LOG_ERR("CLN", "Refusing rename on virtual collection: %s", collectionId.c_str());
+      return false;
+    }
+    if (c.name == newName) return true;  // no-op, treat as success.
+    LOG_INF("CLN", "Renaming collection %s: '%s' -> '%s'", collectionId.c_str(), c.name.c_str(), newName.c_str());
+    c.name = newName;
+    saveToFile();
+    return true;
+  }
+  LOG_ERR("CLN", "renameCollection: unknown collection %s", collectionId.c_str());
+  return false;
+}
+
+bool CollectionsStore::deleteCollection(const std::string& collectionId) {
+  // Refuse the seeded Favorites — it gets re-seeded on every begin()
+  // so deletion would be misleading (the collection would reappear on
+  // the next reboot with no books). Users who want an empty Favorites
+  // can just toggle every book out of it.
+  if (collectionId == FAVORITES_ID) {
+    LOG_ERR("CLN", "Refusing to delete the seeded Favorites collection");
+    return false;
+  }
+  auto it = std::find_if(collections.begin(), collections.end(),
+                         [&](const Collection& c) { return c.id == collectionId; });
+  if (it == collections.end()) {
+    LOG_ERR("CLN", "deleteCollection: unknown collection %s", collectionId.c_str());
+    return false;
+  }
+  if (it->isVirtual) {
+    LOG_ERR("CLN", "Refusing to delete virtual collection: %s", collectionId.c_str());
+    return false;
+  }
+  LOG_INF("CLN", "Deleting collection: %s (%s)", collectionId.c_str(), it->name.c_str());
+  collections.erase(it);
+  // If we just deleted the active collection, fall back to Favorites.
+  // findCollection covers the edge case where the entire JSON has been
+  // hand-edited away — seedDefaults will recreate Favorites on next
+  // begin().
+  if (activeId == collectionId) {
+    activeId = FAVORITES_ID;
+  }
+  saveToFile();
+  return true;
+}
+
 int CollectionsStore::removeBookFromAllCollections(const std::string& bookPath) {
   int touched = 0;
   for (auto& c : collections) {
@@ -302,9 +356,10 @@ std::vector<ShelfEntry> CollectionsStore::resolveShelfEntries(const std::string&
   if (c == nullptr) return {};
   const std::vector<std::string> paths = resolveBookPaths(collectionId);
 
-  // Fast path: collapse disabled or empty list — 1:1 wrap into single-
-  // book entries. Same shape, no SeriesIndex lookups.
-  if (!c->collapseSeries || paths.empty()) {
+  // Fast path: global series-detection opt-in is off, per-collection
+  // collapse is off, or the path list is empty. Skip the SeriesIndex
+  // lookups entirely and 1:1-wrap into single-book entries.
+  if (!SETTINGS.seriesDetectionEnabled || !c->collapseSeries || paths.empty()) {
     std::vector<ShelfEntry> out;
     out.reserve(paths.size());
     for (const auto& p : paths) {

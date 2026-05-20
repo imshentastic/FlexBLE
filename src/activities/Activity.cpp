@@ -1,6 +1,9 @@
 #include "Activity.h"
 
+#include <I18n.h>
+
 #include "ActivityManager.h"
+#include "components/UITheme.h"
 
 void Activity::onEnter() { LOG_DBG("ACT", "Entering activity: %s", name.c_str()); }
 
@@ -11,6 +14,16 @@ void Activity::requestUpdate(bool immediate) { activityManager.requestUpdate(imm
 RequestUpdateResult Activity::requestUpdateAndWait() { return activityManager.requestUpdateAndWait(); }
 
 void Activity::onGoHome() { activityManager.goHome(); }
+
+void Activity::exitToHomeWithPopup() {
+  // FAST_REFRESH (drawPopup's default mode) gives the user instant
+  // visual feedback before the activity teardown begins. Without
+  // this, the reader's long-tail exit (BLE shutdown, session save,
+  // activity replace, carousel render) leaves the panel frozen on
+  // the last reader page for ~700 ms.
+  GUI.drawPopup(renderer, tr(STR_GOING_HOME));
+  activityManager.goHome();
+}
 
 void Activity::onSelectBook(const std::string& path) { activityManager.goToReader(path); }
 
