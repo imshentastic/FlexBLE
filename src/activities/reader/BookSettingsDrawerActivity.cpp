@@ -95,15 +95,30 @@ void BookSettingsDrawerActivity::buildItems() {
   items.clear();
 
   // 1) Pull every Reader-category non-Action setting, in declaration order.
+  //
+  // `getSettingsList()` returns std::vector<SettingInfo> BY VALUE. The
+  // returned vector is a temporary that lives only for the duration of this
+  // range-for loop; any pointer captured into `info` becomes dangling once
+  // the loop exits. We used to do `infoPtr = &info` and bake that pointer
+  // into the lambda closures stored on each Item — which "worked" right
+  // after onEnter (the freed bytes were still intact) but broke after the
+  // next allocation overwrote them. Loading a new font in particular
+  // triggered enough heap churn that the SettingInfos for items right after
+  // Font (Line Spacing, Orientation) got clobbered first; their enumValues
+  // vector read as garbage and I18N.get(garbage_id) rendered as "????".
+  //
+  // Fix: copy SettingInfo by value into each lambda's closure. The
+  // valuePtr / valueGetter / enumValues members are all owned-by-value, so
+  // the copy stays valid as long as the lambda lives. SETTINGS itself is a
+  // global, and the pointer-to-member in valuePtr is stable regardless of
+  // where the SettingInfo copy lives.
   for (const auto& info : getSettingsList()) {
     if (info.category != StrId::STR_CAT_READER) continue;
     if (info.type == SettingType::ACTION || info.type == SettingType::SECTION_HEADER) continue;
     Item item;
     item.nameId = info.nameId;
-    item.settingInfo = &info;
-    const SettingInfo* infoPtr = &info;
-    item.getValueText = [infoPtr]() { return valueTextForSetting(*infoPtr); };
-    item.change = [infoPtr](int delta) { applyDeltaToSetting(*infoPtr, delta); };
+    item.getValueText = [infoCopy = info]() { return valueTextForSetting(infoCopy); };
+    item.change = [infoCopy = info](int delta) { applyDeltaToSetting(infoCopy, delta); };
     items.push_back(std::move(item));
   }
 
