@@ -7,7 +7,7 @@
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
-// FlexBLE — read-only viewer that dumps a book's OPF metadata so the
+// CrumBle — read-only viewer that dumps a book's OPF metadata so the
 // user can sanity-check what fields are actually present in their
 // files. Triggered from the long-press action menu's "Show metadata"
 // entry. Pure inspection; no edits.

@@ -87,7 +87,7 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
                                                                                      bool isCurrentPageBookmarked,
                                                                                      bool isBookCompleted) {
   std::vector<MenuItem> items;
-  // 14 upstream items + 1 (FlexBLE Bluetooth entry).
+  // 14 upstream items + 1 (CrumBle Bluetooth entry).
   constexpr size_t baseItemCount = 15;
   const size_t totalItemCount = baseItemCount + (hasFootnotes ? 1u : 0u) + (hasBookmarks ? 2u : 0u);
   items.reserve(totalItemCount);

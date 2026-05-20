@@ -45,7 +45,7 @@ class LyraFlowTheme : public LyraTheme {
                       const std::function<std::string(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;
 
-  // FlexBLE Collections — bookshelf strip between the carousel and the icon
+  // CrumBle Collections — bookshelf strip between the carousel and the icon
   // bar. Renders the collection name above a row of cover thumbnails. Each
   // entry in `coverPaths` is the absolute path to a BMP thumb on SD (empty
   // string => render a placeholder card for that book).
@@ -72,7 +72,7 @@ class LyraFlowTheme : public LyraTheme {
                           const std::vector<std::string>& coverPaths, int selectedSpineIndex, int scrollOffset,
                           bool headerFocused, bool hasMultipleCollections,
                           const char* focusedBookTitle = nullptr,
-                          // FlexBLE series collapse: per-cell member counts. Same
+                          // CrumBle series collapse: per-cell member counts. Same
                           // length as coverPaths. count == 1 means single book
                           // (no spine glyph). count >= 2 means series group —
                           // theme draws a dark spine to the left of the cover

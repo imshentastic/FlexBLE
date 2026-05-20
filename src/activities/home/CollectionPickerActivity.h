@@ -5,7 +5,7 @@
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
-// FlexBLE Collections — picker shown when the user wants to manage which
+// CrumBle Collections — picker shown when the user wants to manage which
 // collections a specific book belongs to. Rendered as a vertical list:
 //
 //   [+ New collection...]    ← always at the top; opens KeyboardEntryActivity

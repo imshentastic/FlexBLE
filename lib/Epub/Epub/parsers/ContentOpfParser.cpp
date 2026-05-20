@@ -142,7 +142,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
   if (self->state == IN_METADATA && (strcmp(name, "meta") == 0 || strcmp(name, "opf:meta") == 0)) {
     bool isCover = false;
     std::string coverItemId;
-    // FlexBLE series detection (ported from aalu, MIT-licensed). The
+    // CrumBle series detection (ported from aalu, MIT-licensed). The
     // OPF tag carrying series info varies by ecosystem:
     //   - Calibre / EPUB 2: name="calibre:series" content="The Foundation"
     //                       name="calibre:series_index" content="2"
@@ -356,7 +356,7 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     return;
   }
 
-  // FlexBLE: EPUB 3 series name / index live as element text bodies.
+  // CrumBle: EPUB 3 series name / index live as element text bodies.
   if (self->state == IN_SERIES_NAME) {
     self->seriesName.append(s, len);
     return;
@@ -400,7 +400,7 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
     return;
   }
 
-  // FlexBLE: EPUB 3 series text-body close. Match any meta close since
+  // CrumBle: EPUB 3 series text-body close. Match any meta close since
   // the parser's startElement transitioned state without saving the
   // element name. After capturing we fall back to IN_METADATA so other
   // meta tags in the same metadata block keep parsing normally.
