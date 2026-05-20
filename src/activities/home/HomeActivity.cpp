@@ -22,6 +22,8 @@
 #include "../reader/BookStatsActivity.h"
 #include "activities/reader/GlobalReadingStats.h"
 #include "activities/util/ConfirmationActivity.h"
+#include "activities/util/KeyboardEntryActivity.h"
+#include "AddBooksToCollectionActivity.h"
 #include "BookMetadataViewerActivity.h"
 #include "BookmarkStore.h"
 #include "BookmarksHomeActivity.h"
@@ -638,6 +640,14 @@ void HomeActivity::enrichActiveCollectionForSeries() {
     seriesEnrichmentNeededForActive = false;
     return;
   }
+  // Global opt-in gate. When off, the OPF parse never runs — most
+  // user libraries don't have Calibre / EPUB-3 series metadata so
+  // the expensive first-time scan would yield no value. User can
+  // enable in Settings → Series Detection.
+  if (!SETTINGS.seriesDetectionEnabled) {
+    seriesEnrichmentNeededForActive = false;
+    return;
+  }
   const Collection* active = CollectionsStore::getInstance().getActiveCollection();
   if (active == nullptr || !active->collapseSeries) {
     seriesEnrichmentNeededForActive = false;
@@ -1033,6 +1043,10 @@ void HomeActivity::showHomeBookActionMenu(const std::string& bookPath) {
           case FileBrowserAction::RescanLibrary:
           case FileBrowserAction::SortBy:
           case FileBrowserAction::ToggleCollapseSeries:
+          case FileBrowserAction::RenameCollection:
+          case FileBrowserAction::DeleteCollection:
+          case FileBrowserAction::CreateNewCollectionFromHeader:
+          case FileBrowserAction::AddBooksToActiveCollection:
             // Not exposed in the home book menu — sleep-image / shelf-
             // header-only actions.
             return;
@@ -1106,10 +1120,34 @@ void HomeActivity::showShelfHeaderActionMenu() {
   if (active != nullptr && !isRecentlyAdded) {
     items.push_back({FileBrowserAction::SortBy, StrId::STR_SORT_BY});
   }
-  if (active != nullptr) {
+  // Per-collection collapse toggle is only meaningful when the global
+  // series-detection setting is on. Hiding it otherwise avoids the
+  // confusion of "Series collapse: ON" not actually collapsing
+  // anything because the scan never ran.
+  if (active != nullptr && SETTINGS.seriesDetectionEnabled) {
     items.push_back({FileBrowserAction::ToggleCollapseSeries,
                      active->collapseSeries ? StrId::STR_COLLAPSE_SERIES_ON : StrId::STR_COLLAPSE_SERIES_OFF});
   }
+  // Rename / Delete only apply to user collections. Virtuals are
+  // auto-managed; Favorites is seeded and would reappear on next
+  // boot if deleted (so we only allow rename for it, not delete).
+  const bool isUserCollection = active != nullptr && !active->isVirtual;
+  const bool isFavorites = active != nullptr && active->id == CollectionsStore::FAVORITES_ID;
+  // Bulk add: only for user collections. Virtuals are auto-managed
+  // so explicit add doesn't make sense there.
+  if (isUserCollection) {
+    items.push_back({FileBrowserAction::AddBooksToActiveCollection, StrId::STR_ADD_BOOKS_TO_COLLECTION});
+  }
+  if (isUserCollection) {
+    items.push_back({FileBrowserAction::RenameCollection, StrId::STR_RENAME_COLLECTION});
+  }
+  if (isUserCollection && !isFavorites) {
+    items.push_back({FileBrowserAction::DeleteCollection, StrId::STR_DELETE_COLLECTION});
+  }
+  // "+ New collection..." offered on every header so users on a
+  // virtual collection (where Rename/Delete don't apply) still have
+  // a quick path to create.
+  items.push_back({FileBrowserAction::CreateNewCollectionFromHeader, StrId::STR_HEADER_NEW_COLLECTION});
   items.push_back({FileBrowserAction::RescanLibrary, StrId::STR_RESCAN_LIBRARY});
 
   const std::string title = (active != nullptr) ? active->name : std::string();
@@ -1175,6 +1213,127 @@ void HomeActivity::showShelfHeaderActionMenu() {
                 shelfScrollOffset = 0;       // jump back to the top of the freshly-sorted list.
                 requestUpdate();
               });
+        } else if (action == FileBrowserAction::RenameCollection) {
+          const Collection* active = CollectionsStore::getInstance().getActiveCollection();
+          if (active == nullptr || active->isVirtual) return;
+          const std::string activeId = active->id;
+          const std::string currentName = active->name;
+          startActivityForResult(
+              std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_RENAME_COLLECTION_PROMPT),
+                                                      currentName, /*maxLength=*/40, InputType::Text),
+              [this, activeId](const ActivityResult& res) {
+                if (res.isCancelled) return;
+                const auto& kr = std::get<KeyboardResult>(res.data);
+                // Trim whitespace (same logic the create-new flow uses).
+                std::string trimmed = kr.text;
+                const auto l = trimmed.find_first_not_of(" \t");
+                const auto r = trimmed.find_last_not_of(" \t");
+                if (l == std::string::npos) {
+                  requestUpdate();
+                  return;
+                }
+                trimmed = trimmed.substr(l, r - l + 1);
+                if (trimmed.empty()) {
+                  requestUpdate();
+                  return;
+                }
+                if (CollectionsStore::getInstance().renameCollection(activeId, trimmed)) {
+                  drawHomeToast(renderer, tr(STR_COLLECTION_RENAMED));
+                  delay(800);
+                  // The active id is unchanged but the name rendered
+                  // in the tab is different. The shelf skip-fast-path
+                  // would otherwise reuse the prior frame's tab text
+                  // (same activeId, same scroll, same focus) and the
+                  // user would only see the new name after cycling
+                  // off and back. Force a repaint by invalidating the
+                  // snapshot.
+                  shelfSnapshotValid = false;
+                }
+                requestUpdate();
+              });
+        } else if (action == FileBrowserAction::DeleteCollection) {
+          const Collection* active = CollectionsStore::getInstance().getActiveCollection();
+          if (active == nullptr || active->isVirtual || active->id == CollectionsStore::FAVORITES_ID) return;
+          const std::string activeId = active->id;
+          const std::string heading = tr(STR_DELETE_COLLECTION_PROMPT);
+          startActivityForResult(
+              std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading, active->name),
+              [this, activeId](const ActivityResult& confirm) {
+                if (confirm.isCancelled) return;
+                if (!CollectionsStore::getInstance().deleteCollection(activeId)) {
+                  requestUpdate();
+                  return;
+                }
+                // The active collection just changed (deleteCollection
+                // resets it to Favorites). Bust all caches that key on
+                // active id so the next render shows Favorites cleanly.
+                shelfScrollOffset = 0;
+                lastShelfBookIndex = 0;
+                shelfCoversLoaded = false;
+                invalidateShelfPathsCache();
+                shelfSnapshotValid = false;
+                lastRenderedCoverSelectorValid = false;
+                seriesEnrichmentNeededForActive = true;
+                drawHomeToast(renderer, tr(STR_COLLECTION_DELETED));
+                delay(800);
+                requestUpdate();
+              });
+        } else if (action == FileBrowserAction::CreateNewCollectionFromHeader) {
+          // Open keyboard for a name. On submit, create the collection
+          // AND switch the active id to it so the user immediately
+          // sees their new collection on the shelf.
+          startActivityForResult(
+              std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_NEW_COLLECTION_PROMPT),
+                                                      /*initialText=*/"", /*maxLength=*/40, InputType::Text),
+              [this](const ActivityResult& res) {
+                if (res.isCancelled) return;
+                const auto& kr = std::get<KeyboardResult>(res.data);
+                std::string trimmed = kr.text;
+                const auto l = trimmed.find_first_not_of(" \t");
+                const auto r = trimmed.find_last_not_of(" \t");
+                if (l == std::string::npos) {
+                  requestUpdate();
+                  return;
+                }
+                trimmed = trimmed.substr(l, r - l + 1);
+                if (trimmed.empty()) {
+                  requestUpdate();
+                  return;
+                }
+                const std::string newId = CollectionsStore::getInstance().createCollection(trimmed);
+                if (!newId.empty()) {
+                  // Jump to the brand-new collection so the user can
+                  // immediately add books / verify creation. Reset
+                  // shelf state because the activeId changed (cycle
+                  // semantics).
+                  CollectionsStore::getInstance().setActiveId(newId);
+                  shelfScrollOffset = 0;
+                  lastShelfBookIndex = 0;
+                  shelfCoversLoaded = false;
+                  invalidateShelfPathsCache();
+                  shelfSnapshotValid = false;
+                  lastRenderedCoverSelectorValid = false;
+                  seriesEnrichmentNeededForActive = true;
+                  drawHomeToast(renderer, tr(STR_COLLECTION_CREATED));
+                  delay(800);
+                }
+                requestUpdate();
+              });
+        } else if (action == FileBrowserAction::AddBooksToActiveCollection) {
+          const Collection* active = CollectionsStore::getInstance().getActiveCollection();
+          if (active == nullptr || active->isVirtual) return;
+          const std::string activeId = active->id;
+          const std::string activeName = active->name;
+          startActivityForResult(
+              std::make_unique<AddBooksToCollectionActivity>(renderer, mappedInput, activeId, activeName),
+              [this](const ActivityResult&) {
+                // Member list of the active collection just changed —
+                // re-evaluate shelf paths and force a repaint.
+                invalidateShelfPathsCache();
+                shelfSnapshotValid = false;
+                shelfCoversLoaded = false;
+                requestUpdate();
+              });
         }
       });
 }
@@ -1202,6 +1361,8 @@ void HomeActivity::onEnter() {
   // press) get their cover generated on the next return to Home.
   shelfCoversLoaded = false;
   shelfHeaderFocused = false;
+  lastShelfBookIndex = 0;  // every onEnter starts the row at book 0.
+  lastMenuIndex = 0;       // and the menu at icon 0.
   seriesEnrichmentNeededForActive = true;
   // Drop any stale cached path list — the active collection's
   // membership may have changed while we were elsewhere.
@@ -1865,6 +2026,7 @@ void HomeActivity::loop() {
       CollectionsStore::getInstance().setActiveId(collections[idx].id);
       shelfScrollOffset = 0;
       shelfCoversLoaded = false;  // new collection probably has missing thumbs.
+      lastShelfBookIndex = 0;  // the index belonged to the previous collection; reset.
       seriesEnrichmentNeededForActive = true;  // new collection may have un-checked books.
       // The cache key check inside cachedShelfPaths() will detect the
       // new activeId automatically — no explicit invalidate needed.
@@ -1910,24 +2072,47 @@ void HomeActivity::loop() {
       }
       requestUpdate();
     }
+    // Helper: clamp the remembered shelf-row index against the
+    // current collection's size so a removed book / shrunk collection
+    // doesn't strand the cursor past the end. Returns the resolved
+    // selectorIndex (already shifted to shelfStart).
+    auto enterShelfRowAtLastPos = [&]() {
+      const int safeIdx = (shelfCount > 0) ? std::clamp(lastShelfBookIndex, 0, shelfCount - 1) : 0;
+      return shelfStart + safeIdx;
+    };
+    // Same idea for the bottom menu row. Menu item count can vary
+    // (e.g. depending on whether OPDS / bookmarks / etc. are present),
+    // so clamp against the current count rather than the index space
+    // at the time of last save.
+    auto enterMenuRowAtLastPos = [&]() {
+      const int safeIdx = (menuItemCount > 0) ? std::clamp(lastMenuIndex, 0, menuItemCount - 1) : 0;
+      return menuStart + safeIdx;
+    };
+
     if (mappedInput.wasPressed(MappedInputManager::Button::Down)) {
       if (inCarouselRow) {
         lastCarouselBookIndex = selectorIndex;
         if (shelfHeaderExists) {
           shelfHeaderFocused = true;
         } else if (shelfCount > 0) {
-          selectorIndex = shelfStart;
+          selectorIndex = enterShelfRowAtLastPos();
         } else {
-          selectorIndex = menuStart;
+          selectorIndex = enterMenuRowAtLastPos();
         }
       } else if (inHeaderRow) {
         shelfHeaderFocused = false;
         // Enter books if any; otherwise skip the empty row straight to
         // the menu so Down still does something useful.
-        selectorIndex = (shelfCount > 0) ? shelfStart : menuStart;
+        selectorIndex = (shelfCount > 0) ? enterShelfRowAtLastPos() : enterMenuRowAtLastPos();
       } else if (inShelfRow) {
-        selectorIndex = menuStart;
+        // Save where we were in the books row so a future return
+        // (Up from menu, Down from header) lands on the same book.
+        lastShelfBookIndex = static_cast<int>(selectorIndex) - shelfStart;
+        selectorIndex = enterMenuRowAtLastPos();
       } else /* inMenuRow */ {
+        // Save the menu position before wrapping back to the carousel
+        // so a later Down→ here returns to the same icon.
+        lastMenuIndex = static_cast<int>(selectorIndex) - menuStart;
         selectorIndex = lastCarouselBookIndex;
       }
       requestUpdate();
@@ -1936,19 +2121,23 @@ void HomeActivity::loop() {
       if (inCarouselRow) {
         // Wrap to the bottom of the screen (menu row) for symmetry.
         lastCarouselBookIndex = selectorIndex;
-        selectorIndex = menuStart;
+        selectorIndex = enterMenuRowAtLastPos();
       } else if (inHeaderRow) {
         shelfHeaderFocused = false;
         selectorIndex = lastCarouselBookIndex;
       } else if (inShelfRow) {
+        // Save where we were before bouncing up to the header.
+        lastShelfBookIndex = static_cast<int>(selectorIndex) - shelfStart;
         if (shelfHeaderExists) {
           shelfHeaderFocused = true;
         } else {
           selectorIndex = lastCarouselBookIndex;
         }
       } else /* inMenuRow */ {
+        // Save menu position on the way out.
+        lastMenuIndex = static_cast<int>(selectorIndex) - menuStart;
         if (shelfCount > 0) {
-          selectorIndex = shelfStart;
+          selectorIndex = enterShelfRowAtLastPos();
         } else if (shelfHeaderExists) {
           shelfHeaderFocused = true;
         } else {
@@ -1973,7 +2162,7 @@ void HomeActivity::loop() {
     updateHighlightedBookContext();
   }
 
-  // FlexBLE Collections — keep the shelf's selected spine visible. Recompute
+  // CrumBle Collections — keep the shelf's selected spine visible. Recompute
   // from the live collection size each iteration; cheap and avoids stale
   // offsets if the user added/removed books from another activity.
   if (isLyraFlow) {
@@ -2068,7 +2257,7 @@ void HomeActivity::loop() {
       return;
     }
 
-    // FlexBLE Collections — Flow theme's bookshelf row. Selection indices
+    // CrumBle Collections — Flow theme's bookshelf row. Selection indices
     // sit between the carousel and the menu icon bar; open the matching
     // book path directly.
     const auto activeThemeForConfirm = static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme);
@@ -2300,7 +2489,7 @@ void HomeActivity::render(RenderLock&&) {
     menuItems.insert(menuItems.begin(), {tr(STR_CONTINUE_READING), Book, HomeMenuAction::ContinueReading});
   }
 
-  // FlexBLE Flow bookshelf — render strip between cover footer and icon bar,
+  // CrumBle Flow bookshelf — render strip between cover footer and icon bar,
   // and offset the menu's selected-index calculation so the icon-bar
   // selection-highlight tracks the right item when the cursor moves past
   // the shelf.
@@ -2314,7 +2503,13 @@ void HomeActivity::render(RenderLock&&) {
       // vector that the render uses below, so this is free.
       shelfBookCount = static_cast<int>(cachedShelfPaths().size());
       const int shelfStart = static_cast<int>(recentBooks.size());
-      if (selectorIndex >= shelfStart && selectorIndex < shelfStart + shelfBookCount) {
+      // Only mark a book as focused when the cursor is actually on the
+      // books row. When `shelfHeaderFocused` is true, selectorIndex
+      // still sits in shelf range (we don't move it on Up-from-books)
+      // but the focus is conceptually on the header — leaving
+      // shelfSelectedSpine at -1 hides both the focus ring and the
+      // book-title overlay so the UI matches the user's mental model.
+      if (!shelfHeaderFocused && selectorIndex >= shelfStart && selectorIndex < shelfStart + shelfBookCount) {
         shelfSelectedSpine = selectorIndex - shelfStart;
       }
     }
@@ -2576,7 +2771,7 @@ void HomeActivity::onReadingStatsOpen() {
   const std::string bookPath = highlightedBookIdx >= 0 ? recentBooks[highlightedBookIdx].path : std::string();
   const std::string coverBmpPath =
       highlightedBookIdx >= 0 ? recentBooks[highlightedBookIdx].coverBmpPath : std::string();
-  // FlexBLE inherits chintanvajariya's richer BookStatsActivity (recent-books
+  // CrumBle inherits chintanvajariya's richer BookStatsActivity (recent-books
   // navigation + cover image). The richer constructor needs path/cover and a
   // backToHome flag; launched from home, so back returns here.
   startActivityForResult(

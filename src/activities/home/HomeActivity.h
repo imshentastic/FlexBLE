@@ -26,7 +26,20 @@ class HomeActivity final : public Activity {
   ButtonNavigator buttonNavigator;
   int selectorIndex = 0;
   int lastCarouselBookIndex = 0;  // remembered position when leaving carousel row
-  // FlexBLE Collections — leftmost visible spine index on the bookshelf
+  // Mirror of lastCarouselBookIndex but for the shelf. Saved when the
+  // user leaves the books row (Up to header, Down to menu) and
+  // restored when they come back, so navigating off and back doesn't
+  // dump the cursor at book 0. Reset to 0 on onEnter and when the
+  // active collection changes (the index would otherwise point into
+  // the wrong collection's content).
+  int lastShelfBookIndex = 0;
+  // Mirror again for the bottom icon-bar menu. Saved when leaving
+  // the menu row in any direction; restored when re-entering. Reset
+  // on onEnter — the menu's content (number of items) can also change
+  // based on settings, so the index is clamped against menuItemCount
+  // each time it's used.
+  int lastMenuIndex = 0;
+  // CrumBle Collections — leftmost visible spine index on the bookshelf
   // strip; adjusted when the focused spine would otherwise scroll out of view.
   int shelfScrollOffset = 0;
   // True when the cursor is on the collection-name header (the "Favorites"
@@ -142,7 +155,7 @@ class HomeActivity final : public Activity {
   void loadRecentBooks(int maxBooks);
   void loadAllBookStats();
   void loadRecentCovers(int coverHeight);
-  // FlexBLE Collections — generate BMP thumbnails at the bookshelf's exact
+  // CrumBle Collections — generate BMP thumbnails at the bookshelf's exact
   // cell dimensions for the books that are currently visible on the
   // shelf. Lazy by design: an active collection like "All Books" can
   // have hundreds of entries and eager generation would freeze the UI
@@ -150,7 +163,7 @@ class HomeActivity final : public Activity {
   // window pays the cost; the next batch generates when the user
   // scrolls into uncovered territory.
   void loadShelfCovers(int cellWidth, int cellHeight, int scrollOffset, int visibleCount);
-  // FlexBLE Series — runs the OPF series-only parse for every EPUB in
+  // CrumBle Series — runs the OPF series-only parse for every EPUB in
   // the active collection that hasn't been checked yet (SeriesIndex
   // doesn't know about it). Shows a loading popup since this can take
   // ~50-200 ms per book. Skipped entirely when the active collection
@@ -189,7 +202,7 @@ class HomeActivity final : public Activity {
   // separate menu (vs. the per-book one) so the items always match the
   // collection-level context.
   void showShelfHeaderActionMenu();
-  // FlexBLE series — Confirm on a shelf cell. For single-book cells
+  // CrumBle series — Confirm on a shelf cell. For single-book cells
   // this is just onSelectBook(firstPath). For series cells, opens the
   // most-recently-read member if any is in RECENT_BOOKS; otherwise
   // opens the SeriesMiniPicker.

@@ -7,7 +7,7 @@
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
-// FlexBLE Collections — mini-picker for a series cell on the shelf.
+// CrumBle Collections — mini-picker for a series cell on the shelf.
 // Confirm on a series cell (or long-press, depending on context)
 // opens this. Lists the series' books in series-index order. Each row
 // is openable (short Confirm → reader) or long-pressable (→ existing

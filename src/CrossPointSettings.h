@@ -190,7 +190,7 @@ class CrossPointSettings {
     LONG_PRESS_BUTTON_BEHAVIOR_COUNT
   };
 
-  // UI Theme. FlexBLE keeps LYRA_FLOW (the 5-book carousel) at its original
+  // UI Theme. CrumBle keeps LYRA_FLOW (the 5-book carousel) at its original
   // slot 3 so saved user settings stay valid across the v1.2.11.1 merge.
   // LYRA_CAROUSEL and MINIMAL are upstream's new theme options, appended.
   enum UI_THEME {
@@ -333,6 +333,15 @@ class CrossPointSettings {
   uint8_t tiltPageTurn = TILT_OFF;
   // Language setting (Language enum index, default 0 = EN)
   uint8_t language = 0;
+
+  // CrumBle Collections — global gate for series detection. When 0
+  // (default), the OPF-parse pass and the shelf series-collapse
+  // rendering are both skipped entirely. Off by default because most
+  // EPUBs from non-Calibre sources lack series metadata, so the
+  // expensive first-time scan would yield little value for those
+  // users. Setting → on triggers the lazy scan on next collection
+  // visit.
+  uint8_t seriesDetectionEnabled = 0;
 
   // Bluetooth HID page-turner support. When on, the device scans, pairs, and
   // listens to a BLE HID remote and translates its keys into virtual button
