@@ -21,11 +21,11 @@ struct MenuResult {
   int action = -1;
   uint8_t orientation = 0;
   bool settingsChanged = false;
-  // FlexBLE: BookSettingsDrawer's Bluetooth entry sets this when the user
+  // CrumBle: BookSettingsDrawer's Bluetooth entry sets this when the user
   // has no bonded remote and we need to launch the BT settings UI for
   // first-time pairing. The reader's drawer result handler picks it up.
   bool requestBluetoothFlow = false;
-  // FlexBLE: BluetoothSettingsActivity sets this when it auto-exited after
+  // CrumBle: BluetoothSettingsActivity sets this when it auto-exited after
   // a successful connect (exitOnSuccessfulConnect=true). The EpubReaderMenu
   // result handler treats it as a signal to also finish itself so the user
   // lands directly back in the book instead of in the reader menu.
@@ -72,7 +72,7 @@ struct FileBrowserActionResult {
   int action = -1;
 };
 
-// FlexBLE Collections sort picker — value matches CollectionSort enum.
+// CrumBle Collections sort picker — value matches CollectionSort enum.
 struct SortPickerResult {
   int sortMode = 0;  // 0 = Manual, 1 = TitleAlpha, 2 = DateAddedDesc, 3 = DateAddedAsc
 };

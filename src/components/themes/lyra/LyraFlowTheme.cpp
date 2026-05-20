@@ -231,8 +231,20 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
     cX = centerX - actualCoverWidth / 2;
     actualY = centerY + (centerCoverHeight - actualCoverHeight) / 2;
 
-    // Clear behind it so any side-cover overlap doesn't bleed through.
-    renderer.fillRect(cX, actualY, actualCoverWidth, actualCoverHeight, false);
+    // Clear the MAX possible center-cover slot, not just the current
+    // cover's bbox. When the previous render was a wider book, its
+    // selection border (+1 px outside the cover) extended past the
+    // current cover's edges; the narrow per-cover clear left those
+    // outer pixels intact, producing the "ghost hooks" effect at
+    // each corner. A fixed-size slot clear sized to the maximum
+    // possible cover + 3 px of selection-border safety wipes every
+    // previous frame's border pixels regardless of dimensions.
+    constexpr int kSelBorderPad = 3;
+    const int slotW = centerCoverWidth + 2 * kSelBorderPad;
+    const int slotH = centerCoverHeight + 2 * kSelBorderPad;
+    const int slotX = centerX - slotW / 2;
+    const int slotY = centerY - kSelBorderPad;
+    renderer.fillRect(slotX, slotY, slotW, slotH, false);
 
     if (centerParsed) {
       renderer.drawBitmap(centerBitmap, cX, actualY, actualCoverWidth, actualCoverHeight);
@@ -279,11 +291,21 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
       lineY += lineHeight;
     }
   }
-    renderer.drawRoundedRect(cX, actualY, actualCoverWidth, actualCoverHeight, 2, bookCornerRadius, true);
+    // Inner cover outline removed — cutRoundedCorners has already
+    // shaped the bitmap's corners to white, and the selection border
+    // (below, when hasSelection) is sufficient framing for the
+    // focused book. Dropping the always-on stroke eliminates the
+    // last visible source of corner-hook artifacts.
 
     if (hasSelection) {
-      renderer.drawRoundedRect(cX - 2, actualY - 2, actualCoverWidth + 4, actualCoverHeight + 4, 4,
-                               bookCornerRadius + 2, true);
+      // Selection border: thinned from 4 px to 2 px and pulled in
+      // (offset 1 px instead of 2 px). The 4 px-stroke + 8 px radius
+      // combo was the dominant source of the "corner hook" artifact —
+      // each corner's arc occupied ~6 px of stroke width which read
+      // as a bracket at panel resolution. A 2 px outline at radius 7
+      // looks like a single intentional frame.
+      renderer.drawRoundedRect(cX - 1, actualY - 1, actualCoverWidth + 2, actualCoverHeight + 2, 2,
+                               bookCornerRadius + 1, true);
     }
 
     if (centerOpened) cf.close();
@@ -333,13 +355,16 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   const bool hasStats = (stats != nullptr && stats->sessionCount > 0);
   const bool hasProgress = progressPercent >= 0.0f;
 
-  // Pre-clear the footer region (bar + label row beneath it) for the
-  // same reason we clear the title above: a buffer restore brings back
-  // the prior render's footer pixels, and width-variable text labels
-  // would stack. Generous height to cover both the bar and the label
-  // row in one fillRect.
+  // Pre-clear the footer region (bar + label row beneath it). Clears
+  // the FULL page width — not just the current cover's width — because
+  // adjacent books in the carousel can have different aspect ratios.
+  // If the previous render's cover was wider, the previous footer's
+  // right-aligned percent text extended past the current footerWidth's
+  // right edge, leaving trailing glyphs (e.g. "0%‰" instead of "0%"
+  // when prior was "37%"). Clearing pageWidth costs ~5KB more pixels
+  // per render but eliminates the class of bug entirely.
   const int footerStripHeight = kFooterProgressBarHeight + kFooterBarToLabelGap + renderer.getLineHeight(kFooterFontId) + 4;
-  renderer.fillRect(footerX, infoY, footerWidth, footerStripHeight, false);
+  renderer.fillRect(0, infoY, renderer.getScreenWidth(), footerStripHeight, false);
 
   // New stacking order (per UX feedback): bar on top, then a single row with
   // elapsed-time on the left and percentage on the right beneath it. This
@@ -452,8 +477,11 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
       // centered on the cap-height of the name.
       const int lineH = renderer.getLineHeight(kTabFontId);
       const int cy = tabY + lineH / 2;
-      constexpr int kArrowSize = 4;
-      constexpr int kArrowGap = 6;
+      // Bumped from 4 → 7 px. The 4-px triangles read as decoration
+      // more than navigation hints; 7 px is large enough that the
+      // user reads them as "press L/R" at a glance.
+      constexpr int kArrowSize = 7;
+      constexpr int kArrowGap = 8;
       // Left ◀
       const int lTip = nameX - kArrowGap - kArrowSize;
       const int lBase = nameX - kArrowGap;

@@ -536,7 +536,7 @@ void EpubReaderActivity::loop() {
       restoreSavedPosition();
       return;
     }
-    onGoHome();
+    exitToHomeWithPopup();
     return;
   }
 
@@ -614,7 +614,7 @@ void EpubReaderActivity::loop() {
       if (SETTINGS.longPressButtonBehavior == CrossPointSettings::CHAPTER_SKIP) {
         if (currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount()) {
           if (nextLongPressed) {
-            onGoHome();
+            exitToHomeWithPopup();
           } else {
             currentSpineIndex = epub->getSpineItemsCount() - 1;
             nextPageNumber = 0;
@@ -656,7 +656,7 @@ void EpubReaderActivity::loop() {
   // At end of the book, forward button goes home and back button returns to last page
   if (currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount()) {
     if (nextTriggered) {
-      onGoHome();
+      exitToHomeWithPopup();
     } else {
       currentSpineIndex = epub->getSpineItemsCount() - 1;
       nextPageNumber = 0;
@@ -851,7 +851,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::GO_HOME: {
-      onGoHome();
+      exitToHomeWithPopup();
       return;
     }
     case EpubReaderMenuActivity::MenuAction::DELETE_CACHE: {
@@ -876,7 +876,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       if (cacheDeleted) {
         delay(1000);
       }
-      onGoHome();
+      exitToHomeWithPopup();
       return;
     }
     case EpubReaderMenuActivity::MenuAction::SCREENSHOT: {
@@ -1376,6 +1376,15 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
     if (section->currentPage < section->pageCount - 1) {
       section->currentPage++;
     } else {
+      // End-of-book detection: forward press on the last page of the
+      // last spine. Used to advance into a stub "End of book" screen
+      // that the user then had to back-button out of. Per upstream
+      // PR #1425 / aalu d29b8ee2: just go home so finishing a book
+      // closes it cleanly.
+      if (currentSpineIndex >= epub->getSpineItemsCount() - 1) {
+        exitToHomeWithPopup();
+        return;
+      }
       // We don't want to delete the section mid-render, so grab the semaphore
       {
         RenderLock lock(*this);
@@ -1503,7 +1512,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
           LOG_ERR("ERS", "Failed to persist page data to SD");
         }
         section.reset();
-        // FlexBLE: if the layout aborted on heap pressure and BLE is still
+        // CrumBle: if the layout aborted on heap pressure and BLE is still
         // hogging ~58 KB, drop BLE and retry once. requestDisableLater()
         // sets a flag that the next main-loop tick drains via
         // tryDisableIfRequested(), which runs BEFORE the next render() —

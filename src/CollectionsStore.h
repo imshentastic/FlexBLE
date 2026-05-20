@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-// FlexBLE Collections — per-collection sort order. Affects what
+// CrumBle Collections — per-collection sort order. Affects what
 // `resolveBookPaths()` returns. User collections default to Manual
 // (insertion order), virtual collections default to whatever makes
 // semantic sense (DateAddedDesc for Recently Added, TitleAlpha for All
@@ -18,7 +18,7 @@ enum class CollectionSort : uint8_t {
   DateLastReadDesc = 5, // most recently opened first (by RECENT_BOOKS position; non-recents sort to end)
 };
 
-// FlexBLE Collections — user-defined tag groups that live on top of the
+// CrumBle Collections — user-defined tag groups that live on top of the
 // filesystem. Books can belong to zero or more collections regardless of where
 // they sit on the SD card. Phase 1 ships with a single hardcoded "Favorites"
 // collection; later phases add a picker, custom collections, and series
@@ -41,7 +41,7 @@ struct Collection {
   // collections.json; virtuals default-construct each begin() and
   // accept user overrides at runtime (also persisted).
   CollectionSort sortMode = CollectionSort::Manual;
-  // FlexBLE series collapse: when true and a series has 2+ books in
+  // CrumBle series collapse: when true and a series has 2+ books in
   // this collection, those books render as a single shelf cell with
   // a dark spine glyph. Default ON; user can toggle per-collection
   // from the shelf header action menu. Persisted in collections.json.
@@ -95,6 +95,17 @@ class CollectionsStore {
   // Returns the new collection's id, or empty string on failure. Persists
   // to SD on success.
   std::string createCollection(const std::string& name);
+  // Renames an existing collection. Refuses virtual collections (their
+  // names are seeded each begin() and would just reset). Empty-name
+  // calls are rejected. Returns true on success. Persists.
+  bool renameCollection(const std::string& collectionId, const std::string& newName);
+  // Removes a user collection entirely. Books on disk are untouched —
+  // they just lose their tag in this collection (and stay in any other
+  // collections they're in). Refuses virtual collections (Recently
+  // Added, All Books) and the seeded Favorites (would re-create on
+  // next boot anyway). If the deleted collection was active, the
+  // active id is reset to FAVORITES_ID. Persists.
+  bool deleteCollection(const std::string& collectionId);
   // Sets the sort mode for the given collection. No-op (with error log)
   // for unknown ids. Persists on change. Manual sort is rejected for
   // virtual collections — their book lists aren't user-ordered.

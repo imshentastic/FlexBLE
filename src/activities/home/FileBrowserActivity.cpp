@@ -405,7 +405,7 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
                      isEpubCompleted(fullPath) ? StrId::STR_MARK_UNFINISHED : StrId::STR_MARK_FINISHED});
   }
 
-  // FlexBLE Collections (phase 2): single picker entry that drills into a
+  // CrumBle Collections (phase 2): single picker entry that drills into a
   // checklist of every collection. The picker handles the per-membership
   // toggle and the "+ New collection..." flow itself, so the action menu
   // doesn't need separate add/remove items per collection anymore.
@@ -487,6 +487,10 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
           case FileBrowserAction::RescanLibrary:
           case FileBrowserAction::SortBy:
           case FileBrowserAction::ToggleCollapseSeries:
+          case FileBrowserAction::RenameCollection:
+          case FileBrowserAction::DeleteCollection:
+          case FileBrowserAction::CreateNewCollectionFromHeader:
+          case FileBrowserAction::AddBooksToActiveCollection:
             // Not exposed in the file browser's action menu — only the
             // home shelf paths add these items.
             return;
