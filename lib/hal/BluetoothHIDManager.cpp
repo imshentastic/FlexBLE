@@ -608,7 +608,7 @@ bool BluetoothHIDManager::connectToDevice(const std::string& address) {
     }
     
     if (connDev.profile) {
-      LOG_INF("BT", "✓ Using device profile: %s (byte[%d] for keycode)", 
+      LOG_INF("BT", "Using device profile: %s (byte[%d] for keycode)", 
               connDev.profile->name, connDev.profile->reportByteIndex);
       connDev.simpleFallbackEnabled = false;
     } else {
