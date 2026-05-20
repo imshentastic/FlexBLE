@@ -30,6 +30,13 @@ class Activity {
   virtual ~Activity() = default;
   virtual void onEnter();
   virtual void onExit();
+  // FlexBLE: called by main.cpp::enterDeepSleep BEFORE the hardware
+  // sleep enters. Activities can use this to commit in-flight state
+  // (reading sessions, draft inputs, etc.) that would otherwise be
+  // lost — the normal onExit() path doesn't fire when going to deep
+  // sleep, because the activity isn't being torn down; the chip is
+  // just being powered off. Default no-op.
+  virtual void onBeforeDeepSleep() {}
   virtual void loop() {}
 
   virtual void render(RenderLock&&) {}

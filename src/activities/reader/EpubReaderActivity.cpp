@@ -242,6 +242,10 @@ void EpubReaderActivity::onEnter() {
   // Session count and reading time are committed on exit once thresholds are met.
   stats = BookReadingStats::load(epub->getCachePath());
   sessionStartMs = millis();
+  sessionSegmentStartMs = sessionStartMs;
+  totalSessionMsThisOpen = 0UL;
+  sessionCountedThisOpen = false;
+  lastIncrementalSaveMs = sessionStartMs;
 
   globalStats = GlobalReadingStats::load();
 
@@ -279,21 +283,10 @@ void EpubReaderActivity::onExit() {
   APP_STATE.readerActivityLoadCount = 0;
   APP_STATE.saveToFile();
 
-  // Commit session stats based on how long the session lasted.
-  // Sessions under 1 minute don't count toward session count or reading time.
-  // Sessions under 10 seconds don't add to reading time.
-  const unsigned long elapsedMs = millis() - sessionStartMs;
-  if (elapsedMs >= 60000UL) {
-    stats.sessionCount++;
-    globalStats.totalSessions++;
-  }
-  if (elapsedMs >= 10000UL) {
-    const uint32_t elapsedSecs = static_cast<uint32_t>(elapsedMs / 1000UL);
-    stats.totalReadingSeconds += elapsedSecs;
-    globalStats.totalReadingSeconds += elapsedSecs;
-  }
-  stats.save(epub->getCachePath());
-  globalStats.save();
+  // Commit any remaining session time. Idempotent — if a deep-sleep
+  // commit or incremental save already banked the current segment,
+  // commitReadingSession returns without double-counting.
+  commitReadingSession();
 
   BOOKMARKS.unload();
   section.reset();
@@ -336,11 +329,64 @@ void EpubReaderActivity::onExit() {
   }
 }
 
+void EpubReaderActivity::commitReadingSession() {
+  if (!epub) return;
+  // Bank elapsed time from the current segment. sessionSegmentStartMs
+  // is reset every time we commit so successive commits (incremental
+  // save, deep-sleep, onExit) don't double-add the same milliseconds.
+  const unsigned long now = millis();
+  const unsigned long segmentMs = now - sessionSegmentStartMs;
+  if (segmentMs == 0UL) return;
+  sessionSegmentStartMs = now;
+  totalSessionMsThisOpen += segmentMs;
+
+  // Session count: incremented at most once per open (when cumulative
+  // time crosses the 60s threshold). A book briefly tapped open
+  // doesn't bump the count; a long read commits exactly one +1 even
+  // if it spans multiple deep-sleep commits.
+  if (!sessionCountedThisOpen && totalSessionMsThisOpen >= 60000UL) {
+    stats.sessionCount++;
+    globalStats.totalSessions++;
+    sessionCountedThisOpen = true;
+  }
+
+  // Reading time: no longer floor-gated. Every banked ms adds to the
+  // lifetime totals (was previously gated at 10 s, which silently
+  // discarded short reads — particularly bad for users who do
+  // many <10s sessions, e.g. mid-session deep-sleep cycles).
+  const uint32_t elapsedSecs = static_cast<uint32_t>(segmentMs / 1000UL);
+  if (elapsedSecs > 0) {
+    stats.totalReadingSeconds += elapsedSecs;
+    globalStats.totalReadingSeconds += elapsedSecs;
+  }
+
+  stats.save(epub->getCachePath());
+  globalStats.save();
+}
+
+void EpubReaderActivity::onBeforeDeepSleep() {
+  // Same commit path as onExit, but the activity STAYS alive (just
+  // gets put to sleep alongside the chip). When the device wakes,
+  // session-resume continues from the saved progress.bin position
+  // and a fresh session segment begins.
+  commitReadingSession();
+}
+
 void EpubReaderActivity::loop() {
   if (!epub) {
     // Should never happen
     finish();
     return;
+  }
+
+  // Incremental session save. Without this, a brown-out / hard crash
+  // mid-reading loses ALL accumulated time since onEnter (or the last
+  // commit). With it, worst-case loss is kIncrementalSaveMs. The cost
+  // is small: one SD write per minute of reading.
+  constexpr unsigned long kIncrementalSaveMs = 60000UL;  // 1 min
+  if (millis() - lastIncrementalSaveMs >= kIncrementalSaveMs) {
+    commitReadingSession();
+    lastIncrementalSaveMs = millis();
   }
 
   if (completionPromptQueued) {
@@ -842,9 +888,13 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::READING_STATS: {
-      // Include elapsed time from the current session in the display stats.
+      // Include elapsed time from the CURRENT (uncommitted) session
+      // segment on top of what's been banked into stats. Previously
+      // banked segments are already in `stats.totalReadingSeconds`
+      // because commitReadingSession persists them incrementally —
+      // adding `millis() - sessionStartMs` would double-count.
       BookReadingStats displayStats = stats;
-      displayStats.totalReadingSeconds += static_cast<uint32_t>((millis() - sessionStartMs) / 1000UL);
+      displayStats.totalReadingSeconds += static_cast<uint32_t>((millis() - sessionSegmentStartMs) / 1000UL);
       startActivityForResult(
           std::make_unique<BookStatsActivity>(renderer, mappedInput, epub->getPath(), epub->getTitle(),
                                               epub->getThumbBmpPath(), displayStats, globalStats),

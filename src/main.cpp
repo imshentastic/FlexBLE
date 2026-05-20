@@ -526,6 +526,14 @@ void enterDeepSleep() {
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
   APP_STATE.saveToFile();
 
+  // FlexBLE: give the current activity a chance to flush in-flight
+  // state (most importantly: the reader's accumulated session time)
+  // before the chip powers off. Without this hook, every minute spent
+  // reading since the last natural activity-exit was lost on each
+  // deep-sleep cycle. Ported in spirit from dawsonfi/aalu's
+  // ReadingStatsManager::endSession deep-sleep wiring.
+  activityManager.notifyBeforeDeepSleep();
+
   // Disable BLE before deep sleep so the NimBLE host shuts down cleanly and
   // the radio is released before the chip powers off. Idempotent if BLE was
   // already off (reader exit path) — defensive against the auto-sleep timer
