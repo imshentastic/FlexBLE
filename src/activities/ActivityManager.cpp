@@ -216,9 +216,10 @@ void ActivityManager::goToReader(std::string path, const bool suppressBackReleas
   replaceActivity(std::make_unique<ReaderActivity>(renderer, mappedInput, std::move(path), suppressBackRelease));
 }
 
-void ActivityManager::goToSleep() {
+void ActivityManager::goToSleep(bool fromTimeout) {
   const bool canSnapshotOverlay = currentActivity && currentActivity->canSnapshotForSleepOverlay();
-  replaceActivity(std::make_unique<SleepActivity>(renderer, mappedInput, canSnapshotOverlay));
+  replaceActivity(
+      std::make_unique<SleepActivity>(renderer, mappedInput, canSnapshotOverlay, getCurrentBookPath(), fromTimeout));
   loop();  // Important: sleep screen must be rendered immediately, the caller will go to sleep right after this returns
 }
 
@@ -228,9 +229,24 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
   replaceActivity(std::make_unique<FullScreenMessageActivity>(renderer, mappedInput, std::move(message), style));
 }
 
+void ActivityManager::goHome(HomeMenuItem initialMenuItem) {
+  if (initialMenuItem == HomeMenuItem::NONE && currentActivity) {
+    const auto& activityName = currentActivity->name;
+    if (activityName == "FileBrowser") {
+      initialMenuItem = HomeMenuItem::FILE_BROWSER;
+    } else if (activityName == "RecentBooks") {
+      initialMenuItem = HomeMenuItem::RECENTS;
+    } else if (activityName == "OpdsBookBrowser") {
+      initialMenuItem = HomeMenuItem::OPDS_BROWSER;
+    } else if (activityName == "CrossPointWebServer") {
+      initialMenuItem = HomeMenuItem::FILE_TRANSFER;
+    } else if (activityName == "Settings") {
+      initialMenuItem = HomeMenuItem::SETTINGS_MENU;
+    }
+  }
+  replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem));
+}
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
-
-void ActivityManager::goHome() { replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput)); }
 
 void ActivityManager::pushActivity(std::unique_ptr<Activity>&& activity) {
   if (pendingActivity) {
@@ -267,6 +283,26 @@ bool ActivityManager::canSnapshotForSleepOverlay() const {
 }
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }
+
+std::string ActivityManager::getCurrentBookPath() const {
+  if (currentActivity) {
+    const std::string path = currentActivity->getCurrentBookPath();
+    if (!path.empty()) {
+      return path;
+    }
+  }
+
+  for (auto it = stackActivities.rbegin(); it != stackActivities.rend(); ++it) {
+    if (*it) {
+      const std::string path = (*it)->getCurrentBookPath();
+      if (!path.empty()) {
+        return path;
+      }
+    }
+  }
+
+  return {};
+}
 
 ScreenshotInfo ActivityManager::getScreenshotInfo() const {
   if (currentActivity) {

@@ -26,6 +26,8 @@ class CrossPointSettings {
     COVER_CUSTOM = 5,
     OVERLAY = 6,
     READING_STATS_SLEEP = 7,
+    MINIMAL_SLEEP = 8,
+    QUICK_RESUME = 9,
     SLEEP_SCREEN_MODE_COUNT
   };
   enum SLEEP_SCREEN_COVER_MODE { FIT = 0, CROP = 1, SLEEP_SCREEN_COVER_MODE_COUNT };
@@ -127,7 +129,16 @@ class CrossPointSettings {
     EXTRA_LARGE = 4,
     TEENSY = 5,
     HUGE_SIZE = 6,
+    ITTY_BITTY = 7,
     FONT_SIZE_COUNT
+  };
+  enum SD_FONT_SIZE_RANGE {
+    SD_FONT_RANGE_TEENSY = 0,
+    SD_FONT_RANGE_TINY = 1,
+    SD_FONT_RANGE_XLARGE = 2,
+    SD_FONT_RANGE_NO_EMOJI = 3,
+    SD_FONT_RANGE_ALL = 4,
+    SD_FONT_SIZE_RANGE_COUNT
   };
   enum LINE_COMPRESSION { TIGHT = 0, NORMAL = 1, WIDE = 2, LINE_COMPRESSION_COUNT };
   enum PARAGRAPH_ALIGNMENT {
@@ -146,6 +157,7 @@ class CrossPointSettings {
     SLEEP_10_MIN = 2,
     SLEEP_15_MIN = 3,
     SLEEP_30_MIN = 4,
+    SLEEP_3_MIN = 5,
     SLEEP_TIMEOUT_COUNT
   };
 
@@ -232,6 +244,13 @@ class CrossPointSettings {
   enum CLIP_NAV_MODE : uint8_t { LINE_AWARE = 0, WORD_BY_WORD = 1, CLIP_NAV_MODE_COUNT };
   // Annotation underline visibility
   enum ANNOTATION_VISIBILITY : uint8_t { ANNOT_VISIBLE = 0, ANNOT_HIDDEN = 1, ANNOTATION_VISIBILITY_COUNT };
+
+  enum QUICK_RESUME_SLEEP_SCREEN {
+    QUICK_RESUME_NEVER = 0,
+    QUICK_RESUME_AFTER_TIMEOUT = 1,
+    QUICK_RESUME_SLEEP_SCREEN_COUNT
+  };
+
   // Sleep screen settings
   uint8_t sleepScreen = DARK;
   // Sleep screen cover mode settings
@@ -247,6 +266,17 @@ class CrossPointSettings {
   uint8_t statusBarTitle = CHAPTER_TITLE;
   uint8_t statusBarBattery = 1;
   uint8_t xtcStatusBarMode = XTC_STATUS_BAR_HIDE;
+  // Clock display in status bar (X3 only, requires DS3231 RTC)
+  uint8_t statusBarClock = 0;
+  // Clock UTC offset in quarter-hour steps, biased by 48 so it fits in uint8_t.
+  // Value 48 = UTC+0, 0 = UTC-12:00, 104 = UTC+14:00.
+  // Quarter-hour granularity supports oddball zones like Nepal (+5:45) and Chatham (+12:45).
+  uint8_t clockUtcOffsetQ = 48;
+  // Clock display format: 0 = 24-hour, 1 = 12-hour
+  uint8_t clockFormat = 0;
+  // Set once an NTP sync succeeds. Used to skip re-syncing on every WiFi connect.
+  // Resetting to 0 (e.g. via the web UI) forces a re-sync on next WiFi connect.
+  uint8_t clockHasBeenSynced = 0;
   // Text rendering settings
   uint8_t extraParagraphSpacing = 1;
   uint8_t forceParagraphIndents = 0;
@@ -281,6 +311,15 @@ class CrossPointSettings {
   // Reader font settings
   uint8_t fontFamily = LEXENDDECA;
   uint8_t fontSize = MEDIUM;
+#if defined(OMIT_EMOJI_FONTS)
+  uint8_t sdFontSizeRange = SD_FONT_RANGE_NO_EMOJI;
+#elif defined(OMIT_TINY_FONT) && defined(OMIT_SMALL_FONT)
+  uint8_t sdFontSizeRange = SD_FONT_RANGE_XLARGE;
+#elif defined(OMIT_MEDIUM_FONT) && defined(OMIT_LARGE_FONT) && defined(OMIT_XLARGE_FONT) && defined(OMIT_HUGE_FONT)
+  uint8_t sdFontSizeRange = SD_FONT_RANGE_TEENSY;
+#else
+  uint8_t sdFontSizeRange = SD_FONT_RANGE_TINY;
+#endif
   uint8_t lineSpacing = NORMAL;
   uint8_t paragraphAlignment = JUSTIFIED;
   // Auto-sleep timeout setting (default 10 minutes). Legacy sleepTimeout enum values are migration-only.
@@ -311,10 +350,12 @@ class CrossPointSettings {
   uint8_t bionicReadingEnabled = 0;
   // Guide Dots - places a middle dot between words to guide the eye
   uint8_t guideReadingEnabled = 0;
-  // SD card font family name (empty = use built-in fontFamily)
-  char sdFontFamilyName[32] = "";
+  // SD card font family name, including optional range suffix (empty = use built-in fontFamily)
+  char sdFontFamilyName[64] = "";
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
   uint8_t showHiddenFiles = 0;
+  // Remove a book from the Recent Books list when its End-of-Book screen is reached (0 = off, 1 = on)
+  uint8_t removeReadBooksFromRecents = 0;
   // Move epub to /Read/ folder on SD card when marked as finished (0 = disabled, 1 = enabled)
   uint8_t moveFinishedToReadFolder = 0;
   // Image rendering mode in EPUB reader
@@ -325,6 +366,8 @@ class CrossPointSettings {
   uint8_t tiltPageTurn = TILT_OFF;
   // Language setting (Language enum index, default 0 = EN)
   uint8_t language = 0;
+  // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
+  uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
 
   ~CrossPointSettings() = default;
 
@@ -335,6 +378,7 @@ class CrossPointSettings {
   static constexpr uint16_t POWER_BUTTON_LONG_PRESS_MS = 400;
   static constexpr uint8_t MIN_SLEEP_TIMEOUT_MINUTES = 1;
   static constexpr uint8_t MAX_SLEEP_TIMEOUT_MINUTES = 30;
+  static constexpr uint8_t SD_FONT_MAX_SIZE_STEPS = 8;
 
   uint16_t getPowerButtonWakeDuration() const {
     return (shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP) ? POWER_BUTTON_WAKE_SHORT_MS
@@ -351,7 +395,11 @@ class CrossPointSettings {
   uint16_t getPowerButtonLongPressDuration() const { return POWER_BUTTON_LONG_PRESS_MS; }
   static uint8_t getActiveReaderFontSizeCount();
   static uint8_t getStoredReaderFontSize(FONT_SIZE size);
+  static uint8_t getReaderFontPointSize(FONT_SIZE size);
+  static uint8_t getSdFontRangePointSize(uint8_t range, uint8_t step);
+  static bool isSdFontPointSizeAllowedForRange(uint8_t pointSize, uint8_t range);
   FONT_SIZE getEffectiveReaderFontSize() const;
+  uint8_t getSdFontTargetPointSize() const;
   bool changeReaderFontSize(bool larger);
   int getReaderFontId() const;
 
@@ -364,8 +412,11 @@ class CrossPointSettings {
   static void validateFrontButtonMapping(CrossPointSettings& settings);
   static void validateReaderFrontButtonMapping(CrossPointSettings& settings);
   static uint8_t sleepTimeoutEnumToMinutes(uint8_t legacyValue);
+  static uint8_t sleepScreenStorageToMode(uint8_t storedValue);
+  static uint8_t sleepScreenModeToStorage(uint8_t mode);
 #ifdef SIMULATOR
   static bool verifySleepTimeoutMigrationContract();
+  static bool verifySleepScreenMigrationContract();
 #endif
 
  private:

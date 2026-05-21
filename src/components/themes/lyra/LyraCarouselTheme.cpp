@@ -22,15 +22,17 @@ namespace {
 // with the same visual treatment as Lyra Flow.
 constexpr int kCenterCoverMaxW = LyraCarouselTheme::kCenterCoverW;
 constexpr int kCenterCoverMaxH = LyraCarouselTheme::kCenterCoverH;
+constexpr int kCenterThumbW = LyraCarouselTheme::kCenterThumbW;
+constexpr int kCenterThumbH = LyraCarouselTheme::kCenterThumbH;
 constexpr int kSideCoverMaxW = LyraCarouselTheme::kSideCoverW;
 constexpr int kSideCoverMaxH = LyraCarouselTheme::kSideCoverH;
 constexpr int kCoverTopPad = 18;
-constexpr int kCenterCoverVisualInset = 10;
+constexpr int kCenterCoverVisualInset = LyraCarouselTheme::kCenterCoverVisualInset;
 constexpr int kCarouselVerticalLift = 8;
-constexpr int kBaseDisplayCenterW = (kCenterCoverMaxW * 86) / 100;
-constexpr int kBaseDisplayCenterH = (kCenterCoverMaxH * 86) / 100;
-constexpr int kDisplayCenterW = std::min(kCenterCoverMaxW, kBaseDisplayCenterW + 24);
-constexpr int kDisplayCenterH = std::min(kCenterCoverMaxH, kBaseDisplayCenterH + 24);
+constexpr int kBaseDisplayCenterW = LyraCarouselTheme::kBaseDisplayCenterW;
+constexpr int kBaseDisplayCenterH = LyraCarouselTheme::kBaseDisplayCenterH;
+constexpr int kDisplayCenterW = LyraCarouselTheme::kDisplayCenterW;
+constexpr int kDisplayCenterH = LyraCarouselTheme::kDisplayCenterH;
 constexpr int kNearSideW = (kBaseDisplayCenterW * 26) / 100;
 constexpr int kFarSideW = (kBaseDisplayCenterW * 21) / 100;
 constexpr int kNearSideInnerH = (kBaseDisplayCenterH * 90) / 100;
@@ -262,7 +264,7 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
     outRect = shrinkCenterCoverRect(centerCoverSlotRect);
 
     if (!book.coverBmpPath.empty()) {
-      const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, kCenterCoverMaxW, kCenterCoverMaxH);
+      const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, kCenterThumbW, kCenterThumbH);
       FsFile file;
       if (Storage.openFileForRead("HOME", thumbPath, file)) {
         Bitmap bitmap(file);

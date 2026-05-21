@@ -1699,7 +1699,7 @@ static const EpdLigaturePair dmsans_12_regularLigaturePairs[] = {
     { 0x0066006C, 0xFB02 }, // f l -> U+FB02
 };
 
-static const EpdFontData dmsans_12_regular = {
+static constexpr EpdFontData dmsans_12_regular = {
     dmsans_12_regularBitmaps,
     dmsans_12_regularGlyphs,
     dmsans_12_regularIntervals,

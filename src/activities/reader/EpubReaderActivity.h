@@ -56,21 +56,22 @@ class EpubReaderActivity final : public Activity {
   bool pendingCompletedFeedback = false;
   bool completedFeedbackIsFinished = false;
   unsigned long completedFeedbackShowTime = 0UL;
+  bool pendingTiltPageTurnFeedback = false;
+  bool tiltPageTurnFeedbackEnabled = false;
+  unsigned long tiltPageTurnFeedbackShowTime = 0UL;
   int completionTriggerSpineIndex = -1;
   float completionTriggerSpineProgress = 1.0f;
   bool completionPromptQueued = false;
   bool completionPromptShown = false;
   bool completionTriggerSeenBelow = false;
   bool lastAtOrPastCompletionTrigger = false;
-  bool pendingReadFolderMove = false;
 
-  struct ReadFolderMoveParams {
-    std::string epubPath;
-    std::string dstEpubPath;
-    std::string cachePath;
-    std::string title;
-  };
-  static void readFolderMoveTask(void* arg);
+  // Tracks whether this book is currently removed from Recent Books by the
+  // removeReadBooksFromRecents feature (set at End-of-Book, cleared if paged back in).
+  bool recentsEntryRemoved = false;
+  // Set when the reader is left at end-of-book and SETTINGS.moveFinishedToReadFolder is on.
+  // Consumed in onExit() to relocate the finished book into /Read/.
+  bool pendingReadFolderMove = false;
 
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
@@ -107,6 +108,7 @@ class EpubReaderActivity final : public Activity {
   void queueCompletionPromptIfNeeded();
   void setBookCompleted(bool isCompleted);
   void showCompletedFeedback(bool isCompleted);
+  void showTiltPageTurnFeedback(bool enabled);
 
   // Footnote navigation
   void navigateToHref(const std::string& href, bool savePosition = false);
@@ -122,6 +124,7 @@ class EpubReaderActivity final : public Activity {
   bool preventAutoSleep() override { return automaticPageTurnActive; }
   bool isReaderActivity() const override { return true; }
   bool canSnapshotForSleepOverlay() const override { return true; }
+  std::string getCurrentBookPath() const override { return epub ? epub->getPath() : std::string{}; }
   void setAutoPageTurnIntervalSeconds(uint16_t seconds);
   uint16_t getAutoPageTurnIntervalSeconds() const;
 

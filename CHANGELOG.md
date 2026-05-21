@@ -1,12 +1,25 @@
 # Changelog
 
-## [Unreleased]
+## [v1.3.0] - 2026-05-21
 
 ### Added
+- Added Back/Cancel support while downloading books from OPDS catalogs.
+- Added a Recent Books long-press menu in both List and Grid views with delete, cache delete, completion, and remove-from-recents actions.
+- Added a Minimal sleep screen option that shows the current book cover and reading progress on a dark background.
+- Added more detailed WiFi connection debug logs for scans, selected networks, status changes, disconnect reasons, and timeouts.
+- Added a 9pt `Itty Bitty` reader font size, plus build flags for omitting Itty Bitty and Large reader font assets in size-constrained firmware variants.
+- Added an in-reader confirmation message when a shortcut turns tilt-to-turn on or off.
 
 ### Fixed
+- Fixed WiFi and OPDS connection-flow edge cases so manual Settings connections show the connected status first, copied or corrupted saved-password files are rejected before use, OPDS retries show loading before requests, and large OPDS feeds fail safely under low memory instead of rebooting.
+- Fixed reader and Home UI polish issues, including landscape status-bar settings, missing Vietnamese labels, File Browser and Lyra Carousel icon alignment, cover thumbnail artifacts, and duplicate Home progress/stat loading.
+- Fixed EPUB cache and low-memory handling by using stable cache folder keys, migrating older cache folders where possible, rebuilding stale section caches, laying out very long text blocks earlier, streaming table fallback content when heap is tight, and clarifying the warning text.
+- Fixed sleep-entry, network, and SD-card font download reliability issues by reusing cached sleep-screen assets, idling OPDS pages normally after load, putting the X3 tilt sensor back to sleep outside the reader, disabling WiFi power saving during transfers, reducing WebDAV stack usage, tolerating longer stalls, retrying interrupted font files, and freeing active reader fonts when needed.
+- Fixed remaining reader service edge cases, including an XTC chapter selector crash on memory-constrained builds, SD-card font size selection, SD-card font-size shortcuts skipping manually installed sizes, and KOReader Sync login compatibility with self-hosted servers that return valid JSON on success.
 
 ### Changed
+- Modified upstream "page-as-sleep" behavior into a new `Sleep Screen > Quick Resume` option, which also keeps `Quick Resume on Timeout` on, and renamed the timeout-only toggle.
+- Improved reader and browser menu behavior by moving the Footnotes shortcut above Select Chapter, wrapping long book titles in action menus, and reducing progress-screen repaint work during OPDS and SD font downloads.
 
 ## [v1.2.11.1] - 2026-05-15
 
@@ -25,12 +38,14 @@
 - Added bookmark cleanup shortcuts: hold Select on a bookmark to delete it, or hold Open on a book in Bookmarks to clear that book's bookmark list.
 - Added a confirmation message after deleting a book's cache from the reader or File Browser.
 - Added a File Browser long-press action for deleting an EPUB or XTC book's cache
+- Added a downloaded-font size range setting so SD-card fonts can use compact, default, or large point-size sets.
 - Added a File Browser long-press action for marking EPUB books as finished or unfinished.
 
 ### Changed
 - Hardened deep sleep entry by shutting WiFi down before waiting for the power button to be released.
 - Raised the web file-transfer filename limit from 100 to 150 bytes so longer uploaded filenames are preserved.
 - Made the in-reader Reader Options menu include the same Reader settings and actions as Settings > Reader.
+- Split SD-card font descriptions and supported languages into separate lines in the font download screen.
 
 ### Fixed
 - Fixed inline EPUB images disappearing in landscape when their bottom edge slightly overlaps the screen margin.
@@ -39,7 +54,7 @@
 - Fixed the SD-card font picker reopening immediately after selecting a font from Settings > Reader > Font Family.
 - Fixed in-reader font-size changes for SD card fonts not working
 - Fixed in-reader SD-card font changes not always rebuilding the current EPUB page layout.
----
+
 ## [v1.2.10] - 2026-05-11
 
 ### Added

@@ -53,6 +53,8 @@ echo "#define NOTOSYMBOLS_16_FONT_ID ($(hash_files ./notosymbols_16_regular.h))"
 # Reading fonts - support OMIT_EMOJI_FONTS
 reading_font_id LEXENDDECA_8_FONT_ID \
   ./lexenddeca_8_regular.h ./lexenddeca_8_bold.h ./lexenddeca_8_bolditalic.h ./lexenddeca_8_italic.h
+reading_font_id LEXENDDECA_9_FONT_ID \
+  ./lexenddeca_9_regular.h ./lexenddeca_9_bold.h ./lexenddeca_9_bolditalic.h ./lexenddeca_9_italic.h
 reading_font_id LEXENDDECA_10_FONT_ID \
   ./lexenddeca_10_regular.h ./lexenddeca_10_bold.h ./lexenddeca_10_bolditalic.h ./lexenddeca_10_italic.h
 reading_font_id LEXENDDECA_12_FONT_ID \
@@ -68,6 +70,8 @@ reading_font_id LEXENDDECA_20_FONT_ID \
 
 reading_font_id CHAREINK_8_FONT_ID \
   ./charein_8_regular.h ./charein_8_bold.h ./charein_8_bolditalic.h ./charein_8_italic.h
+reading_font_id CHAREINK_9_FONT_ID \
+  ./charein_9_regular.h ./charein_9_bold.h ./charein_9_bolditalic.h ./charein_9_italic.h
 reading_font_id CHAREINK_10_FONT_ID \
   ./charein_10_regular.h ./charein_10_bold.h ./charein_10_bolditalic.h ./charein_10_italic.h
 reading_font_id CHAREINK_12_FONT_ID \
@@ -83,6 +87,8 @@ reading_font_id CHAREINK_20_FONT_ID \
 
 reading_font_id BITTER_8_FONT_ID \
   ./bitter_8_regular.h ./bitter_8_bold.h ./bitter_8_bolditalic.h ./bitter_8_italic.h
+reading_font_id BITTER_9_FONT_ID \
+  ./bitter_9_regular.h ./bitter_9_bold.h ./bitter_9_bolditalic.h ./bitter_9_italic.h
 reading_font_id BITTER_10_FONT_ID \
   ./bitter_10_regular.h ./bitter_10_bold.h ./bitter_10_bolditalic.h ./bitter_10_italic.h
 reading_font_id BITTER_12_FONT_ID \
@@ -107,11 +113,11 @@ echo "// Guard against any hash accidentally producing 0."
 for id in \
   NOTOEMOJI_10_FONT_ID NOTOEMOJI_12_FONT_ID NOTOEMOJI_14_FONT_ID NOTOEMOJI_16_FONT_ID \
   NOTOSYMBOLS_10_FONT_ID NOTOSYMBOLS_12_FONT_ID NOTOSYMBOLS_14_FONT_ID NOTOSYMBOLS_16_FONT_ID \
-  LEXENDDECA_8_FONT_ID LEXENDDECA_10_FONT_ID LEXENDDECA_12_FONT_ID LEXENDDECA_14_FONT_ID \
+  LEXENDDECA_8_FONT_ID LEXENDDECA_9_FONT_ID LEXENDDECA_10_FONT_ID LEXENDDECA_12_FONT_ID LEXENDDECA_14_FONT_ID \
   LEXENDDECA_16_FONT_ID LEXENDDECA_18_FONT_ID LEXENDDECA_20_FONT_ID \
-  CHAREINK_8_FONT_ID CHAREINK_10_FONT_ID CHAREINK_12_FONT_ID CHAREINK_14_FONT_ID \
+  CHAREINK_8_FONT_ID CHAREINK_9_FONT_ID CHAREINK_10_FONT_ID CHAREINK_12_FONT_ID CHAREINK_14_FONT_ID \
   CHAREINK_16_FONT_ID CHAREINK_18_FONT_ID CHAREINK_20_FONT_ID \
-  BITTER_8_FONT_ID BITTER_10_FONT_ID BITTER_12_FONT_ID BITTER_14_FONT_ID \
+  BITTER_8_FONT_ID BITTER_9_FONT_ID BITTER_10_FONT_ID BITTER_12_FONT_ID BITTER_14_FONT_ID \
   BITTER_16_FONT_ID BITTER_18_FONT_ID BITTER_20_FONT_ID \
   UI_10_FONT_ID UI_12_FONT_ID SMALL_FONT_ID; do
   echo "static_assert(${id} != 0, \"Font ID collision with sentinel\");"

@@ -38,6 +38,14 @@ class HomeActivity final : public Activity {
   bool coverRendered = false;      // Track if cover has been rendered once
   bool coverBufferStored = false;  // Track if cover buffer is stored
   uint8_t* coverBuffer = nullptr;  // HomeActivity's own buffer for cover image
+  size_t coverBufferSize = 0;      // Bytes allocated to coverBuffer
+  // Logical rect last passed to drawRecentBookCover. The cover snapshot only
+  // needs to cover this region, not the entire framebuffer, so we cache the
+  // tile instead of all 48 KB. Set in render() before the call.
+  int coverRectX = 0;
+  int coverRectY = 0;
+  int coverRectW = 0;
+  int coverRectH = 0;
   float currentBookProgressPercent = -1.0f;
   BookReadingStats currentBookStats;
   GlobalReadingStats globalStats;
@@ -52,6 +60,8 @@ class HomeActivity final : public Activity {
   bool carouselWarmupPending = false;
 
   std::vector<RecentBook> recentBooks;
+  const HomeMenuItem initialMenuItem;
+
   void onSelectBook(const std::string& path);
   void onFileBrowserOpen();
   void onContinueReading();
@@ -85,10 +95,12 @@ class HomeActivity final : public Activity {
   void loadRecentCovers(int coverHeight);
 
  public:
-  explicit HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("Home", renderer, mappedInput) {}
+  explicit HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                        HomeMenuItem initialMenuItemValue = HomeMenuItem::NONE)
+      : Activity("Home", renderer, mappedInput), initialMenuItem(initialMenuItemValue) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+  std::string getCurrentBookPath() const override;
 };

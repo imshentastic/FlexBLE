@@ -226,7 +226,7 @@ static const EpdUnicodeInterval notoemoji_18_regularIntervals[] = {
     { 0x21A9, 0x21AA, 0x1A },
 };
 
-static const EpdFontData notoemoji_18_regular = {
+static constexpr EpdFontData notoemoji_18_regular = {
     notoemoji_18_regularBitmaps,
     notoemoji_18_regularGlyphs,
     notoemoji_18_regularIntervals,

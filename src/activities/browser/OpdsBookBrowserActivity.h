@@ -1,6 +1,7 @@
 #pragma once
 #include <OpdsParser.h>
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -28,7 +29,8 @@ class OpdsBookBrowserActivity final : public Activity {
  private:
   ButtonNavigator buttonNavigator;
   BrowserState state = BrowserState::LOADING;
-  std::vector<OpdsEntry> entries;
+  std::unique_ptr<OpdsEntry[]> entries;
+  size_t entryCount = 0;
   std::vector<std::string> navigationHistory;
   std::string currentPath;
   std::string searchTemplate;
@@ -45,11 +47,15 @@ class OpdsBookBrowserActivity final : public Activity {
   void checkAndConnectWifi();
   void launchWifiSelection();
   void onWifiSelectionComplete(bool connected);
+  void showLoadingBeforeFetch();
   void fetchFeed(const std::string& path);
+  bool ensureEntryBuffer();
+  void clearEntries();
+  bool appendEntry(OpdsEntry&& entry);
   void navigateToEntry(const OpdsEntry& entry);
   void navigateBack();
   void downloadBook(const OpdsEntry& book);
   void launchSearch();
   void performSearch(const std::string& query);
-  bool preventAutoSleep() override { return true; }
+  bool preventAutoSleep() override;
 };

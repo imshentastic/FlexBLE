@@ -4,6 +4,7 @@
 #include <FontDecompressor.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalClock.h>
 #include <HalDisplay.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
@@ -14,6 +15,49 @@
 #include <Logging.h>
 #include <SPI.h>
 #include <builtinFonts/all.h>
+
+#ifdef SIMULATOR
+using esp_reset_reason_t = int;
+using esp_sleep_wakeup_cause_t = int;
+enum : int {
+  ESP_RST_UNKNOWN = 0,
+  ESP_RST_POWERON,
+  ESP_RST_EXT,
+  ESP_RST_SW,
+  ESP_RST_PANIC,
+  ESP_RST_INT_WDT,
+  ESP_RST_TASK_WDT,
+  ESP_RST_WDT,
+  ESP_RST_DEEPSLEEP,
+  ESP_RST_BROWNOUT,
+  ESP_RST_SDIO,
+  ESP_RST_USB,
+  ESP_RST_JTAG,
+  ESP_RST_EFUSE,
+  ESP_RST_PWR_GLITCH,
+  ESP_RST_CPU_LOCKUP
+};
+enum : int {
+  ESP_SLEEP_WAKEUP_UNDEFINED = 0,
+  ESP_SLEEP_WAKEUP_ALL,
+  ESP_SLEEP_WAKEUP_EXT0,
+  ESP_SLEEP_WAKEUP_EXT1,
+  ESP_SLEEP_WAKEUP_TIMER,
+  ESP_SLEEP_WAKEUP_TOUCHPAD,
+  ESP_SLEEP_WAKEUP_ULP,
+  ESP_SLEEP_WAKEUP_GPIO,
+  ESP_SLEEP_WAKEUP_UART,
+  ESP_SLEEP_WAKEUP_WIFI,
+  ESP_SLEEP_WAKEUP_COCPU,
+  ESP_SLEEP_WAKEUP_COCPU_TRAP_TRIG,
+  ESP_SLEEP_WAKEUP_BT
+};
+inline esp_reset_reason_t esp_reset_reason() { return ESP_RST_UNKNOWN; }
+inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_WAKEUP_UNDEFINED; }
+#else
+#include <esp_sleep.h>
+#include <esp_system.h>
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -37,6 +81,7 @@
 #ifdef SIMULATOR
 #include "simulator/SimulatorSmokeTest.h"
 #endif
+#include "images/LoadingIcon.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 
@@ -46,6 +91,7 @@ ActivityManager activityManager(renderer, mappedInputManager);
 FontDecompressor fontDecompressor;
 SdCardFontSystem sdFontSystem;
 FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts());
+static unsigned long allowSleepAt = 0;
 
 // Fonts
 #ifndef OMIT_MEDIUM_FONT
@@ -62,6 +108,13 @@ EpdFont charein8BoldFont(&charein_8_bold);
 EpdFont charein8ItalicFont(&charein_8_italic);
 EpdFont charein8BoldItalicFont(&charein_8_bolditalic);
 EpdFontFamily charein8FontFamily(&charein8RegularFont, &charein8BoldFont, &charein8ItalicFont, &charein8BoldItalicFont);
+#endif
+#ifndef OMIT_ITTY_BITTY_FONT
+EpdFont charein9RegularFont(&charein_9_regular);
+EpdFont charein9BoldFont(&charein_9_bold);
+EpdFont charein9ItalicFont(&charein_9_italic);
+EpdFont charein9BoldItalicFont(&charein_9_bolditalic);
+EpdFontFamily charein9FontFamily(&charein9RegularFont, &charein9BoldFont, &charein9ItalicFont, &charein9BoldItalicFont);
 #endif
 #ifndef OMIT_TINY_FONT
 EpdFont charein10RegularFont(&charein_10_regular);
@@ -87,12 +140,14 @@ EpdFont charein14BoldItalicFont(&charein_14_bolditalic);
 EpdFontFamily charein14FontFamily(&charein14RegularFont, &charein14BoldFont, &charein14ItalicFont,
                                   &charein14BoldItalicFont);
 #endif
+#ifndef OMIT_LARGE_FONT
 EpdFont charein16RegularFont(&charein_16_regular);
 EpdFont charein16BoldFont(&charein_16_bold);
 EpdFont charein16ItalicFont(&charein_16_italic);
 EpdFont charein16BoldItalicFont(&charein_16_bolditalic);
 EpdFontFamily charein16FontFamily(&charein16RegularFont, &charein16BoldFont, &charein16ItalicFont,
                                   &charein16BoldItalicFont);
+#endif
 #ifndef OMIT_XLARGE_FONT
 EpdFont charein18RegularFont(&charein_18_regular);
 EpdFont charein18BoldFont(&charein_18_bold);
@@ -117,6 +172,14 @@ EpdFont lexenddeca8BoldItalicFont(&lexenddeca_8_bolditalic);
 EpdFontFamily lexenddeca8FontFamily(&lexenddeca8RegularFont, &lexenddeca8BoldFont, &lexenddeca8ItalicFont,
                                     &lexenddeca8BoldItalicFont);
 #endif
+#ifndef OMIT_ITTY_BITTY_FONT
+EpdFont lexenddeca9RegularFont(&lexenddeca_9_regular);
+EpdFont lexenddeca9BoldFont(&lexenddeca_9_bold);
+EpdFont lexenddeca9ItalicFont(&lexenddeca_9_italic);
+EpdFont lexenddeca9BoldItalicFont(&lexenddeca_9_bolditalic);
+EpdFontFamily lexenddeca9FontFamily(&lexenddeca9RegularFont, &lexenddeca9BoldFont, &lexenddeca9ItalicFont,
+                                    &lexenddeca9BoldItalicFont);
+#endif
 #ifndef OMIT_TINY_FONT
 EpdFont lexenddeca10RegularFont(&lexenddeca_10_regular);
 EpdFont lexenddeca10BoldFont(&lexenddeca_10_bold);
@@ -133,12 +196,14 @@ EpdFont lexenddeca12BoldItalicFont(&lexenddeca_12_bolditalic);
 EpdFontFamily lexenddeca12FontFamily(&lexenddeca12RegularFont, &lexenddeca12BoldFont, &lexenddeca12ItalicFont,
                                      &lexenddeca12BoldItalicFont);
 #endif
+#ifndef OMIT_LARGE_FONT
 EpdFont lexenddeca16RegularFont(&lexenddeca_16_regular);
 EpdFont lexenddeca16BoldFont(&lexenddeca_16_bold);
 EpdFont lexenddeca16ItalicFont(&lexenddeca_16_italic);
 EpdFont lexenddeca16BoldItalicFont(&lexenddeca_16_bolditalic);
 EpdFontFamily lexenddeca16FontFamily(&lexenddeca16RegularFont, &lexenddeca16BoldFont, &lexenddeca16ItalicFont,
                                      &lexenddeca16BoldItalicFont);
+#endif
 #ifndef OMIT_XLARGE_FONT
 EpdFont lexenddeca18RegularFont(&lexenddeca_18_regular);
 EpdFont lexenddeca18BoldFont(&lexenddeca_18_bold);
@@ -163,6 +228,13 @@ EpdFont bitter8ItalicFont(&bitter_8_italic);
 EpdFont bitter8BoldItalicFont(&bitter_8_bolditalic);
 EpdFontFamily bitter8FontFamily(&bitter8RegularFont, &bitter8BoldFont, &bitter8ItalicFont, &bitter8BoldItalicFont);
 #endif
+#ifndef OMIT_ITTY_BITTY_FONT
+EpdFont bitter9RegularFont(&bitter_9_regular);
+EpdFont bitter9BoldFont(&bitter_9_bold);
+EpdFont bitter9ItalicFont(&bitter_9_italic);
+EpdFont bitter9BoldItalicFont(&bitter_9_bolditalic);
+EpdFontFamily bitter9FontFamily(&bitter9RegularFont, &bitter9BoldFont, &bitter9ItalicFont, &bitter9BoldItalicFont);
+#endif
 #ifndef OMIT_TINY_FONT
 EpdFont bitter10RegularFont(&bitter_10_regular);
 EpdFont bitter10BoldFont(&bitter_10_bold);
@@ -184,11 +256,13 @@ EpdFont bitter14ItalicFont(&bitter_14_italic);
 EpdFont bitter14BoldItalicFont(&bitter_14_bolditalic);
 EpdFontFamily bitter14FontFamily(&bitter14RegularFont, &bitter14BoldFont, &bitter14ItalicFont, &bitter14BoldItalicFont);
 #endif
+#ifndef OMIT_LARGE_FONT
 EpdFont bitter16RegularFont(&bitter_16_regular);
 EpdFont bitter16BoldFont(&bitter_16_bold);
 EpdFont bitter16ItalicFont(&bitter_16_italic);
 EpdFont bitter16BoldItalicFont(&bitter_16_bolditalic);
 EpdFontFamily bitter16FontFamily(&bitter16RegularFont, &bitter16BoldFont, &bitter16ItalicFont, &bitter16BoldItalicFont);
+#endif
 #ifndef OMIT_XLARGE_FONT
 EpdFont bitter18RegularFont(&bitter_18_regular);
 EpdFont bitter18BoldFont(&bitter_18_bold);
@@ -223,50 +297,139 @@ unsigned long t2 = 0;
 // power button release does not also trigger a short-press action (e.g. sleep).
 static bool screenshotComboHandled = false;
 
-// Verify power button press duration on wake-up from deep sleep
-// Pre-condition: isWakeupByPowerButton() == true
-void verifyPowerButtonDuration() {
-  if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP) {
-    // Fast path for short press
-    // Needed because inputManager.isPressed() may take up to ~500ms to return the correct state
-    return;
-  }
-
-  // Give the user up to 1000ms to start holding the power button, and must hold for
-  // SETTINGS.getPowerButtonWakeDuration()
-  const auto start = millis();
-  bool abort = false;
-  // Subtract the current time, because inputManager only starts counting the HeldTime from the first update()
-  // This way, we remove the time we already took to reach here from the duration,
-  // assuming the button was held until now from millis()==0 (i.e. device start time).
-  const uint16_t calibration = start;
-  const uint16_t calibratedPressDuration =
-      (calibration < SETTINGS.getPowerButtonWakeDuration()) ? SETTINGS.getPowerButtonWakeDuration() - calibration : 1;
-
-  gpio.update();
-  // Needed because inputManager.isPressed() may take up to ~500ms to return the correct state
-  while (!gpio.isPressed(HalGPIO::BTN_POWER) && millis() - start < 1000) {
-    delay(10);  // only wait 10ms each iteration to not delay too much in case of short configured duration.
-    gpio.update();
-  }
-
-  t2 = millis();
-  if (gpio.isPressed(HalGPIO::BTN_POWER)) {
-    do {
-      delay(10);
-      gpio.update();
-    } while (gpio.isPressed(HalGPIO::BTN_POWER) && gpio.getHeldTime() < calibratedPressDuration);
-    abort = gpio.getHeldTime() < calibratedPressDuration;
-  } else {
-    abort = true;
-  }
-
-  if (abort) {
-    // Button released too early. Returning to sleep.
-    // IMPORTANT: Re-arm the wakeup trigger before sleeping again
-    powerManager.startDeepSleep(gpio);
+const char* resetReasonName(const esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_POWERON:
+      return "POWERON";
+    case ESP_RST_EXT:
+      return "EXT";
+    case ESP_RST_SW:
+      return "SW";
+    case ESP_RST_PANIC:
+      return "PANIC";
+    case ESP_RST_INT_WDT:
+      return "INT_WDT";
+    case ESP_RST_TASK_WDT:
+      return "TASK_WDT";
+    case ESP_RST_WDT:
+      return "WDT";
+    case ESP_RST_DEEPSLEEP:
+      return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:
+      return "BROWNOUT";
+    case ESP_RST_SDIO:
+      return "SDIO";
+    case ESP_RST_USB:
+      return "USB";
+    case ESP_RST_JTAG:
+      return "JTAG";
+    case ESP_RST_EFUSE:
+      return "EFUSE";
+    case ESP_RST_PWR_GLITCH:
+      return "PWR_GLITCH";
+    case ESP_RST_CPU_LOCKUP:
+      return "CPU_LOCKUP";
+    case ESP_RST_UNKNOWN:
+    default:
+      return "UNKNOWN";
   }
 }
+
+const char* wakeupCauseName(const esp_sleep_wakeup_cause_t cause) {
+  switch (cause) {
+    case ESP_SLEEP_WAKEUP_UNDEFINED:
+      return "UNDEFINED";
+    case ESP_SLEEP_WAKEUP_ALL:
+      return "ALL";
+    case ESP_SLEEP_WAKEUP_EXT0:
+      return "EXT0";
+    case ESP_SLEEP_WAKEUP_EXT1:
+      return "EXT1";
+    case ESP_SLEEP_WAKEUP_TIMER:
+      return "TIMER";
+    case ESP_SLEEP_WAKEUP_TOUCHPAD:
+      return "TOUCHPAD";
+    case ESP_SLEEP_WAKEUP_ULP:
+      return "ULP";
+    case ESP_SLEEP_WAKEUP_GPIO:
+      return "GPIO";
+    case ESP_SLEEP_WAKEUP_UART:
+      return "UART";
+    case ESP_SLEEP_WAKEUP_WIFI:
+      return "WIFI";
+    case ESP_SLEEP_WAKEUP_COCPU:
+      return "COCPU";
+    case ESP_SLEEP_WAKEUP_COCPU_TRAP_TRIG:
+      return "COCPU_TRAP";
+    case ESP_SLEEP_WAKEUP_BT:
+      return "BT";
+    default:
+      return "UNKNOWN";
+  }
+}
+
+const char* wakeupRouteName(const HalGPIO::WakeupReason reason) {
+  switch (reason) {
+    case HalGPIO::WakeupReason::PowerButton:
+      return "PowerButton";
+    case HalGPIO::WakeupReason::AfterFlash:
+      return "AfterFlash";
+    case HalGPIO::WakeupReason::AfterUSBPower:
+      return "AfterUSBPower";
+    case HalGPIO::WakeupReason::Other:
+    default:
+      return "Other";
+  }
+}
+
+// Definitions for SilentRestart.h. RTC_NOINIT survives ESP.restart() but not power loss.
+RTC_NOINIT_ATTR uint32_t silentRebootMagic;
+RTC_NOINIT_ATTR uint32_t silentRebootTarget;
+constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
+constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
+constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
+
+// How the device is coming back to life, resolved once at boot. Both resume
+// flows suppress the splash and leave the panel holding its pre-boot frame; a
+// plain boot shows the splash. See setup() for the resolution.
+enum class BootResume : uint8_t {
+  Splash,       // cold boot, flash, panic, or plain reboot
+  Silent,       // heap-defrag ESP.restart() (RTC flag; lost on power loss)
+  QuickResume,  // wake from a quick-resume deep sleep (SD flag; survives power loss)
+};
+
+// Latched true once enterDeepSleep() commits to sleeping, before it tears down
+// the current activity. WiFi activities call silentRestart() in onExit() to
+// clear heap fragmentation on the way out, but deep sleep is a full chip reset
+// on wake and already clears the heap, so rebooting here would just power the
+// device back up against the user's sleep gesture. Never cleared:
+// startDeepSleep() does not return, so a set latch only ends at the wakeup reset.
+static bool deepSleepInProgress = false;
+
+void silentRestart() {
+  if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
+  silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=home)");
+  // E-ink retains the previous frame until Home's first paint lands (~2-3s).
+  // Without an overlay, users don't see the reboot and fire input through to
+  // Home. Select on the default selectorIndex=0 then opens the most-recent
+  // book, looking like a trampoline back to the reader they just exited.
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void silentRestartToReader() {
+  if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
+  silentRebootTarget = SILENT_REBOOT_TARGET_READER;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=reader)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
 void waitForPowerRelease() {
   gpio.update();
   while (gpio.isPressed(HalGPIO::BTN_POWER)) {
@@ -407,26 +570,85 @@ bool handleGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action
 
 namespace {
 constexpr uint16_t POST_SLEEP_SCREEN_SETTLE_MS = 500;
+constexpr uint8_t TILT_SLEEP_MAX_ATTEMPTS = 3;
+constexpr uint16_t TILT_SLEEP_RETRY_DELAY_MS = 10;
+
+void putTiltSensorToSleepForDeepSleep() {
+  if (!halTiltSensor.isAvailable()) {
+    return;
+  }
+
+  for (uint8_t attempt = 0; attempt < TILT_SLEEP_MAX_ATTEMPTS; ++attempt) {
+    if (halTiltSensor.deepSleep()) {
+      return;
+    }
+    delay(TILT_SLEEP_RETRY_DELAY_MS);
+  }
+  LOG_ERR("MAIN", "Tilt sensor did not confirm sleep before deep sleep");
+}
+}  // namespace
+
+constexpr char SLEEP_FRAME_FILE[] = "/.crosspoint/sleep_frame.bin";
+
+static void saveSleepFrameBuffer() {
+  FsFile file;
+  if (!Storage.openFileForWrite("SLP", SLEEP_FRAME_FILE, file)) return;
+  file.write(renderer.getFrameBuffer(), renderer.getBufferSize());
+  file.close();
+}
+
+static bool loadSleepFrameBuffer() {
+  FsFile file;
+  if (!Storage.openFileForRead("SLP", SLEEP_FRAME_FILE, file)) return false;
+  const size_t bufferSize = display.getBufferSize();
+  const size_t bytesRead = file.read(display.getFrameBuffer(), bufferSize);
+  file.close();
+  if (bytesRead != bufferSize) {
+    Storage.remove(SLEEP_FRAME_FILE);
+    return false;
+  }
+  Storage.remove(SLEEP_FRAME_FILE);
+  return true;
 }
 
 // Enter deep sleep mode
-void enterDeepSleep() {
+void enterDeepSleep(bool fromTimeout) {
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
+
+  const bool isQuickResumeSleep =
+      SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
+      (fromTimeout &&
+       SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
+  APP_STATE.showBootScreen = !isQuickResumeSleep;
+
   APP_STATE.saveToFile();
 
-  activityManager.goToSleep();
-  delay(POST_SLEEP_SCREEN_SETTLE_MS);
+  // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
+  // a WiFi activity would otherwise silentRestart() here and reboot instead.
+  deepSleepInProgress = true;
+  activityManager.goToSleep(fromTimeout);
 
-  halTiltSensor.deepSleep();
+  if (isQuickResumeSleep) {
+    saveSleepFrameBuffer();
+  } else {
+    delay(POST_SLEEP_SCREEN_SETTLE_MS);
+  }
+
+  putTiltSensorToSleepForDeepSleep();
   display.deepSleep();
   LOG_DBG("MAIN", "Entering deep sleep");
 
   powerManager.startDeepSleep(gpio);
 }
 
-void setupDisplayAndFonts() {
+void setupDisplayAndFonts(bool seamless = false) {
+#ifdef SIMULATOR
+  (void)seamless;
   display.begin();
+#else
+  display.begin(seamless);
+#endif
   renderer.begin();
   activityManager.begin();
   LOG_DBG("MAIN", "Display initialized");
@@ -441,6 +663,9 @@ void setupDisplayAndFonts() {
 #ifndef OMIT_TEENSY_FONT
   renderer.insertFont(CHAREINK_8_FONT_ID, charein8FontFamily);
 #endif
+#ifndef OMIT_ITTY_BITTY_FONT
+  renderer.insertFont(CHAREINK_9_FONT_ID, charein9FontFamily);
+#endif
 #ifndef OMIT_TINY_FONT
   renderer.insertFont(CHAREINK_10_FONT_ID, charein10FontFamily);
 #endif
@@ -450,7 +675,9 @@ void setupDisplayAndFonts() {
 #ifndef OMIT_MEDIUM_FONT
   renderer.insertFont(CHAREINK_14_FONT_ID, charein14FontFamily);
 #endif
+#ifndef OMIT_LARGE_FONT
   renderer.insertFont(CHAREINK_16_FONT_ID, charein16FontFamily);
+#endif
 #ifndef OMIT_XLARGE_FONT
   renderer.insertFont(CHAREINK_18_FONT_ID, charein18FontFamily);
 #endif
@@ -461,6 +688,9 @@ void setupDisplayAndFonts() {
 #ifndef OMIT_TEENSY_FONT
   renderer.insertFont(LEXENDDECA_8_FONT_ID, lexenddeca8FontFamily);
 #endif
+#ifndef OMIT_ITTY_BITTY_FONT
+  renderer.insertFont(LEXENDDECA_9_FONT_ID, lexenddeca9FontFamily);
+#endif
 #ifndef OMIT_TINY_FONT
   renderer.insertFont(LEXENDDECA_10_FONT_ID, lexenddeca10FontFamily);
 #endif
@@ -470,7 +700,9 @@ void setupDisplayAndFonts() {
 #ifndef OMIT_MEDIUM_FONT
   renderer.insertFont(LEXENDDECA_14_FONT_ID, lexenddeca14FontFamily);
 #endif
+#ifndef OMIT_LARGE_FONT
   renderer.insertFont(LEXENDDECA_16_FONT_ID, lexenddeca16FontFamily);
+#endif
 #ifndef OMIT_XLARGE_FONT
   renderer.insertFont(LEXENDDECA_18_FONT_ID, lexenddeca18FontFamily);
 #endif
@@ -481,6 +713,9 @@ void setupDisplayAndFonts() {
 #ifndef OMIT_TEENSY_FONT
   renderer.insertFont(BITTER_8_FONT_ID, bitter8FontFamily);
 #endif
+#ifndef OMIT_ITTY_BITTY_FONT
+  renderer.insertFont(BITTER_9_FONT_ID, bitter9FontFamily);
+#endif
 #ifndef OMIT_TINY_FONT
   renderer.insertFont(BITTER_10_FONT_ID, bitter10FontFamily);
 #endif
@@ -490,7 +725,9 @@ void setupDisplayAndFonts() {
 #ifndef OMIT_MEDIUM_FONT
   renderer.insertFont(BITTER_14_FONT_ID, bitter14FontFamily);
 #endif
+#ifndef OMIT_LARGE_FONT
   renderer.insertFont(BITTER_16_FONT_ID, bitter16FontFamily);
+#endif
 #ifndef OMIT_XLARGE_FONT
   renderer.insertFont(BITTER_18_FONT_ID, bitter18FontFamily);
 #endif
@@ -510,28 +747,49 @@ void setupDisplayAndFonts() {
 void setup() {
   t1 = millis();
 
+  const esp_reset_reason_t rawResetReason = esp_reset_reason();
+  const esp_sleep_wakeup_cause_t rawWakeupCause = esp_sleep_get_wakeup_cause();
+
+#ifdef ENABLE_SERIAL_LOG
+  // Earliest possible Serial setup. The 250 ms stall before begin() lets the
+  // USB Serial/JTAG peripheral finish power-on and lets the host complete USB
+  // enumeration before we touch the CDC state — otherwise cold boot races
+  // and the host has to be physically replugged for logs to flow. Warm reboot
+  // worked without the delay because USB was already enumerated.
+  delay(250);
+  Serial.begin(115200);
+#ifndef SIMULATOR
+  logSerial.setTxTimeoutMs(1);  // This is a load-bearing 1. Do not modify.
+#endif
+#endif
+
   HalSystem::begin();
+  LOG_INF("BOOT", "Reset diagnostic: reset=%d(%s) sleepWake=%d(%s)", static_cast<int>(rawResetReason),
+          resetReasonName(rawResetReason), static_cast<int>(rawWakeupCause), wakeupCauseName(rawWakeupCause));
+
+  // Read-and-clear so a panic later in setup() doesn't loop into silent reboot.
+  // Bound the target range too — RTC_NOINIT memory is uninitialized on cold boot.
+  const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
+  const uint32_t snapshotTarget =
+      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_READER) ? silentRebootTarget : 0;
+  silentRebootMagic = 0;
+  silentRebootTarget = 0;
+
   gpio.begin();
   powerManager.begin();
   halTiltSensor.begin();
-
-#ifdef ENABLE_SERIAL_LOG
-  if (gpio.isUsbConnected()) {
-    Serial.begin(115200);
-    const unsigned long start = millis();
-    while (!Serial && (millis() - start) < 500) {
-      delay(10);
-    }
-  }
-#endif
+  halClock.begin();
 
   LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
+  LOG_INF("BOOT", "Post-GPIO diagnostic: device=%s usb=%d silentReboot=%d silentTarget=%lu",
+          gpio.deviceIsX3() ? "X3" : "X4", gpio.isUsbConnected() ? 1 : 0, isSilentReboot ? 1 : 0,
+          static_cast<unsigned long>(snapshotTarget));
 
   // SD Card Initialization
   // We need 6 open files concurrently when parsing a new chapter
   if (!Storage.begin()) {
     LOG_ERR("MAIN", "SD card initialization failed");
-    setupDisplayAndFonts();
+    setupDisplayAndFonts(isSilentReboot);
     activityManager.goToFullScreenMessage("SD card error", EpdFontFamily::BOLD);
     return;
   }
@@ -539,6 +797,8 @@ void setup() {
   HalSystem::checkPanic();
 
   SETTINGS.loadFromFile();
+  APP_STATE.loadFromFile();
+  RECENT_BOOKS.loadFromFile();
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
   OPDS_STORE.loadFromFile();
@@ -546,21 +806,26 @@ void setup() {
   ButtonNavigator::setMappedInputManager(mappedInputManager);
 
   const auto wakeupReason = gpio.getWakeupReason();
+  LOG_INF("BOOT", "Wake route: %s", wakeupRouteName(wakeupReason));
   switch (wakeupReason) {
     case HalGPIO::WakeupReason::PowerButton:
-      LOG_DBG("MAIN", "Verifying power button press duration");
+      LOG_INF("BOOT", "Power-button wake: verifying duration required=%u shortAllowed=%d",
+              SETTINGS.getPowerButtonWakeDuration(), SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
       gpio.verifyPowerButtonWakeup(SETTINGS.getPowerButtonWakeDuration(),
                                    SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
       break;
     case HalGPIO::WakeupReason::AfterUSBPower:
-      // If USB power caused a cold boot, go back to sleep
-      LOG_DBG("MAIN", "Wakeup reason: After USB Power");
-      powerManager.startDeepSleep(gpio);
+      // TEMP: continue booting while diagnosing post-flash/reset behavior.
+      // Normal behavior is to go back to sleep when USB power causes a cold boot.
+      LOG_INF("BOOT", "AfterUSBPower route: TEMP continuing boot instead of deep sleep");
       break;
     case HalGPIO::WakeupReason::AfterFlash:
       // After flashing, just proceed to boot
+      LOG_INF("BOOT", "AfterFlash route: continuing boot");
+      break;
     case HalGPIO::WakeupReason::Other:
     default:
+      LOG_INF("BOOT", "Other wake route: continuing boot");
       break;
   }
 
@@ -586,12 +851,40 @@ void setup() {
   // First serial output only here to avoid timing inconsistencies for power button press duration verification
   LOG_DBG("MAIN", "Starting CrossPoint version " CROSSPOINT_VERSION);
 
-  setupDisplayAndFonts();
+  // Resolve the single boot-presentation decision. Skipping the splash also
+  // skips the panel-clearing pass and the X3 initial-full-sync arming (see
+  // HalDisplay::begin), so the first paint is FAST_REFRESH (~500ms) over the
+  // retained frame and input dispatches against a visible UI.
+  const BootResume resume = isSilentReboot              ? BootResume::Silent
+                            : !APP_STATE.showBootScreen ? BootResume::QuickResume
+                                                        : BootResume::Splash;
 
-  activityManager.goToBoot();
+  setupDisplayAndFonts(resume != BootResume::Splash);
 
-  APP_STATE.loadFromFile();
-  RECENT_BOOKS.loadFromFile();
+  switch (resume) {
+    case BootResume::Silent:
+      // Splash skipped: the routing block below picks the target activity; the
+      // panel keeps showing the pre-reboot popup until that first paint lands.
+      break;
+    case BootResume::QuickResume:
+      // One-shot flag: re-arm the splash for the next non-quick-resume boot. Save
+      // before any painting so a hang in the blocking paint path can't strand
+      // us in a quick-resume-with-no-frame loop on the next boot.
+      APP_STATE.showBootScreen = true;
+      APP_STATE.saveToFile();
+      if (loadSleepFrameBuffer()) {
+        // Frame restored: swap the sleep moon for the loading icon.
+        const auto pageHeight = renderer.getScreenHeight();
+        renderer.drawImage(LoadingIcon, 0, pageHeight - LOADINGICON_HEIGHT, LOADINGICON_WIDTH, LOADINGICON_HEIGHT);
+        renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+      } else {
+        activityManager.goToBoot();  // frame file missing, fall back to the splash
+      }
+      break;
+    case BootResume::Splash:
+      activityManager.goToBoot();
+      break;
+  }
 
   if (recoveryFirmwareMode) {
     // Skip normal home/reader routing: jump straight into the SD firmware picker.
@@ -600,6 +893,14 @@ void setup() {
   } else if (HalSystem::isRebootFromPanic()) {
     // If we rebooted from a panic, go to crash report screen to show the panic info
     activityManager.goToCrashReport();
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_READER &&
+             !APP_STATE.openEpubPath.empty()) {
+    activityManager.goToReader(APP_STATE.openEpubPath);
+  } else if (resume == BootResume::Silent) {
+    // target == home (or reader with no open book): land on home — don't fall
+    // through to the sleep-wake "resume reader" logic, which fires on stale
+    // openEpubPath + lastSleepFromReader from a prior session.
+    activityManager.goHome();
   } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
              mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {
     // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity
@@ -614,8 +915,26 @@ void setup() {
     activityManager.goToReader(path);
   }
 
+  if (resume == BootResume::Silent) {
+    // Block until the first paint physically completes. refreshDisplay()
+    // waits on the panel BUSY pin so when this returns the user can see the
+    // new activity. Without the wait, an edge captured by gpio.update()
+    // during boot dispatches against an invisible Home and the default
+    // selectorIndex=0 opens the most-recent book.
+    activityManager.requestUpdateAndWait();
+    // Absorb any button held at this point into currentState as a non-edge:
+    // two gpio.update() calls separated by > InputManager's 5ms debounce
+    // transition the held bit through lastDebounceTime into currentState
+    // without setting pressedEvents, so the first loop()'s own gpio.update()
+    // sees state == currentState and emits nothing.
+    gpio.update();
+    delay(10);
+    gpio.update();
+  }
+
   // Ensure we're not still holding the power button before leaving setup
   waitForPowerRelease();
+  allowSleepAt = millis() + 2000;
 }
 
 void loop() {
@@ -696,7 +1015,7 @@ void loop() {
   const unsigned long sleepTimeoutMs = SETTINGS.getSleepTimeoutMs();
   if (millis() - lastActivityTime >= sleepTimeoutMs) {
     LOG_DBG("SLP", "Auto-sleep triggered after %lu ms of inactivity", sleepTimeoutMs);
-    enterDeepSleep();
+    enterDeepSleep(true);
     // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
     // In the simulator, deep sleep is a no-op and returns — reset the timer so
     // the main loop does not immediately re-trigger auto-sleep.
@@ -704,7 +1023,7 @@ void loop() {
     return;
   }
 
-  if (handleGlobalPowerButtonAction(getPowerButtonAction())) {
+  if (millis() >= allowSleepAt && handleGlobalPowerButtonAction(getPowerButtonAction())) {
     lastActivityTime = millis();
     return;
   }

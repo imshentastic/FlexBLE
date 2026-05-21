@@ -9,8 +9,11 @@
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
+#include <new>
 
 #include "CrossPointSettings.h"
+#include "util/BookCacheUtils.h"
 
 namespace {
 constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
@@ -385,7 +388,7 @@ void WebDAVHandler::handlePut(WebServer& s) {
     return;
   }
 
-  clearEpubCacheIfNeeded(path);
+  clearBookCache(path.c_str());
   s.send(_putExisted ? 204 : 201);
   LOG_DBG("DAV", "PUT complete: %s", path.c_str());
 }
@@ -434,7 +437,7 @@ void WebDAVHandler::handleDelete(WebServer& s) {
     }
   } else {
     file.close();
-    clearEpubCacheIfNeeded(path);
+    clearBookCache(path.c_str());
     if (Storage.remove(path.c_str())) {
       s.send(204);
     } else {
@@ -543,7 +546,7 @@ void WebDAVHandler::handleMove(WebServer& s) {
     return;
   }
 
-  clearEpubCacheIfNeeded(srcPath);
+  clearBookCache(srcPath.c_str());
   bool success = file.rename(dstPath.c_str());
   file.close();
 
@@ -624,14 +627,22 @@ void WebDAVHandler::handleCopy(WebServer& s) {
     return;
   }
 
-  // Streaming copy with 4KB buffer on stack
-  uint8_t buf[4096];
+  constexpr size_t COPY_BUFFER_SIZE = 4096;
+  auto buf = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[COPY_BUFFER_SIZE]);
+  if (!buf) {
+    srcFile.close();
+    dstFile.close();
+    Storage.remove(dstPath.c_str());
+    s.send(500, "text/plain", "Copy failed - out of memory");
+    return;
+  }
+
   bool copyOk = true;
   while (srcFile.available()) {
     esp_task_wdt_reset();
-    int bytesRead = srcFile.read(buf, sizeof(buf));
+    int bytesRead = srcFile.read(buf.get(), COPY_BUFFER_SIZE);
     if (bytesRead <= 0) break;
-    size_t written = dstFile.write(buf, bytesRead);
+    size_t written = dstFile.write(buf.get(), bytesRead);
     if (written != (size_t)bytesRead) {
       copyOk = false;
       break;
@@ -792,13 +803,6 @@ bool WebDAVHandler::getOverwrite(WebServer& s) const {
   String ow = s.header("Overwrite");
   if (ow == "F" || ow == "f") return false;
   return true;  // Default is T
-}
-
-void WebDAVHandler::clearEpubCacheIfNeeded(const String& path) const {
-  if (FsHelpers::hasEpubExtension(path)) {
-    Epub(path.c_str(), "/.crosspoint").clearCache();
-    LOG_DBG("DAV", "Cleared epub cache for: %s", path.c_str());
-  }
 }
 
 String WebDAVHandler::getMimeType(const String& path) const {

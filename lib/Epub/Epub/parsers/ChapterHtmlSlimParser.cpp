@@ -24,8 +24,11 @@
 constexpr size_t MIN_SIZE_FOR_POPUP = 10 * 1024;  // 10KB
 constexpr size_t PARSE_BUFFER_SIZE = 1024;
 constexpr size_t IMAGE_EXTRACT_CHUNK_SIZE = 1024;
-constexpr uint32_t MIN_FREE_HEAP_FOR_TEXT_LAYOUT = 48 * 1024;
-constexpr uint32_t MIN_MAX_ALLOC_FOR_TEXT_LAYOUT = 24 * 1024;
+constexpr uint32_t MIN_FREE_HEAP_FOR_TEXT_LAYOUT = 44 * 1024;
+constexpr uint32_t MIN_MAX_ALLOC_FOR_TEXT_LAYOUT = 32 * 1024;
+constexpr uint32_t MIN_FREE_HEAP_FOR_TABLE_BUFFERING = 64 * 1024;
+constexpr uint32_t MIN_MAX_ALLOC_FOR_TABLE_BUFFERING = 40 * 1024;
+constexpr size_t MAX_BUFFERED_WORDS_BEFORE_LAYOUT = 350;
 
 static constexpr const char* const HEADER_TAGS[] = {"h1", "h2", "h3", "h4", "h5", "h6"};
 static constexpr const char* const BLOCK_TAGS[] = {"p", "li", "div", "br", "blockquote"};
@@ -207,7 +210,18 @@ void ChapterHtmlSlimParser::finalizeCurrentTableCell() {
     return;
   }
 
-  if (!currentTableBuffer || tableDepth != 1 || !currentTextBlock) {
+  if (tableDepth != 1 || !currentTextBlock) {
+    return;
+  }
+
+  if (!currentTableBuffer) {
+    makePages();
+    currentTextBlock.reset();
+    pendingFootnotes.clear();
+    currentTableCellIsHeader = false;
+    currentTableCellColSpan = 1;
+    wordsExtractedInBlock = 0;
+    nextWordContinues = false;
     return;
   }
 
@@ -243,6 +257,7 @@ void ChapterHtmlSlimParser::finalizeCurrentTableCell() {
   currentTableCellColSpan = 1;
   wordsExtractedInBlock = 0;
   nextWordContinues = false;
+  fallbackCurrentTableBufferIfNeeded("cell complete");
 }
 
 void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
@@ -551,6 +566,50 @@ void ChapterHtmlSlimParser::emitCurrentTableBuffer() {
   emitBufferedTableAsFragments(*table);
 }
 
+void ChapterHtmlSlimParser::fallbackCurrentTableBufferToParagraphs(const char* reason) {
+  if (!currentTableBuffer) {
+    return;
+  }
+
+  const auto heap = MemoryBudget::snapshot();
+  LOG_DBG("EHP", "Table layout fallback: %s (%u rows, %u cols, %u cells, free=%u, maxAlloc=%u)", reason,
+          static_cast<uint32_t>(currentTableBuffer->rows.size()), currentTableBuffer->maxCols,
+          currentTableBuffer->totalCells, heap.freeHeap, heap.maxAllocHeap);
+
+  auto activeTextBlock = std::move(currentTextBlock);
+  auto activeFootnotes = std::move(pendingFootnotes);
+  const int activeWordsExtracted = wordsExtractedInBlock;
+  const bool activeNextWordContinues = nextWordContinues;
+  const bool activeTableCellIsHeader = currentTableCellIsHeader;
+  const uint8_t activeTableCellColSpan = currentTableCellColSpan;
+
+  emitBufferedTableAsParagraphs(*currentTableBuffer);
+  currentTableBuffer.reset();
+
+  currentTextBlock = std::move(activeTextBlock);
+  pendingFootnotes = std::move(activeFootnotes);
+  wordsExtractedInBlock = activeWordsExtracted;
+  nextWordContinues = activeNextWordContinues;
+  currentTableCellIsHeader = activeTableCellIsHeader;
+  currentTableCellColSpan = activeTableCellColSpan;
+}
+
+void ChapterHtmlSlimParser::fallbackCurrentTableBufferIfNeeded(const char* stage) {
+  if (!currentTableBuffer) {
+    return;
+  }
+
+  if (currentTableBuffer->unsupported) {
+    fallbackCurrentTableBufferToParagraphs(stage);
+    return;
+  }
+
+  const auto heap = MemoryBudget::snapshot();
+  if (!MemoryBudget::hasHeap(heap, MIN_FREE_HEAP_FOR_TABLE_BUFFERING, MIN_MAX_ALLOC_FOR_TABLE_BUFFERING)) {
+    fallbackCurrentTableBufferToParagraphs(stage);
+  }
+}
+
 void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char* name, const XML_Char** atts) {
   auto* self = static_cast<ChapterHtmlSlimParser*>(userData);
   if (self->shouldAbortForLowMemory("element start")) {
@@ -618,6 +677,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     if (self->tableDepth > 0) {
       if (self->currentTableBuffer) {
         self->currentTableBuffer->unsupported = true;
+        self->fallbackCurrentTableBufferIfNeeded("nested table");
       }
       self->tableDepth += 1;
       return;
@@ -668,6 +728,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       if (endPtr == colspan || *endPtr != '\0' || parsedValue <= 0 || parsedValue > UINT8_MAX) {
         if (self->currentTableBuffer) {
           self->currentTableBuffer->unsupported = true;
+          self->fallbackCurrentTableBufferIfNeeded("invalid colspan");
         }
       } else {
         parsedColSpan = static_cast<uint8_t>(parsedValue);
@@ -675,6 +736,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     }
     if (self->currentTableBuffer && rowspan && strcmp(rowspan, "1") != 0) {
       self->currentTableBuffer->unsupported = true;
+      self->fallbackCurrentTableBufferIfNeeded("rowspan");
     }
     self->currentTableCellColSpan = parsedColSpan;
 
@@ -721,6 +783,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   if (self->tableDepth == 1 && matches(name, IMAGE_TAGS, std::size(IMAGE_TAGS))) {
     if (self->currentTableBuffer) {
       self->currentTableBuffer->unsupported = true;
+      self->fallbackCurrentTableBufferIfNeeded("table image");
     }
     const char* altAttr = getAttribute(atts, "alt");
     if (altAttr && altAttr[0] != '\0') {
@@ -738,6 +801,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   if (self->tableDepth == 1 && strcmp(name, "hr") == 0) {
     if (self->currentTableBuffer) {
       self->currentTableBuffer->unsupported = true;
+      self->fallbackCurrentTableBufferIfNeeded("table horizontal rule");
     }
     self->ancestorStack_.push_back({self->depth, std::string(name), classAttr});
     self->depth += 1;
@@ -1397,6 +1461,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
 
 void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char* s, const int len) {
   auto* self = static_cast<ChapterHtmlSlimParser*>(userData);
+  if (self->tableDepth == 1) {
+    self->fallbackCurrentTableBufferIfNeeded("low heap while buffering table");
+  }
   if (self->shouldAbortForLowMemory("character data")) {
     return;
   }
@@ -1548,11 +1615,11 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
     self->partWordBuffer[self->partWordBufferIndex++] = s[i];
   }
 
-  // If we have > 750 words buffered up, perform the layout and consume out all but the last line
-  // There should be enough here to build out 1-2 full pages and doing this will free up a lot of
-  // memory.
+  // If a paragraph keeps growing, perform the layout and consume all but the last line.
+  // This turns the parser's text buffer into page records earlier, which keeps memory
+  // bounded for chapters with very long XHTML text runs.
   // Spotted when reading Intermezzo, there are some really long text blocks in there.
-  if (self->currentTextBlock && self->currentTextBlock->size() > 750) {
+  if (self->currentTextBlock && self->currentTextBlock->size() > MAX_BUFFERED_WORDS_BEFORE_LAYOUT) {
     LOG_DBG("EHP", "Text block too long, splitting into multiple pages");
     const int horizontalInset = self->currentTextBlock->getBlockStyle().totalHorizontalInset();
     const uint16_t effectiveWidth = (horizontalInset < self->viewportWidth)

@@ -70,13 +70,21 @@ The UI now uses [Inter](https://fonts.google.com/specimen/Inter) as the display 
 
 There are 3 available build variants to choose from due to build size constraints: tiny, xlarge, and no_emoji
 
+**teensy**
+> Only the small sized fonts.
+- Emoji & Misc. Symbols Support
+- 4 Font sizes:
+  - Teensy (8pt)
+  - Itty Bitty (9pt)
+  - Tiny (10pt)
+  - Small (12pt)
+
 **tiny**
 
 > No Extra Large or Huge font size. My preferred build.
 
 - Emoji & Misc. Symbols Support
-- 5 Font sizes:
-  - Teensy (8pt)
+- 4 Font sizes:
   - Tiny (10pt)
   - Small (12pt)
   - Medium (14pt)
@@ -286,6 +294,7 @@ To revert to the official firmware, you can flash the latest official firmware u
 - [User Guide](./USER_GUIDE.md)
 - [Web server usage](./docs/webserver.md)
 - [Web server endpoints](./docs/webserver-endpoints.md)
+- [Common issues](./docs/troubleshooting.md)
 - [Project scope](./SCOPE.md)
 - [Contributing docs](./docs/contributing/README.md)
 
@@ -387,6 +396,6 @@ books, reading progress, and reading stats. To clear EPUB/XTC render caches from
 **Settings > System > Clear Reading Cache**; that leaves settings and global stats in place.
 
 Due to the way it's currently implemented, cache data is not automatically cleared when a book is deleted. Moving a book
-file creates a new hash-based cache directory, so the moved copy may start with fresh reading progress.
+file creates a new path-based cache directory, so the moved copy may start with fresh reading progress.
 
 For more details on the internal file structures, see the [file formats document](./docs/file-formats.md).

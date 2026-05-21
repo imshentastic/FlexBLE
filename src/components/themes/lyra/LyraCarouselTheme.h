@@ -50,9 +50,20 @@ constexpr ThemeMetrics values = {.batteryWidth = 16,
 
 class LyraCarouselTheme : public LyraTheme {
  public:
-  // Exact pixel dimensions for each carousel slot — used for exact-size thumbnail generation
+  // Max cache geometry for the carousel artwork area.
   static constexpr int kCenterCoverW = 340;
   static constexpr int kCenterCoverH = LyraCarouselMetrics::values.homeCoverHeight - 60;  // 540
+  static constexpr int kCenterCoverVisualInset = 10;
+  static constexpr int kBaseDisplayCenterW = (kCenterCoverW * 86) / 100;
+  static constexpr int kBaseDisplayCenterH = (kCenterCoverH * 86) / 100;
+  static constexpr int kDisplayCenterW =
+      ((kBaseDisplayCenterW + 24) < kCenterCoverW) ? (kBaseDisplayCenterW + 24) : kCenterCoverW;
+  static constexpr int kDisplayCenterH =
+      ((kBaseDisplayCenterH + 24) < kCenterCoverH) ? (kBaseDisplayCenterH + 24) : kCenterCoverH;
+  // Actual center image rect after the visual inset; using this for the cached
+  // thumbnail avoids scaling an already-dithered BMP at draw time.
+  static constexpr int kCenterThumbW = kDisplayCenterW - kCenterCoverVisualInset * 2;  // 296
+  static constexpr int kCenterThumbH = kDisplayCenterH - kCenterCoverVisualInset * 2;  // 468
   static constexpr int kSideCoverW = 200;
   static constexpr int kSideCoverH = LyraCarouselMetrics::values.homeCoverHeight - 210;  // 390
 

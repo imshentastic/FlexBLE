@@ -3107,7 +3107,7 @@ static const EpdLigaturePair notosans_8_regularLigaturePairs[] = {
     { 0xFB00006C, 0xFB04 }, // U+FB00 l -> U+FB04
 };
 
-static const EpdFontData notosans_8_regular = {
+static constexpr EpdFontData notosans_8_regular = {
     notosans_8_regularBitmaps,
     notosans_8_regularGlyphs,
     notosans_8_regularIntervals,

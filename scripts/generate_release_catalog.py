@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-VARIANT_ORDER = ('tiny', 'xlarge', 'no_emoji')
+VARIANT_ORDER = ('teensy', 'tiny', 'xlarge', 'no_emoji')
 FIRMWARE_NAME_PATTERN = re.compile(r'^firmware-(?P<variant>.+?)-v[^/]+\.bin$')
 
 

@@ -46,10 +46,23 @@ class RecentBooksStore {
   [[nodiscard]] bool updateBook(const std::string& path, const std::string& title, const std::string& author,
                                 const std::string& coverBmpPath);
 
-  // Update the stored path for a book (e.g. after moving the file).
-  // Also patches coverBmpPath if it was inside oldCachePath, replacing the prefix with newCachePath.
+  // Remove the entry whose path matches (used when a book is removed from recents or finished/read).
+  // Returns true if an entry was found and removed (no-op + false otherwise).
+  // Persistence is best-effort: a failed save is logged, not reflected in the return.
+  bool removeByPath(const std::string& path);
+
+  // Repoint an entry's path (and coverBmpPath, if it lived under the old cache dir) after the
+  // backing file and cache dir were moved on disk. No-op if no entry matches oldPath.
+  // Persists on success. Keeps the entry's list position (does not reorder).
   void updatePath(const std::string& oldPath, const std::string& newPath, const std::string& oldCachePath,
                   const std::string& newCachePath);
+
+  // True if the book's backing file is no longer present on the SD card.
+  static bool isMissing(const RecentBook& book);
+
+  // Remove entries whose backing file is no longer on the SD card.
+  // Returns true if any entry was removed. Does not persist — caller decides.
+  bool pruneMissing();
 
   // Get the list of recent books (most recent first)
   const std::vector<RecentBook>& getBooks() const { return recentBooks; }

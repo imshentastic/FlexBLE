@@ -132,6 +132,8 @@ def inject_version(env):
         env.Append(CPPDEFINES=[
             ('CROSSPOINT_VERSION', f'\\"{cp_version}{suffix}\\"'),
             ('CROSSINK_VERSION', f'\\"{ci_version}{suffix}\\"'),
+            ('CROSSINK_BUILD_ENV', '\\"debug\\"'),
+            'CROSSINK_SHOW_SLEEP_BUILD_INFO',
         ])
         print(f'CrossInk test build version: {ci_version}{suffix}')
 

@@ -4935,7 +4935,7 @@ static const EpdLigaturePair bitter_16_regularLigaturePairs[] = {
     { 0x0066006C, 0xFB02 }, // f l -> U+FB02
 };
 
-static const EpdFontData bitter_16_regular = {
+static constexpr EpdFontData bitter_16_regular = {
     bitter_16_regularBitmaps,
     bitter_16_regularGlyphs,
     bitter_16_regularIntervals,
