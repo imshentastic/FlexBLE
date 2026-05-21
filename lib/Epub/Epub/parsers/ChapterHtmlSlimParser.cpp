@@ -1795,6 +1795,14 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
   // build on big chapters.
   uint32_t lastPopupTick = millis();
   constexpr uint32_t kPopupTickMs = 250;
+  // CrumBLE: diagnostics for chapters where the parser appears to hang.
+  // Log per-iteration progress so a serial monitor user can see exactly
+  // which chunk the parser stalls in (file offset, free heap, elapsed).
+  // Also call yield() each iteration to feed the FreeRTOS task watchdog
+  // — without it, a chapter whose handlers take >5 s per chunk would
+  // eventually trip a watchdog reset, which the user could perceive as
+  // "freeze then reboot".
+  uint32_t iterCount = 0;
   do {
     if (popupFn && (millis() - lastPopupTick) >= kPopupTickMs) {
       popupFn();
@@ -1808,7 +1816,9 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
       return false;
     }
 
+    const uint32_t iterStart = millis();
     const size_t len = file.read(buf, PARSE_BUFFER_SIZE);
+    const uint32_t afterReadMs = millis();
 
     if (len == 0 && file.available() > 0) {
       LOG_ERR("EHP", "File read error");
@@ -1826,6 +1836,7 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
       file.close();
       return false;
     }
+    const uint32_t afterParseMs = millis();
 
     if (lowMemoryAbort) {
       LOG_ERR("EHP", "Aborting section parse due to low heap");
@@ -1833,6 +1844,20 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
       file.close();
       return false;
     }
+
+    // Per-chunk progress log. DBG-level so it's compiled out at the
+    // production LOG_LEVEL=1 setting and only shows up in debug builds
+    // (LOG_LEVEL=2) when diagnosing a slow / hung parse. The fields
+    // (file offset, read/parse ms, free heap, elapsed) are enough to
+    // pinpoint which chunk stalls and what the heap looked like there.
+    LOG_DBG("EHP", "iter=%lu pos=%lu/%lu read_ms=%lu parse_ms=%lu free=%u maxAlloc=%u elapsed=%lu",
+            static_cast<unsigned long>(iterCount), static_cast<unsigned long>(file.position()),
+            static_cast<unsigned long>(file.size()), static_cast<unsigned long>(afterReadMs - iterStart),
+            static_cast<unsigned long>(afterParseMs - afterReadMs), ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
+            static_cast<unsigned long>(millis() - chapterStartTime));
+    iterCount++;
+    // Feed the task watchdog so a slow chunk doesn't trip a reset.
+    yield();
 
   } while (!done);
   LOG_DBG("EHP", "Time to parse and build pages: %lu ms (free=%u, maxAlloc=%u)", millis() - chapterStartTime,
