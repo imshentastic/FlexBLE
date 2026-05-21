@@ -169,7 +169,22 @@ class BaseTheme {
   virtual void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                               const std::function<std::string(int index)>& buttonLabel,
                               const std::function<UIIcon(int index)>& rowIcon) const;
-  virtual Rect drawPopup(const GfxRenderer& renderer, const char* message) const;
+  // minTextWidth: when > 0, sizes the popup box for at least this much
+  // text width regardless of the actual message length. Used by animated
+  // popups (e.g. "Indexing", "Indexing.", "Indexing..", "Indexing...")
+  // that want a stable box size across frames so the box doesn't pulse
+  // wider/narrower as the trailing dots are added or removed. Pass the
+  // widest reference message's getTextWidth() result.
+  //
+  // leftAlignText: when true, anchors the text at the left margin of the
+  // box rather than centering it. Only meaningful with minTextWidth set
+  // (otherwise the box exactly fits the text and both alignments
+  // produce the same result). For animated dots-style indicators, this
+  // keeps the leading word ("Indexing") pinned to a fixed position so
+  // the trailing dots appear/disappear to its right without shifting
+  // the word itself.
+  virtual Rect drawPopup(const GfxRenderer& renderer, const char* message, int minTextWidth = 0,
+                         bool leftAlignText = false) const;
   virtual void fillPopupProgress(const GfxRenderer& renderer, const Rect& layout, const int progress) const;
   virtual void drawStatusBar(GfxRenderer& renderer, const float bookProgress, const int currentPage,
                              const int pageCount, std::string title, const int paddingBottom = 0,
