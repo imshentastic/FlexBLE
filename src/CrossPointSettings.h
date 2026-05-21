@@ -243,9 +243,11 @@ class CrossPointSettings {
   // Sleep screen cover filter
   uint8_t sleepScreenCoverFilter = NO_FILTER;
   // While asleep, a brief tap on the power button cycles to a new random
-  // image from /.sleep instead of waking the device. Off by default — every
-  // cycle costs a boot + e-ink refresh worth of battery.
-  uint8_t cycleScreensaverOnTap = 0;
+  // image from /.sleep instead of waking the device. On by default in
+  // CrumBLE — the cycling sleep screen is one of our headline features
+  // and the battery cost (one boot + e-ink half-refresh per cycle) is
+  // small enough that opt-out is the right default for new users.
+  uint8_t cycleScreensaverOnTap = 1;
   // Status bar settings (statusBar retained for migration only)
   uint8_t statusBar = FULL;
   uint8_t statusBarChapterPageCount = 1;
@@ -307,8 +309,11 @@ class CrossPointSettings {
   uint8_t hideBatteryPercentage = HIDE_NEVER;
   // Long-press page turn button behavior
   uint8_t longPressButtonBehavior = OFF;
-  // UI Theme
-  uint8_t uiTheme = LYRA;
+  // UI Theme. CrumBLE defaults to LYRA_FLOW (3D-perspective book carousel
+  // from CrossInk Carousel) — it's the visual centerpiece of the fork
+  // and what most users will want first. Anyone preferring the simpler
+  // Lyra list can switch in Settings -> Display -> UI Theme.
+  uint8_t uiTheme = LYRA_FLOW;
   // Recent Books screen layout
   uint8_t recentBooksView = RECENT_BOOKS_LIST;
   // Sunlight fading compensation

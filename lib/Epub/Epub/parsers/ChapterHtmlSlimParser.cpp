@@ -1787,7 +1787,19 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
 
   // Compute the time taken to parse and build pages
   const uint32_t chapterStartTime = millis();
+  // CrumBLE: tick the popup callback every ~250 ms during the parse so
+  // the caller can animate (e.g. cycling "Indexing." / ".." / "...") and
+  // give the user feedback that the system is alive on long parses.
+  // The popup was previously drawn once at the start of the chapter and
+  // never updated, so the screen looked frozen for the whole 10+ second
+  // build on big chapters.
+  uint32_t lastPopupTick = millis();
+  constexpr uint32_t kPopupTickMs = 250;
   do {
+    if (popupFn && (millis() - lastPopupTick) >= kPopupTickMs) {
+      popupFn();
+      lastPopupTick = millis();
+    }
     void* const buf = XML_GetBuffer(parser, PARSE_BUFFER_SIZE);
     if (!buf) {
       LOG_ERR("EHP", "Couldn't allocate memory for buffer");

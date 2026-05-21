@@ -1533,9 +1533,35 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
       LOG_DBG("ERS", "Cache not found, building... (free=%u, maxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
-      GUI.drawPopup(renderer, tr(STR_INDEXING));
+      // Animated indexing popup. The parser ticks the callback every
+      // ~250 ms; we cycle the trailing dots so the user sees the system
+      // is alive during the multi-second chapter build instead of
+      // staring at a frozen popup.
+      //
+      // Pre-measure the widest frame ("Indexing...") and pass that as
+      // minTextWidth to every drawPopup call. The box sizes itself once
+      // off the widest frame and stays anchored on the same pixels for
+      // every subsequent tick — without this floor, period vs space
+      // glyph widths differ enough in Inter that the box visibly pulses
+      // wider on the 3-dot frame.
+      char widestBuf[40];
+      snprintf(widestBuf, sizeof(widestBuf), "%s...", tr(STR_INDEXING));
+      const int popupMinTextWidth =
+          renderer.getTextWidth(UI_12_FONT_ID, widestBuf, EpdFontFamily::BOLD);
 
-      const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
+      // Left-anchor the text so "Indexing" stays pinned at a fixed
+      // position and the trailing dots cycle to its right without
+      // visibly shifting the word.
+      GUI.drawPopup(renderer, tr(STR_INDEXING), popupMinTextWidth, /*leftAlignText=*/true);
+
+      const auto popupFn = [this, popupMinTextWidth]() {
+        static uint8_t dotPhase = 0;
+        static constexpr const char* kDots[4] = {"", ".", "..", "..."};
+        dotPhase = (dotPhase + 1) % 4;
+        char buf[40];
+        snprintf(buf, sizeof(buf), "%s%s", tr(STR_INDEXING), kDots[dotPhase]);
+        GUI.drawPopup(renderer, buf, popupMinTextWidth, /*leftAlignText=*/true);
+      };
 
       bool imagesWereSuppressed = false;
       bool layoutAbortedForLowMemory = false;
