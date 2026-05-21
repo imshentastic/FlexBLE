@@ -236,7 +236,12 @@ class GfxRenderer {
   void copyGrayscaleMsbBuffers() const;
   void displayGrayBuffer(bool turnOffScreen = false) const;
   bool storeBwBuffer();    // Returns true if buffer was stored successfully
-  void restoreBwBuffer();  // Restore and free the stored buffer
+  void restoreBwBuffer();  // Restore the stored buffer (does NOT free it)
+  // True if a compressed BW backup is currently held (either from a prior
+  // storeBwBuffer() that hasn't been freed yet, or from another caller's
+  // store path leaving its backup around). Callers can use this to decide
+  // whether restoreBwBuffer() will produce useful framebuffer content.
+  bool hasStoredBwBuffer() const { return bwCompressedBackup != nullptr; }
   void cleanupGrayscaleWithFrameBuffer() const;
 
   // Font helpers
