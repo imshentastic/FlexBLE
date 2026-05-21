@@ -71,10 +71,14 @@ void BookSettingsDrawerActivity::onEnter() {
   Activity::onEnter();
 
   // Cache the underlying reader page so we can preserve it through every
-  // partial-refresh redraw without re-rendering the EPUB.
+  // partial-refresh redraw without re-rendering the EPUB. If the malloc
+  // for the compressed backup fails (heap fragmentation under BLE
+  // pressure is the usual cause), renderDrawer() falls back to either
+  // the reader's existing backup or to whatever's already in the
+  // framebuffer — both better than painting onto a cleared screen.
   readerBufferStored = renderer.storeBwBuffer();
   if (!readerBufferStored) {
-    LOG_ERR("BSD", "Failed to store reader page buffer; drawer will paint over a cleared screen");
+    LOG_INF("BSD", "Failed to snapshot reader page; drawer will fall back to existing BW backup or in-place framebuffer");
   }
 
   buildItems();
@@ -294,11 +298,26 @@ void BookSettingsDrawerActivity::loop() {
 
 void BookSettingsDrawerActivity::renderDrawer() {
   // Repaint reader page underneath, then draw the drawer panel on top.
+  //
+  // Three tiers of fallback for getting the reader page into the
+  // framebuffer:
+  //   1. Our own storeBwBuffer() snapshot from onEnter, if it succeeded.
+  //   2. Otherwise, whatever backup the renderer already had — the
+  //      EpubReader stores its own BW backup at the end of each page
+  //      render (for the grayscale pass) and doesn't free it after
+  //      restoring, so it usually sits there waiting for us.
+  //   3. Last resort: do NOT clear the screen. Whatever was last
+  //      rendered is what the e-ink is currently showing; clearing would
+  //      diff every reader-page pixel against white on the next fast
+  //      refresh and paint the panel onto a stark white background.
+  //      Leaving the framebuffer alone matches whatever's already on
+  //      the display so the fast-refresh diff is small.
   if (readerBufferStored) {
     renderer.restoreBwBuffer();
-  } else {
-    renderer.clearScreen();
+  } else if (renderer.hasStoredBwBuffer()) {
+    renderer.restoreBwBuffer();
   }
+  // else: intentionally no clearScreen() — see comment above.
 
   // Panel body — filled white, with the top two corners rounded so the panel
   // looks like it has rounded shoulders.

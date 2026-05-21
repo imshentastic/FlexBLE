@@ -872,6 +872,11 @@ void loop() {
   // the render lock during the transition; doing it here, after loop()
   // returns, is safe.
   btMgr.tryDisableIfRequested();
+  // Companion drain: when the reader proactively drops BLE around a heavy
+  // re-layout (e.g. font change from the Book Settings drawer), it asks
+  // for BLE to come back up once the indexer finishes. checkAutoReconnect
+  // then resumes the bonded-device link on the user's next button press.
+  btMgr.tryEnableIfRequested();
   const bool bleRecentActivity = btMgr.hasRecentActivity();
 
   renderer.setFadingFix(SETTINGS.fadingFix);

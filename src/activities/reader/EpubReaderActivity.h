@@ -62,10 +62,16 @@ class EpubReaderActivity final : public Activity {
   int pageLoadRetryCount = 0;
   // CrumBLE: if a chapter layout aborts under heap pressure and BLE is
   // currently consuming its ~58 KB share, retry the layout once with BLE
-  // disabled (NimBLE will auto-reconnect to the bonded remote on the user's
-  // next button press). Flag gates the retry so we don't loop forever if
-  // the chapter genuinely can't be parsed.
+  // disabled. Flag gates the retry so we don't loop forever if the
+  // chapter genuinely can't be parsed.
   bool layoutBleRetryAttempted = false;
+  // CrumBLE: when we proactively drop BLE around a heavy re-layout (drawer
+  // settings change, or the reactive chapter-abort retry), set this so the
+  // next successful section build re-enables BLE via requestEnableLater().
+  // Without this, the user is stuck without their remote until they go to
+  // Reader Menu -> Bluetooth to re-enable manually — checkAutoReconnect()
+  // refuses to do anything while _enabled is false.
+  bool bleAutoReEnableAfterReindex = false;
   enum class BookmarkFeedbackType : uint8_t {
     Added,
     Removed,
