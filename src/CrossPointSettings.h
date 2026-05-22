@@ -190,7 +190,7 @@ class CrossPointSettings {
     LONG_PRESS_BUTTON_BEHAVIOR_COUNT
   };
 
-  // UI Theme. CrumBle keeps LYRA_FLOW (the 5-book carousel) at its original
+  // UI Theme. CrumBLE keeps LYRA_FLOW (the 5-book carousel) at its original
   // slot 3 so saved user settings stay valid across the v1.2.11.1 merge.
   // LYRA_CAROUSEL and MINIMAL are upstream's new theme options, appended.
   enum UI_THEME {
@@ -334,7 +334,7 @@ class CrossPointSettings {
   // Language setting (Language enum index, default 0 = EN)
   uint8_t language = 0;
 
-  // CrumBle Collections — global gate for series detection. When 0
+  // CrumBLE Collections — global gate for series detection. When 0
   // (default), the OPF-parse pass and the shelf series-collapse
   // rendering are both skipped entirely. Off by default because most
   // EPUBs from non-Calibre sources lack series metadata, so the

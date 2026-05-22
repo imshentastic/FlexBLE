@@ -7,7 +7,7 @@
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
-// CrumBle Collections — sort picker for the shelf-header action menu.
+// CrumBLE Collections — sort picker for the shelf-header action menu.
 // Lists the available sort modes for a given collection (skips Manual
 // for virtual collections since their book lists aren't user-ordered)
 // and pre-highlights the currently-active mode. Returns the user's

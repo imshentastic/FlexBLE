@@ -18,7 +18,7 @@ struct HeapRequirement {
   uint32_t minMaxAlloc;
 };
 
-// CrumBle: upstream's defaults of 72 KB free / 48 KB max alloc are tuned for
+// CrumBLE: upstream's defaults of 72 KB free / 48 KB max alloc are tuned for
 // the BLE-off case. With NimBLE eating ~58 KB of heap once a remote is
 // paired, those floors are unreachable, so even text-heavy chapters tripped
 // the "Cannot Load chapter" abort whenever they contained any image. The

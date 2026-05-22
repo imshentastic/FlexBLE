@@ -1512,7 +1512,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
           LOG_ERR("ERS", "Failed to persist page data to SD");
         }
         section.reset();
-        // CrumBle: if the layout aborted on heap pressure and BLE is still
+        // CrumBLE: if the layout aborted on heap pressure and BLE is still
         // hogging ~58 KB, drop BLE and retry once. requestDisableLater()
         // sets a flag that the next main-loop tick drains via
         // tryDisableIfRequested(), which runs BEFORE the next render() —

@@ -526,7 +526,7 @@ void enterDeepSleep() {
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
   APP_STATE.saveToFile();
 
-  // CrumBle: give the current activity a chance to flush in-flight
+  // CrumBLE: give the current activity a chance to flush in-flight
   // state (most importantly: the reader's accumulated session time)
   // before the chip powers off. Without this hook, every minute spent
   // reading since the last natural activity-exit was lost on each
@@ -748,7 +748,7 @@ void setup() {
   }
 
   // First serial output only here to avoid timing inconsistencies for power button press duration verification
-  LOG_DBG("MAIN", "Starting CrumBle " CRUMBLE_VERSION " (CrossInk " CROSSINK_VERSION ")");
+  LOG_DBG("MAIN", "Starting CrumBLE " CRUMBLE_VERSION " (CrossInk " CROSSINK_VERSION ")");
 
   setupDisplayAndFonts();
 

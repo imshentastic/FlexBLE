@@ -3,7 +3,7 @@
 #include <unordered_map>
 #include <vector>
 
-// CrumBle — per-book series metadata cache, persistent across reboots.
+// CrumBLE — per-book series metadata cache, persistent across reboots.
 // Populated lazily (when a collection with collapse-series enabled is
 // rendered, we parse OPFs for any of its books we haven't seen yet) so
 // the first SD walk stays fast.
@@ -11,7 +11,7 @@
 // Ported in spirit from dawsonfi/aalu (MIT, Copyright (c) 2025 Dave
 // Allie) — same idea (per-book {seriesName, seriesIndex}, JSON cache,
 // case-folded "series key" for grouping). Renamed and rewritten to fit
-// CrumBle's existing CollectionsStore / LibraryIndex architecture.
+// CrumBLE's existing CollectionsStore / LibraryIndex architecture.
 //
 // Storage shape:
 //   /.crosspoint/series_index.json
