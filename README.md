@@ -2,7 +2,7 @@
 
 # CrumBLE
 
-<img src="./docs/images/crumble/01-boot.jpg" alt="CrumBLE boot screen" width="280"/>
+<img src="./docs/images/crumble/01-boot.png" alt="CrumBLE boot screen" width="280"/>
 
 **A personal fork of [CrossInk Carousel](https://github.com/chintanvajariya/CrossInk-Carousel) for the Xteink X4 — adds a Bluetooth page-turner, a Collections system, an on-demand sleep-screen cycler, and a long-press quick-settings drawer inside books.**
 
@@ -23,7 +23,7 @@ Pair a BT HID remote (e.g. an [IINE GameBrick](https://www.amazon.com/dp/B0CK4DN
 A **BT Quick Connect** action lives in the [Global Book Settings drawer](#global-book-settings-drawer) for one-step re-connect to your last bonded remote without re-navigating the menu tree.
 
 <p align="center">
-  <img src="./docs/images/crumble/02-bt-pairing.jpg" alt="Bluetooth pairing UI" width="280"/>
+  <img src="https://github.com/imshentastic/CrumBLE/releases/download/readme-assets/02-bt-pairing.gif" alt="Bluetooth pairing UI" width="280"/>
 </p>
 
 ### Collections
@@ -39,8 +39,8 @@ A full collections system with virtual + user-defined collections, all swipeable
 - Optional **series collapse** that folds same-series books into one spine glyph on the shelf
 
 <p align="center">
-  <img src="./docs/images/crumble/03-collections-shelf.jpg" alt="Collections shelf with series collapse" width="280"/>
-  <img src="./docs/images/crumble/04-add-remove-books.jpg" alt="Add / Remove Books picker" width="280"/>
+  <img src="./docs/images/crumble/03-collections-shelf.png" alt="Collections shelf with series collapse" width="280"/>
+  <img src="https://github.com/imshentastic/CrumBLE/releases/download/readme-assets/04-add-remove-books.gif" alt="Add / Remove Books picker" width="280"/>
 </p>
 
 ### On-demand sleep-screen cycling
@@ -50,7 +50,7 @@ A new display setting — **Tap Power While Asleep to Cycle** — lets you flip 
 `.png` sleep images (with transparency) are also supported in **Custom** mode now, not just Page Overlay. Transparent regions compose over a snapshot of the last reader page, so a translucent PNG sleep screen reveals the book underneath.
 
 <p align="center">
-  <img src="./docs/images/crumble/05-sleep-cycle.jpg" alt="Sleep screen cycling" width="280"/>
+  <img src="https://github.com/imshentastic/CrumBLE/releases/download/readme-assets/05-sleep-cycle.gif" alt="Sleep screen cycling" width="280"/>
 </p>
 
 ### Global Book Settings drawer
@@ -60,7 +60,7 @@ Long-press the menu button inside a book to pop up a bottom-drawer quick-setting
 Architecture adapted from [inx by Dave Allie](https://github.com/obijuankenobiii/inx) (MIT).
 
 <p align="center">
-  <img src="./docs/images/crumble/06-book-settings-drawer.jpg" alt="Global Book Settings drawer" width="280"/>
+  <img src="./docs/images/crumble/06-book-settings-drawer.png" alt="Global Book Settings drawer" width="280"/>
 </p>
 
 ---

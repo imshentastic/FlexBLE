@@ -24,3 +24,18 @@ release.md
 lib/EpdFont/scripts/downloaded_fonts/
 lib/EpdFont/scripts/instanced_fonts/
 lib/EpdFont/scripts/output/
+
+# Raw screen-recording source files for README GIFs. The optimized
+# .png stills in docs/images/ are committed; the multi-MB .MOV/.mp4
+# source captures are not.
+*.MOV
+*.mov
+*.mp4
+*.m4v
+
+# README GIFs are hosted as GitHub release assets (the "readme-assets"
+# release), not committed, to keep the multi-MB animated binaries out of
+# git history. The README references their release-download URLs. Keep
+# the local copies in docs/images/crumble/ as the source-of-truth for
+# re-uploading if they ever need to be regenerated.
+docs/images/crumble/*.gif
