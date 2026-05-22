@@ -94,7 +94,7 @@ CrumBLE is named after — and themed around — the chocolate-chip cookie boot 
 
 ## Install firmware
 
-1. Download the `crumble-firmware-*.bin` for your variant from the [Releases](https://github.com/imshentastic/CrumBLE/releases) page (`tiny` = standard build with BLE; `xlarge` = no BLE, larger fonts; `no_emoji` = all font sizes, no emoji rendering).
+1. Download `crumble-firmware.bin` from the [Releases](https://github.com/imshentastic/CrumBLE/releases) page (includes Bluetooth page-turner support).
 2. Connect your Xteink X4 via USB-C and wake / unlock the device.
 3. Go to https://crosspointreader.com/#flash-tools, select your device, choose **Custom .bin**, pick the file you downloaded, and click **Flash**.
 
