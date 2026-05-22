@@ -2,9 +2,7 @@
 
 # CrumBLE
 
-<img src="./docs/images/crumble/01-boot.png" alt="CrumBLE boot screen" width="280"/>
-
-**A personal fork of [CrossInk Carousel](https://github.com/chintanvajariya/CrossInk-Carousel) for the Xteink X4 — adds a Bluetooth page-turner, a Collections system, an on-demand sleep-screen cycler, and a long-press quick-settings drawer inside books.**
+**A personal fork of [CrossInk](https://github.com/uxjulia/CrossInk) for the Xteink X4 — adds a Bluetooth page-turner, a Collections system, an on-demand sleep-screen cycler, and a quick-settings drawer inside books (among other things!).**
 
 </div>
 
@@ -14,13 +12,15 @@
 
 ## What CrumBLE adds
 
-CrumBLE sits on top of CrossInk Carousel's feature set — see the [CrossInk Carousel README](https://github.com/chintanvajariya/CrossInk-Carousel#whats-different-from-crossink) and [CrossInk's docs](https://github.com/uxjulia/CrossInk) for those features. The sections below cover what's distinct to this fork.
+CrumBLE sits on top of CrossInk and CrossInk Carousel's feature set — see the [CrossInk Carousel README](https://github.com/chintanvajariya/CrossInk-Carousel#whats-different-from-crossink) and [CrossInk's docs](https://github.com/uxjulia/CrossInk) for those features. The sections below cover what's distinct to this fork.
 
 ### Bluetooth remote page-turner
 
-Pair a BT HID remote (e.g. an [IINE GameBrick](https://www.amazon.com/dp/B0CK4DNQM4)) and use it as a wireless page-turner. From inside a book, open the reader menu → **Bluetooth** to pair. The remote's buttons inject as virtual page-turn keys with auto-reconnect on later sessions; BLE auto-disables when you exit the book to keep heap pressure off the parser.
+Pairing is done from WITHIN A BOOK ONLY! Click on the "Confirm" button while inside a book to open the reader menu. Navigate to Bluetooth and follow the instructions there to pair a BT HID remote (e.g. an [IINE GameBrick](https://www.amazon.com/dp/B0CK4DNQM4)) and use it as a wireless page-turner. BLE auto-disables when you exit the book to keep heap pressure off the parser, so you will need to reconect again when you enter a new book.
 
-A **BT Quick Connect** action lives in the [Global Book Settings drawer](#global-book-settings-drawer) for one-step re-connect to your last bonded remote without re-navigating the menu tree.
+Shout-out to [thedrunkpenguin](https://github.com/thedrunkpenguin/crosspoint-reader-ble/) for his BT changes which I learned much from and added some memory changes to make it all fit.
+
+A **BT Quick Connect** action lives in the [Global Book Settings drawer](#global-book-settings-drawer) for one-step re-connect to your last bonded remote without re-navigating the menu tree. Check out the gif below
 
 <p align="center">
   <img src="https://github.com/imshentastic/CrumBLE/releases/download/readme-assets/02-bt-pairing.gif" alt="Bluetooth pairing UI" width="280"/>
@@ -28,7 +28,7 @@ A **BT Quick Connect** action lives in the [Global Book Settings drawer](#global
 
 ### Collections
 
-A full collections system with virtual + user-defined collections, all swipeable from the home shelf:
+A full collections system with virtual + user-defined collections, all "swipeable" from the home shelf:
 
 - **Virtual collections** computed lazily: **All Books**, **Favorites**, **Recent**, **Currently Reading**, **Finished**
 - **User collections** you create and rename freely
