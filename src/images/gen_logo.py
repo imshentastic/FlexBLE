@@ -106,7 +106,7 @@ assert len(packed) == 1800
 
 with open('/tmp/Logo120.h', 'w') as f:
     f.write('#pragma once\n#include <cstdint>\n\n')
-    f.write('// CrumBle boot/sleep logo — chocolate-chip cookie with a bite\n')
+    f.write('// CrumBLE boot/sleep logo — chocolate-chip cookie with a bite\n')
     f.write('// taken out. 1-bit silhouette traced from the brand reference\n')
     f.write('// image. 120x120, MSB-first packed, 1800 bytes total.\n')
     f.write('// bit=1 white, bit=0 black.\n')

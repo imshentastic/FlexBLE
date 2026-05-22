@@ -1,465 +1,135 @@
-# CrossInk Carousel
+<div align="center">
 
-> **CrossInk Carousel is a personal fork of CrossInk** that adds book-cover-centric UI inspired by the Lua fork [CrossPoint Flow](https://github.com/ideo2004-afk/crosspoint-reader-lua). As it stands, I always judge a book by its cover. I deserve to see the fruits of my good taste every time I open my X4. The goal is to make book covers the first priority of the navigation experience: on the home screen, in the recent books browser, and on the reading stats screen. 
+# CrumBLE
 
-**ONLY TESTED ON XTEINK X4, NOT YET COMPATIBLE WITH X3 MODEL. BACKUP YOUR DEVICE BEFORE FLASHING.**
+<img src="./docs/images/crumble/01-boot.png" alt="CrumBLE boot screen" width="280"/>
 
-## What's different from CrossInk
+**A personal fork of [CrossInk Carousel](https://github.com/chintanvajariya/CrossInk-Carousel) for the Xteink X4 — adds a Bluetooth page-turner, a Collections system, an on-demand sleep-screen cycler, and a long-press quick-settings drawer inside books.**
 
-### New UI features
+</div>
 
-**Flow theme.** A new selectable UI theme called "Flow", inheriting from Lyra and overriding only the home-screen book selector with an iPod-style perspective carousel. The currently selected book renders centered at full size, flanked by partial side covers drawn with a 3D fan perspective transform. Up to seven recent books cycle through the carousel. Visual concept ported from CrossPoint Flow.
-
-**Recent Books grid.** Replaced the plain list of book titles with a 3x3 grid of cover thumbnails, paginated when more than nine books exist. Page indicator dots sit at the bottom. Thumbnails are generated on demand the first time a page is viewed, loading will be much faster with subsequent views. Visual concept ported from CrossPoint Flow.
-
-**Reading Stats redesign.** Reworked the Reading Stats screen into a multi-book browseable layout. The current book's cover renders prominently at the top. Below the cover sits the book title and stats for the current book, followed stats for all books. Cycle through every recent book that has stats, with peek covers at the screen edges showing the previous and next books, each marked by a chevron. Confirm opens the currently displayed book in the reader.
-
-<table width="100%">
-  <tr>
-    <td align="center" width="33%">
-      <img src="./docs/images/1flow_ui.jpeg" alt="Home Page" width="100%"/><br/>
-      <em>Home Page</em>
-    </td>
-    <td align="center" width="33%">
-      <img src="./docs/images/2recent_books.jpeg" alt="Recent Books" width="100%"/><br/>
-      <em>Recent Books</em>
-    </td>
-    <td align="center" width="33%">
-      <img src="./docs/images/3reading_stats.jpeg" alt="Reading Stats" width="100%"/><br/>
-      <em>Reading Stats</em>
-    </td>
-  </tr>
-</table>
+> **Only tested on the Xteink X4.** Not yet compatible with the X3. **Back up your device before flashing.** See [Install firmware](#install-firmware) below.
 
 ---
 
-> **This is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)** with a focus on improved fonts and minimal reading stats.
+## What CrumBLE adds
 
-## What's different in this fork
+CrumBLE sits on top of CrossInk Carousel's feature set — see the [CrossInk Carousel README](https://github.com/chintanvajariya/CrossInk-Carousel#whats-different-from-crossink) and [CrossInk's docs](https://github.com/uxjulia/CrossInk) for those features. The sections below cover what's distinct to this fork.
 
-My goal with this fork was to maintain the core Crosspoint firmware while integrating my preferred typography and some lightweight reading statistics. I’ve focused on keeping the underlying system stable while layering in a few "nice-to-have" features and UI refinements along the way.
+### Bluetooth remote page-turner
 
-<table>
-  <tr>
-    <td align="center">
-      <img src="./docs/images/bitter-small-15-margin.jpg" alt="Font: Bitter, Size: Small, Margin: 15" /><br/>
-      <em>Font: Bitter, Size: Small, Margin: 15</em>
-    </td>
-    <td align="center">
-      <img src="./docs/images/reading-stats.jpg" alt="Reading Stats with custom front button mapping shown" /><br/>
-      <em>Reading Stats with custom front button mapping shown</em>
-    </td>
-  </tr>
-</table>
+Pair a BT HID remote (e.g. an [IINE GameBrick](https://www.amazon.com/dp/B0CK4DNQM4)) and use it as a wireless page-turner. From inside a book, open the reader menu → **Bluetooth** to pair. The remote's buttons inject as virtual page-turn keys with auto-reconnect on later sessions; BLE auto-disables when you exit the book to keep heap pressure off the parser.
 
-### Highlights
+A **BT Quick Connect** action lives in the [Global Book Settings drawer](#global-book-settings-drawer) for one-step re-connect to your last bonded remote without re-navigating the menu tree.
 
-- New reader fonts: ChareInk, Lexend Deca, and Bitter
-- Unicode emoji and miscellaneous symbols support (a limited subset)
-- Adjusted font sizes: Teensy (8pt), Tiny (10pt), Small (12pt), Medium (14pt), Large (16pt), Extra Large (18pt), Huge (20pt). See [Font Sizes](#font-sizes) for more details.
-- Added ~~strikethrough~~ support
-- Made <u>underlines</u> thicker for better visibility
-- Added support for `<hr>` section breaks
-- Added support for "redaction" style rendering
-- Added improved support for tables with simple markup
-- Added ability to add bookmarks
-- Added ability to remap front buttons that only applies in the reader
-- Added Bionic Reading and Guide Dots as optional reader modes
-- Added Force Paragraph Indents for books that render as one giant wall of text
-- Added ability to pin a sleep image as a favorite. The favorited image will always be displayed when your sleep settings are set to `Custom` or `Cover + Custom` (when no cover is available). Do this from the file browser and long-press the menu button to access the option.
-- Added more in-reader control remapping options for side buttons, short power button clicks, and long-press menu actions
-- Added ability to mark a book as finished from the in-book menu. A pop-up will also display once 99% of the book is reached. This status allows tracking of total books read.
-- Added ability to move finished books to "Read" folder
-  - To turn this on, go to Settings > System > Move finished books to Read folder. Once a book is marked as finished, the book will be moved to the folder when the book is closed.
-- In-book menu to quickly adjust reader options without having to exit the book
-- Reading stats: total books read, total reading time, number of sessions, pages turned, average session time, pages turned per minute. You can also set your reading stats as your sleep screen.
-- Added customizable Auto Page Turn Interval (anything between 5-120 seconds)
-- Added ability to view Recent Books as a 3x3 grid view
-- Added ability to install custom fonts on the SD card
-- Device simulator during development
-- To view a more detailed list for each version, visit the [releases](https://github.com/uxjulia/CrossInk/releases) page to read release notes.
+<p align="center">
+  <img src="https://github.com/imshentastic/CrumBLE/releases/download/readme-assets/02-bt-pairing.gif" alt="Bluetooth pairing UI" width="280"/>
+</p>
 
----
+### Collections
 
-### Reader Fonts
+A full collections system with virtual + user-defined collections, all swipeable from the home shelf:
 
-The default fonts have been replaced with ChareInk, Lexend Deca, and Bitter. These fonts have been chosen specifically to improve reading fluency and e-ink performance. These 'sturdier' typefaces feature uniform stroke weights and open geometries, allowing the X4 to render crisp, high-contrast text with font-aliasing on while significantly reducing ghosting and artifacts.
+- **Virtual collections** computed lazily: **All Books**, **Favorites**, **Recent**, **Currently Reading**, **Finished**
+- **User collections** you create and rename freely
+- **Long-press Confirm** on a book → toggle membership in any collection
+- **Long-press shelf header** → rename, delete, sort, add/remove books in batch
+- **Add/Remove Books** multi-select picker so you can curate a whole collection in one pass
+- **Per-collection sort** (A–Z / Z–A / Author / Date Added), persisted in `collections.json`
+- Optional **series collapse** that folds same-series books into one spine glyph on the shelf
 
-- [ChareInk](https://www.mobileread.com/forums/showthread.php?t=184056) - A cult favorite among the e-reading community for over a decade based off of the typeface [Charis](https://software.sil.org/charis/). It is specially designed to make long texts pleasant and easy to read.
-- [Lexend Deca](https://fonts.google.com/specimen/Lexend+Deca) - A research-backed sans-serif typeface designed to improve reading fluency. Lexend was engineered based on the theory that reading issues are often a design problem (visual crowding) rather than a cognitive one.
-- [Bitter](https://fonts.google.com/specimen/Bitter) - A "contemporary" slab serif typeface for text, it is specially designed for comfortably reading on digital screens. The consistent stroke weight of Bitter helps it render particularly well on e-ink devices. The medium weight has been chosen specifically for improved rendering on the X4.
+<p align="center">
+  <img src="./docs/images/crumble/03-collections-shelf.png" alt="Collections shelf with series collapse" width="280"/>
+  <img src="https://github.com/imshentastic/CrumBLE/releases/download/readme-assets/04-add-remove-books.gif" alt="Add / Remove Books picker" width="280"/>
+</p>
 
-The UI now uses [Inter](https://fonts.google.com/specimen/Inter) as the display font which has improved readability at smaller sizes.
+### On-demand sleep-screen cycling
 
-### Wireless workflows
+A new display setting — **Tap Power While Asleep to Cycle** — lets you flip through your `/.sleep` images without fully waking the device. A brief power-button tap picks a fresh random image and re-enters deep sleep. Off by default (each cycle costs a boot + e-ink half-refresh worth of battery); pinned sleep images are skipped in cycle mode.
 
-- File transfer web UI
-- EPUB Optimizer
-- Web settings UI/API (edit many device settings from browser)
-- WebSocket fast uploads
-- WebDAV handler
-- AP mode (hotspot) and STA mode (join existing WiFi), both with QR helpers
-- Calibre wireless connect flow
-- OPDS browser with saved servers (up to 8), search, pagination, and direct download
-- OTA update checks and installs from GitHub releases
+`.png` sleep images (with transparency) are also supported in **Custom** mode now, not just Page Overlay. Transparent regions compose over a snapshot of the last reader page, so a translucent PNG sleep screen reveals the book underneath.
 
-### Emojis and Misc Glyphs
+<p align="center">
+  <img src="https://github.com/imshentastic/CrumBLE/releases/download/readme-assets/05-sleep-cycle.gif" alt="Sleep screen cycling" width="280"/>
+</p>
 
-- Support for a limited set of Unicode [Emoticons](https://unicode-explorer.com/b/1F600) and [Miscellaneous Symbols](https://unicode-explorer.com/b/2600) using [Noto Emoji](https://fonts.google.com/noto/specimen/Noto+Emoji) and [Noto Sans Symbols](https://fonts.google.com/noto/specimen/Noto+Sans+Symbols) font.
+### Global Book Settings drawer
+
+Long-press the menu button inside a book to pop up a bottom-drawer quick-settings panel. Every reader setting — font, size, hyphenation, bionic, line spacing, paragraph alignment, image rendering — is one tap away with e-ink fast refresh so toggles feel snappy. Closing the drawer re-flows the page only if a setting actually changed; a no-op visit skips the re-layout.
+
+Architecture adapted from [inx by Dave Allie](https://github.com/obijuankenobiii/inx) (MIT).
+
+<p align="center">
+  <img src="./docs/images/crumble/06-book-settings-drawer.png" alt="Global Book Settings drawer" width="280"/>
+</p>
 
 ---
 
-### Font Sizes
+## Other improvements
 
-There are 3 available build variants to choose from due to build size constraints: tiny, xlarge, and no_emoji
+- **Reading time accuracy** — deep-sleep commit path flushes the active session so power-off never loses minutes. The 10-second minimum-session floor was dropped; very short sessions count too. Idempotent re-commit prevents double-counting. Ported from [aalu's reading-stats fix](https://github.com/aaludon/crosspoint-reader-aalu) (MIT).
+- **Carousel ghosting fixes** on the Lyra Flow theme — max-size cover-slot clear before each paint, thinned selection border (4 px → 2 px), and dropped the always-on inner frame so successive scrolls don't leave outline residue.
+- **Remember last position** — switching between the shelf and the bottom menu row restores your previous position on each side instead of jumping to index 0.
+- **PackBits-compressed BW backup** for the grayscale AA pass — a single 16–32 KB bounded buffer replaces the chunked 12 × 4 KB lazy allocation, dropping the fragmentation pressure that made grayscale fail when BLE was active.
+- **Auto-retry on chapter-layout abort** — if the parser trips the low-heap floor with BLE consuming its ~58 KB share, CrumBLE silently drops BLE, retries the layout with the recovered headroom, and lets the existing auto-reconnect logic re-pair on your next remote press.
 
-**tiny**
-
-> No Extra Large or Huge font size. My preferred build.
-
-- Emoji & Misc. Symbols Support
-- 5 Font sizes:
-  - Teensy (8pt)
-  - Tiny (10pt)
-  - Small (12pt)
-  - Medium (14pt)
-  - Large (16pt)
-
-**xlarge**
-
-> Teensy, Tiny, and Small font sizes had to be removed to reduce build size and still support emoji/symbols.
-
-- Emoji & Misc. Symbols Support
-- 3 Font sizes:
-  - Large (16pt)
-  - Extra Large (18pt)
-  - Huge (20pt)
-
-**no_emoji**
-
-> All standard font sizes from Tiny through Extra Large are available, but no emoji/symbols support.
-
-- **No** Emoji & Misc. Symbols Support
-- 5 Font sizes:
-  - Tiny (10pt)
-  - Small (12pt)
-  - Medium (14pt)
-  - Large (16pt)
-  - Extra Large (18pt)
+For the full changelog, see [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
-### Reader options in the in-book menu
+## Lineage
 
-Reader settings (font, size, line spacing, margins, alignment, etc.) are now accessible directly from the in-book menu without leaving the book. Open the menu while reading and select **Reader Options** to adjust any reader setting on the spot. Changes take effect immediately.
-
-### Bionic Reading
-
-This feature will bold the initial letters or parts of words, creating "artificial fixation points" that can make it easier to let your brain fill in the rest of the word without having to focus on every letter. You can toggle it from **Reader settings**.
-
-This was merged from [CrossPoint PR 1670](https://github.com/crosspoint-reader/crosspoint-reader/pull/1670).
-
-### Guide Dots
-
-This feature adds small dots between every word. The idea comes from the book [Speed Reading: Learn to Read a 200+ Page Book in 1 Hour](https://amzn.to/4mOPSJo): by focusing on the space between words instead of the words themselves, your peripheral vision can pick up more of the text. You can toggle it from **Reader settings**.
-
-### Force Paragraph Indents
-
-Have you ever opened a book and the paragraph indents just were not rendering, leaving you with an overwhelming wall of text? That usually happens because some publishers do not define their indents in ways the firmware understands. This setting forces each new paragraph to have an indent regardless of how the book is formatted.
-
-This works when **Reader Paragraph Alignment** is set to **Left**, **Justify**, or **Book's Style**. You can toggle it from **Reader settings**.
-
-## Custom button actions
-
-The Controls menu in Settings has been updated to the following
-
-<u>**Power Button**</u>
-Short-press Action - **New Options Added**
-Long-press Action - **New**
-
-<u>**Front Buttons**</u>
-Remap Front Buttons
-Remap Front Buttons (reader)
-Long-press Menu Action - **New**
-
-<u>**Side Buttons**</u>
-Layout
-Long-press Chapter Skip
-Long-Press Action - **New**
-
----
-
-**Side Button Long Press Action** - Use the side buttons to change your font size. Previously, the "Long-press Chapter Skip" applied to both the front and side buttons. I've split this out so now you can change your font size when you long-press them. Press and hold for about 2 seconds: Up to increase font size, Down to decrease font size. Default = Chapter Skip
-
-**Short-press Power Button Action** - Default = Ignore
-**Long-press Power Button Action** - Default = Sleep
-**Long Press Menu Button Action** (This is the Menu/Confirm button when you are in the reader): Default = Ignore
-
-Map the **Power** or **Menu** button short/long-press action to one of the following options:
-- Ignore
-- Sleep
-- Page Turn
-- Refresh Screen
-- Change Font (cycles through the fonts one by one)
-- Guide Dots (turns guide dots on/off)
-- Bionic Reading (turns bionic reading on/off)
-- Toggle Bookmark (adds or removes a bookmark from the current page)
-- Sync Progress (syncs KoReader progress)
-- Mark as Finished (marks book as finished)
-- Reading Stats (displays reading stats)
-- Take Screenshot (takes a screenshot)
-- Auto Page Turn (cycles through the page turn intervals: **Off → 5s → 10s → 15s → 20s → 30s → 45s → 60s → Off →**)
-- File Transfer (opens the File Transfer menu)
-- Tilt Page Turn (turns tilt-based page turning on/off on supported devices)
-
-### Reading stats
-
-Some simple per-book reading stats are tracked automatically and displayed in two places:
-
-**In-book menu → Reading Stats:**
-
-- Total reading time
-- Number of sessions
-- Pages turned
-- Average session time
-- All time reading stats including total number of books read
-
-**Home screen book card (Lyra theme only):**
-
-- Total reading time
-- Average session time
-
-### Finished books / Read folder
-
-- You can manually mark a book as finished from the in-book menu
-- At 99% book progress a pop-up will also display asking if you want to mark the book as finished
-- If you have the "Move finished books to Read folder" setting turned on, then once you have marked a book as finished, the book will automatically be moved to a folder named "Read" on your SD card
-- Marking books as finished also enables the total "Books Read" reading stat
-
-### Language Support
-
-- Added language support for Vietnamese. This addresses [issue #34](https://github.com/uxjulia/CrossInk/issues/34).
-
----
-
-### Development Device Simulator
-
-A [device simulator](https://github.com/uxjulia/crosspoint-simulator) has been added for development purposes to quickly sanity check updates without having to flash the firmware every time. It renders the e-ink display in an SDL2 window. Use with Platformio by choosing the `simulator` environment.
-
-> **Platform support:** The simulator is currently configured for **macOS (Apple Silicon)** only. The `platformio.ini` `[env:simulator]` section contains hardcoded `-arch arm64` and Homebrew paths (`/opt/homebrew`). Intel Mac users need to remove `-arch arm64` and change those paths to `/usr/local`. Linux requires the same path changes plus a replacement for `lib/simulator_mock/src/MD5Builder.h` (which uses the macOS-only `CommonCrypto` API). Native Windows is not supported; use WSL and follow the Linux instructions.
-
-**Prerequisites:** SDL2 must be installed.
-
-```bash
-# macOS
-brew install sdl2
-
-# Linux (Debian/Ubuntu)
-sudo apt install libsdl2-dev
+```
+CrossPoint Reader  →  CrossInk (uxjulia)  →  CrossInk Carousel (chintanvajariya)  →  CrumBLE
 ```
 
-**Setup:** Place EPUB books in `./fs_/books/` relative to the project root (this maps to the SD card `/books/` path on device).
+- **[CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader)** — the further-upstream foundation. Most reader features (fonts, BookSettings, sleep screens, web UI) come from here.
+- **[CrossInk](https://github.com/uxjulia/CrossInk)** — uxjulia's fork. UI polish, localization, additional reader fonts.
+- **[CrossInk Carousel](https://github.com/chintanvajariya/CrossInk-Carousel)** — chintanvajariya's fork. Adds the Flow theme (3D book carousel), 3×3 Recent Books grid, and the multi-book Reading Stats redesign.
+- **CrumBLE** — this fork. Adds BLE, Collections, sleep-screen cycling, and the in-book quick-settings drawer.
 
-**Build and run:**
+CrumBLE is named after — and themed around — the chocolate-chip cookie boot logo. The "BLE" remained from the previous fork name (FlexBLE) because that's still the headline feature.
+
+---
+
+## Install firmware
+
+1. Download the `crumble-firmware-*.bin` for your variant from the [Releases](https://github.com/imshentastic/CrumBLE/releases) page (`tiny` = standard build with BLE; `xlarge` = no BLE, larger fonts; `no_emoji` = all font sizes, no emoji rendering).
+2. Connect your Xteink X4 via USB-C and wake / unlock the device.
+3. Go to https://crosspointreader.com/#flash-tools, select your device, choose **Custom .bin**, pick the file you downloaded, and click **Flash**.
+
+To revert to official Xteink firmware, flash the latest stock build from the same page.
+
+---
+
+## USB-locked devices
+
+Some Xteink units sold through third-party stores (e.g. AliExpress) ship with USB flashing locked from the factory. If your device is locked, you'll need the **Xteink Unlocker** at https://crosspointreader.com/#unlock-tool before you can flash CrumBLE.
+
+**You do not need the unlocker if you bought directly from xteink.com** — those units aren't locked.
+
+**Critical warning:** The unlocker officially supports only CrossPoint and CrossInk firmwares. Flashing a non-supported firmware on a USB-locked device can permanently brick it or leave it stuck on that firmware with no recovery path. **CrumBLE does support OTA**, but verify the boot logo appears after first flash before assuming you have an out. If in doubt, flash CrossInk first, confirm OTA works, then OTA-upgrade to CrumBLE.
+
+---
+
+## Build from source
 
 ```bash
+# Tiny build (BLE-capable, default partition)
+pio run -e tiny
+
+# Flash to a connected device
+pio run -e tiny -t upload
+
+# Simulator (desktop, for UI iteration)
 pio run -e simulator
 .pio/build/simulator/program
 ```
 
-**Keyboard controls:**
-
-| Key    | Action                             |
-| ------ | ---------------------------------- |
-| ↑ / ↓  | Page back / forward (side buttons) |
-| ← / →  | Left / right front buttons         |
-| Return | Confirm / Select                   |
-| Escape | Back                               |
-| P      | Power                              |
-
-> **Note:** On first open of an ebook, an "Indexing..." popup will appear while the section cache is built in `.crosspoint/`. If you see rendering issues after a code change, delete `./fs_/.crosspoint/` to clear stale caches.
+See [docs/contributing/getting-started.md](./docs/contributing/getting-started.md) for the full development setup.
 
 ---
 
-### Localization
+## License
 
-CrossPoint includes 22 UI languages and counting.
-
-### Web
-
-1. Download the `carousel-firmware-*.bin` file for the build variant of your choosing from the [releases](https://github.com/chintanvajariya/CrossInk-Carousel/releases) page
-2. Connect your Xteink X4 to your computer via USB-C and wake/unlock the device
-3. Go to https://crosspointreader.com/#flash-tools and choose your device
-4. Select "Custom .bin" from the options
-5. Choose the `carousel-firmware-*.bin` file you downloaded and click "Flash"
-
-To revert back to the official firmware, you can flash the latest official firmware from https://crosspointreader.com/#flash-tools
-
----
-
-## USB-locked devices (Xteink Unlocker)
-
-Some Xteink units purchased from third-party stores (e.g. AliExpress) ship with USB flashing locked from the factory.
-If your device is locked, you will need to use the **Xteink Unlocker** tool available at
-https://crosspointreader.com/#unlock-tool before you can flash CrossPoint.
-
-**You do not need this tool if you bought your device directly from xteink.com.** Those units are not locked.
-
-**Not sure if your device is locked?** Power it on, connect the USB-C cable, and try flashing via the web flasher first (see
-[Install firmware](#install-firmware) below). If the browser's serial device picker does not show your device, try a different
-USB port or browser before assuming the device is locked. Only reach for the unlocker if the device still doesn't appear.
-
-### ⚠️ WARNING: READ THIS BEFORE USING THE UNLOCKER ⚠️
-
-**The only officially supported firmwares in the unlock tool are CrossPoint and CrossInk.**
-
-Flashing any other firmware on a USB-locked device may **permanently brick the device** or leave it **permanently
-stuck on that firmware with no recovery path**. Once USB flashing is re-locked, your only way back is via OTA, and if
-the firmware you flashed doesn't support OTA, **there is no way out**.
-
-**The Papyrix fork has removed OTA update support from its code.** If you flash Papyrix onto a
-USB-locked unit, you will have **zero update or recovery path** and will be stuck on it forever. **Do not flash
-Papyrix (or any other unsupported firmware) on a locked device.**
-
-## Install firmware
-
-### Web installer (recommended)
-
-1. Connect your device to your computer via USB-C and wake/unlock the device
-2. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), and choose an official CrossPoint release.
-
-### Web installer (specific version)
-
-1. Connect your device to your computer via USB-C and wake/unlock the device
-2. Download a `firmware.bin` from [Releases](https://github.com/crosspoint-reader/crosspoint-reader/releases), local build, or continuous integration artifact.
-3. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), click "Custom .bin" and upload a `firmware.bin`.
-
-### Revert to Official Firmware
-
-To revert to the official firmware, you can also flash the latest official firmware using https://crosspointreader.com/#flash-tools.
-
-### Command line
-
-1. Install [`esptool`](https://github.com/espressif/esptool):
-
-> **Note:** These instructions are for macOS and Linux. Windows users should use the [Web installer](#web) instead.
-
-1. Install [`esptool`](https://github.com/espressif/esptool) :
-
-```bash
-pip3 install esptool
-```
-
-2. Download the `carousel-firmware-*.bin` file from the release of your choice via the [releases](https://github.com/chintanvajariya/CrossInk-Carousel/releases)
-3. Connect your Xteink X4 to your computer via USB-C.
-4. Note the device location. On Linux, run `dmesg | grep tty` after connecting. On macOS, run `ls /dev/cu.*` before and after connecting — the new entry is your device (typically `/dev/cu.usbmodem*`).
-
-5. Flash the firmware :
-
-```bash
-# Update the device port with your actual device port (/dev/...) from step 4
-
-# Linux
-esptool.py --chip esp32c3 --port /dev/ttyACM0 --baud 921600 write_flash 0x10000 /path/to/carousel-firmware-tiny-v1.2.8.1.bin
-
-# macOS
-esptool.py --chip esp32c3 --port /dev/cu.usbmodem2101 --baud 921600 write_flash 0x10000 /path/to/carousel-firmware-tiny-v1.2.8.1.bin
-
-# Swap the filename for the variant (tiny / xlarge / no_emoji) and version you downloaded.
-```
-
----
-
-## Documentation
-
-- [User Guide](./USER_GUIDE.md)
-- [Web server usage](./docs/webserver.md)
-- [Web server endpoints](./docs/webserver-endpoints.md)
-- [Project scope](./SCOPE.md)
-- [Contributing docs](./docs/contributing/README.md)
-
----
-
-## Development quick start
-
-### Prerequisites
-
-- **PlatformIO Core** (`pio`) or **VS Code + PlatformIO IDE**
-- Python 3.8+
-- USB-C cable for flashing the ESP32-C3
-- Xteink X4
-
-### Setup
-
-CrossPoint uses PlatformIO for building and flashing the firmware. To get started, clone the repository:
-
-```
-git clone --recursive https://github.com/chintanvajariya/CrossInk-Carousel
-
-# if cloned without --recursive:
-git submodule update --init --recursive
-```
-
-### Build / flash / monitor
-
-Connect your Xteink X4 to your computer via USB-C and run the following command. Replace `tiny` with `xlarge` or `no_emoji` if you prefer a different build variant (see [Font Sizes](#font-sizes)).
-
-```sh
-pio run -e tiny --target upload
-```
-
-### Debugging
-
-After flashing the new features, it’s recommended to capture detailed logs from the serial port.
-
-First, make sure all required Python packages are installed:
-
-```python
-python3 -m pip install pyserial colorama matplotlib
-```
-
-After that run the script:
-
-```sh
-# For Linux
-# This was tested on Debian and should work on most Linux systems.
-python3 scripts/debugging_monitor.py
-
-# For macOS (replace with your device path from ls /dev/cu.*)
-python3 scripts/debugging_monitor.py /dev/cu.usbmodem2101
-```
-
-Minor adjustments may be required for Windows.
-
----
-
-## Internals
-
-The firmware is pretty aggressive about caching data down to the SD card to minimise RAM usage. The ESP32-C3 only
-has ~380KB of usable RAM, so we have to be careful. A lot of the decisions made in the design of the firmware were based
-on this constraint.
-
-### Data caching
-
-The first time chapters of a book are loaded, they are cached to the SD card. Subsequent loads are served from the
-cache. This cache directory exists at `.crosspoint` on the SD card. The structure is as follows:
-
-```
-.crosspoint/
-├── epub_12471232/       # Each EPUB is cached to a subdirectory named `epub_<hash>`
-│   ├── progress.bin     # Stores reading progress (chapter, page, etc.)
-│   ├── stats.bin        # Per-book reading statistics (time, sessions, pages turned)
-│   ├── cover.bmp        # Book cover image (once generated)
-│   ├── book.bin         # Book metadata (title, author, spine, table of contents, etc.)
-│   └── sections/        # All chapter data is stored in the sections subdirectory
-│       ├── 0.bin        # Chapter data (screen count, all text layout info, etc.)
-│       ├── 1.bin        #     files are named by their index in the spine
-│       └── ...
-```
-
-Deleting the `.crosspoint` directory will clear the entire cache.
-
-Due the way it's currently implemented, the cache is not automatically cleared when a book is deleted and moving a book
-file will use a new cache directory, resetting the reading progress.
-
-For more details on the internal file structures, see the [file formats document](./docs/file-formats.md).
+Inherits the upstream MIT license. Third-party code attribution lives in [CHANGELOG.md](./CHANGELOG.md) per-feature.

@@ -16,7 +16,7 @@ void BootActivity::onEnter() {
   renderer.clearScreen();
   renderer.drawImage(Logo120, (pageWidth - 120) / 2, (pageHeight - 120) / 2, 120, 120);
   // Brand text below the ink-drop icon. Switched from STR_CROSSINK
-  // (the upstream firmware's name) to CrumBle — our fork's identity.
+  // (the upstream firmware's name) to CrumBLE — our fork's identity.
   // The icon itself is a generic ink drop with no wordmark, so the
   // visual still works.
   renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 70, tr(STR_CRUMBLE), true, EpdFontFamily::BOLD);

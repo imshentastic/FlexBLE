@@ -39,7 +39,7 @@ class HomeActivity final : public Activity {
   // based on settings, so the index is clamped against menuItemCount
   // each time it's used.
   int lastMenuIndex = 0;
-  // CrumBle Collections — leftmost visible spine index on the bookshelf
+  // CrumBLE Collections — leftmost visible spine index on the bookshelf
   // strip; adjusted when the focused spine would otherwise scroll out of view.
   int shelfScrollOffset = 0;
   // True when the cursor is on the collection-name header (the "Favorites"
@@ -155,7 +155,7 @@ class HomeActivity final : public Activity {
   void loadRecentBooks(int maxBooks);
   void loadAllBookStats();
   void loadRecentCovers(int coverHeight);
-  // CrumBle Collections — generate BMP thumbnails at the bookshelf's exact
+  // CrumBLE Collections — generate BMP thumbnails at the bookshelf's exact
   // cell dimensions for the books that are currently visible on the
   // shelf. Lazy by design: an active collection like "All Books" can
   // have hundreds of entries and eager generation would freeze the UI
@@ -163,7 +163,7 @@ class HomeActivity final : public Activity {
   // window pays the cost; the next batch generates when the user
   // scrolls into uncovered territory.
   void loadShelfCovers(int cellWidth, int cellHeight, int scrollOffset, int visibleCount);
-  // CrumBle Series — runs the OPF series-only parse for every EPUB in
+  // CrumBLE Series — runs the OPF series-only parse for every EPUB in
   // the active collection that hasn't been checked yet (SeriesIndex
   // doesn't know about it). Shows a loading popup since this can take
   // ~50-200 ms per book. Skipped entirely when the active collection
@@ -202,7 +202,7 @@ class HomeActivity final : public Activity {
   // separate menu (vs. the per-book one) so the items always match the
   // collection-level context.
   void showShelfHeaderActionMenu();
-  // CrumBle series — Confirm on a shelf cell. For single-book cells
+  // CrumBLE series — Confirm on a shelf cell. For single-book cells
   // this is just onSelectBook(firstPath). For series cells, opens the
   // most-recently-read member if any is in RECENT_BOOKS; otherwise
   // opens the SeriesMiniPicker.
