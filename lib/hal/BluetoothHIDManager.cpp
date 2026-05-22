@@ -231,6 +231,43 @@ bool BluetoothHIDManager::enable() {
   return true;
 }
 
+bool BluetoothHIDManager::tryEnableIfRequested() {
+  if (!_enableLaterRequested) return false;
+  _enableLaterRequested = false;
+  if (_enabled) return false;  // someone else already brought it back up
+
+  if (!enable()) {
+    LOG_ERR("BT", "tryEnableIfRequested: enable() failed (%s)", lastError.c_str());
+    return false;
+  }
+
+  // checkAutoReconnect() gates on a local button press because in its usual
+  // "remote got out of range / disconnected on its own" scenario the
+  // firmware can't tell whether the user is actively reading or has set
+  // the device down. But this drain path runs after a programmatic
+  // disable() that the user didn't ask for (we dropped BLE around a
+  // heap-heavy re-layout). They expect the remote to resume without
+  // having to wake the reconnect logic with a local button mash, so do
+  // the connect ourselves the same way the reader-menu's manual
+  // "Reconnect bonded" entry would. _bondedDeviceAddress survives the
+  // disable()/enable() cycle (just a std::string on the singleton; we
+  // don't clear it in disable()), so it's still valid here.
+  if (_bondedDeviceAddress.empty()) {
+    LOG_DBG("BT", "tryEnableIfRequested: no bonded device cached; nothing to reconnect");
+    return true;
+  }
+  LOG_INF("BT", "tryEnableIfRequested: reconnecting to bonded device %s", _bondedDeviceAddress.c_str());
+  if (!connectToDevice(_bondedDeviceAddress)) {
+    // Not fatal — the remote might be powered off or out of range. The
+    // user can still hit a local button later to trigger
+    // checkAutoReconnect()'s retry path, or pop into the BT settings
+    // menu and tap Reconnect manually.
+    LOG_INF("BT", "tryEnableIfRequested: bonded reconnect failed (%s); falling back to user-input retry",
+            lastError.c_str());
+  }
+  return true;
+}
+
 bool BluetoothHIDManager::disable() {
   if (!_enabled) {
     LOG_DBG("BT", "Already disabled");

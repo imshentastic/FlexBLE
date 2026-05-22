@@ -76,6 +76,20 @@ public:
     return disable();
   }
 
+  // Deferred enable. Paired with requestDisableLater() for the case where we
+  // temporarily drop BLE around a heap-heavy operation (full chapter
+  // re-layout under font/margin change) and want it back online afterward.
+  //
+  // Drain in the main loop after the heavy operation completes. The drain
+  // re-enables the stack AND triggers a reconnect to the saved bonded
+  // remote (using SETTINGS.bleBondedDeviceAddr — the runtime
+  // _bondedDeviceAddress is not restored across deinit/init), so the user
+  // doesn't have to press a local button to wake checkAutoReconnect. NimBLE
+  // init plus connect can block ~2-3 s; safe to call from main loop
+  // outside any RenderLock.
+  void requestEnableLater() { _enableLaterRequested = true; }
+  bool tryEnableIfRequested();
+
   // Scanning
   void startScan(uint32_t durationMs = 10000);
   void stopScan();
@@ -129,6 +143,7 @@ private:
 
   bool _enabled = false;
   bool _disableLaterRequested = false;
+  bool _enableLaterRequested = false;
   bool _scanning = false;
   std::vector<BluetoothDevice> _discoveredDevices;
   std::vector<ConnectedDevice> _connectedDevices;

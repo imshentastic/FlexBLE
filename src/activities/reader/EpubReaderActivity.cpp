@@ -1119,6 +1119,14 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
                                // doesn't trigger a wasteful section rebuild.
                                const auto* menu = std::get_if<MenuResult>(&result.data);
                                if (menu && menu->settingsChanged) {
+                                 // BLE handling for the re-layout is centralized in render()'s
+                                 // cache-miss path (search for "Cache miss with BLE up"). We
+                                 // don't drop BLE here because (a) inline disable() can
+                                 // deadlock against NimBLE's host task if the remote is
+                                 // actively sending events, and (b) the drawer is just one of
+                                 // many section.reset() call sites — chapter boundaries hit
+                                 // the same problem. Centralizing in render() handles all of
+                                 // them uniformly.
                                  RenderLock lock(*this);
                                  if (section) {
                                    cachedSpineIndex = currentSpineIndex;
@@ -1491,11 +1499,69 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                                   SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
                                   SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
                                   SETTINGS.bionicReadingEnabled, SETTINGS.guideReadingEnabled)) {
+      // Cache miss with BLE up: NimBLE's ~58 KB share has historically
+      // made the parser either return layoutAbortedForLowMemory (good —
+      // the reactive retry path below handles it) or simply hang
+      // mid-page when the malloc pattern fragments badly (bad — watchdog
+      // territory). Drop BLE proactively and defer this build to the next
+      // render pass after the main loop's tryDisableIfRequested() drain
+      // runs. Cheaper than relying on the reactive retry, and works for
+      // *every* cache-miss trigger: font/margin/etc. changes from the
+      // drawer, chapter boundary advances, percent jumps, anything.
+      //
+      // We can't disable() inline here — we hold the RenderLock and
+      // NimBLE teardown can fire callbacks that call requestUpdateAndWait,
+      // which trips the lock-held assertion. Deferred + return is the
+      // safe pattern; the next render iteration finds BLE off and builds
+      // with full heap headroom. bleAutoReEnableAfterReindex brings it
+      // back online + reconnects to the bonded remote after the build.
+      auto& btMgr = BluetoothHIDManager::getInstance();
+      if (btMgr.isEnabled()) {
+        LOG_INF("ERS", "Cache miss with BLE up; dropping BLE and deferring build to next render");
+        btMgr.requestDisableLater();
+        bleAutoReEnableAfterReindex = true;
+        // Reset section back to null. We constructed it above (line ~1495)
+        // and loadSectionFile failed, so it's holding an empty Section
+        // shell. If we don't drop it, the next render iteration's
+        // `if (!section)` short-circuits and the render proceeds with a
+        // zero-page Section — user sees "empty chapter". Resetting ensures
+        // we re-enter the construct+build path next time around.
+        section.reset();
+        requestUpdate();
+        return;
+      }
+
       LOG_DBG("ERS", "Cache not found, building... (free=%u, maxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
-      GUI.drawPopup(renderer, tr(STR_INDEXING));
+      // Animated indexing popup. The parser ticks the callback every
+      // ~250 ms; we cycle the trailing dots so the user sees the system
+      // is alive during the multi-second chapter build instead of
+      // staring at a frozen popup.
+      //
+      // Pre-measure the widest frame ("Indexing...") and pass that as
+      // minTextWidth to every drawPopup call. The box sizes itself once
+      // off the widest frame and stays anchored on the same pixels for
+      // every subsequent tick — without this floor, period vs space
+      // glyph widths differ enough in Inter that the box visibly pulses
+      // wider on the 3-dot frame.
+      char widestBuf[40];
+      snprintf(widestBuf, sizeof(widestBuf), "%s...", tr(STR_INDEXING));
+      const int popupMinTextWidth =
+          renderer.getTextWidth(UI_12_FONT_ID, widestBuf, EpdFontFamily::BOLD);
 
-      const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
+      // Left-anchor the text so "Indexing" stays pinned at a fixed
+      // position and the trailing dots cycle to its right without
+      // visibly shifting the word.
+      GUI.drawPopup(renderer, tr(STR_INDEXING), popupMinTextWidth, /*leftAlignText=*/true);
+
+      const auto popupFn = [this, popupMinTextWidth]() {
+        static uint8_t dotPhase = 0;
+        static constexpr const char* kDots[4] = {"", ".", "..", "..."};
+        dotPhase = (dotPhase + 1) % 4;
+        char buf[40];
+        snprintf(buf, sizeof(buf), "%s%s", tr(STR_INDEXING), kDots[dotPhase]);
+        GUI.drawPopup(renderer, buf, popupMinTextWidth, /*leftAlignText=*/true);
+      };
 
       bool imagesWereSuppressed = false;
       bool layoutAbortedForLowMemory = false;
@@ -1524,8 +1590,22 @@ void EpubReaderActivity::render(RenderLock&& lock) {
           LOG_INF("ERS", "Layout aborted under BLE pressure; dropping BLE and retrying chapter load");
           layoutBleRetryAttempted = true;
           BluetoothHIDManager::getInstance().requestDisableLater();
+          // Same re-enable hook the drawer path uses — once this retry's
+          // section build succeeds, bring BLE back up so the bonded
+          // remote reconnects on the user's next press.
+          bleAutoReEnableAfterReindex = true;
           requestUpdate();
           return;
+        }
+        // Build failed and we already retried (or BLE wasn't the culprit).
+        // Bring BLE back up before bailing so the user doesn't lose their
+        // remote on top of the layout error — checkAutoReconnect() will
+        // resume the bonded link on the next button press once the stack
+        // is enabled again.
+        if (bleAutoReEnableAfterReindex) {
+          bleAutoReEnableAfterReindex = false;
+          LOG_INF("ERS", "Section build failed; requesting BLE re-enable so the remote isn't lost");
+          BluetoothHIDManager::getInstance().requestEnableLater();
         }
         if (layoutAbortedForLowMemory) {
           showLowMemoryLayoutError();
@@ -1539,6 +1619,17 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       // Section parsed successfully — clear the BLE-retry latch so a future
       // failure on a different chapter can also use the retry path.
       layoutBleRetryAttempted = false;
+      // If we dropped BLE around this build (drawer settings change, or the
+      // reactive retry path above), bring it back up now that the heap
+      // pressure is gone. requestEnableLater() defers to the main loop so
+      // NimBLE init doesn't fight the page render that's about to fire.
+      // Once re-enabled, checkAutoReconnect() resumes the bonded link on
+      // the user's next button press.
+      if (bleAutoReEnableAfterReindex) {
+        bleAutoReEnableAfterReindex = false;
+        LOG_INF("ERS", "Section build done; requesting BLE re-enable for bonded remote reconnect");
+        BluetoothHIDManager::getInstance().requestEnableLater();
+      }
 
       if (imagesWereSuppressed) {
         snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s",

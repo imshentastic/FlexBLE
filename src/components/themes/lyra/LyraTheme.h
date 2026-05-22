@@ -74,7 +74,8 @@ class LyraTheme : public BaseTheme {
                            const std::function<bool()>& storeCoverBuffer, const BookReadingStats* stats = nullptr,
                            float progressPercent = -1.0f) const override;
   void drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) const;
-  Rect drawPopup(const GfxRenderer& renderer, const char* message) const override;
+  Rect drawPopup(const GfxRenderer& renderer, const char* message, int minTextWidth = 0,
+                 bool leftAlignText = false) const override;
   void fillPopupProgress(const GfxRenderer& renderer, const Rect& layout, const int progress) const override;
   bool showsFileIcons() const override { return true; }
 
