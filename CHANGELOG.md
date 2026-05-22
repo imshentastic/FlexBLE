@@ -2,6 +2,56 @@
 
 ## [Unreleased]
 
+## [crumble-v2.1.0] - 2026-05-22
+Bug-fix bundle from device testing, plus two default changes. Minor bump
+for the new defaults; everything else is fixes. No upstream version sync
+(still CrossInk 1.2.11.1).
+
+### Changed (defaults — first boot only; existing settings.json wins)
+- **UI theme defaults to Flow** (LYRA_FLOW). The 3D-perspective book
+  carousel is the visual centerpiece of the fork; new users land on it.
+- **Tap Power While Asleep to Cycle defaults to on.** The on-demand
+  sleep-screen cycler is a headline feature; opt-out fits better than
+  opt-in given the small per-cycle battery cost.
+
+### Added
+- **Animated Indexing popup.** The chapter parser ticks the popup every
+  ~250 ms and cycles trailing dots ("Indexing" → "..."). Fixed-width,
+  left-anchored box so it doesn't pulse or shift between frames. Replaces
+  the static popup that looked frozen during multi-second chapter builds.
+
+### Fixed
+- **Book Settings drawer "????"** — the drawer captured pointers into a
+  temporary `getSettingsList()` vector; they dangled after the build loop
+  and got clobbered by later allocations (a font change's heap churn was
+  the reliable trigger), so Line Spacing / Orientation rendered as
+  "????". Now each row's lambda owns a `SettingInfo` copy by value.
+- **Drawer white background** — `storeBwBuffer()` freed the existing BW
+  backup before a malloc that can fail under BLE heap pressure, leaving
+  the drawer to `clearScreen()` over a white page. Now allocates first
+  (preserving the old backup on failure) and the drawer tiers its
+  fallbacks: own snapshot → reader's existing backup → leave the
+  framebuffer as-is. Never clears to white.
+- **Carousel stale cover after Remove from Recent Books** — the handler
+  refreshed the data layer but didn't invalidate the cached carousel
+  frames / shelf snapshot, so the removed cover lingered until the next
+  selector move. Now flushes every relevant cache flag.
+- **BLE indexing hang + no reconnect.** Heavy re-layouts (font/margin
+  change, chapter boundary crossing) ran the parser while NimBLE still
+  held its ~58 KB, which could hang the indexer. Now render()'s
+  cache-miss path drops BLE before any section build and re-enables +
+  reconnects to the bonded remote afterward (via a programmatic
+  connectToDevice that bypasses checkAutoReconnect's local-button gate).
+- **Parser hangs on heavy chapters / rapid Back spam** — added `yield()`
+  per parse chunk so long-running element handlers can't starve the
+  watchdog or the input/activity tasks. Also adds a debug-only per-chunk
+  progress log (compiled out at the production log level).
+- **Position memory** — switching between the shelf and the bottom menu
+  row restores each side's previous position instead of jumping to 0.
+- **Lyra Flow carousel ghosting** — max-size cover-slot clear before each
+  paint, thinned selection border (4 → 2 px), dropped the always-on
+  inner frame so successive scrolls don't leave outline residue.
+
 ## [crumble-v2.0.0] - 2026-05-20
 **Rebrand: FlexBLE → CrumBLE.** The fork's identity changed; major bump to mark v1.x as the FlexBLE era and v2.x as the CrumBLE era. No upstream version sync (still on CrossInk 1.2.11.1).
 
