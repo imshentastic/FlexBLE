@@ -1873,16 +1873,27 @@ void GfxRenderer::freeBwCompressedBackup() {
  * compressed buffer couldn't be allocated or the data overflowed.
  */
 bool GfxRenderer::storeBwBuffer() {
-  if (bwCompressedBackup) {
-    LOG_ERR("GFX", "!! BW backup already stored - freeing previous");
-    freeBwCompressedBackup();
-  }
-
-  bwCompressedBackup = static_cast<uint8_t*>(malloc(MAX_BW_COMPRESSED_SIZE));
-  if (!bwCompressedBackup) {
-    LOG_ERR("GFX", "!! Failed to allocate BW compressed backup (%zu bytes)", MAX_BW_COMPRESSED_SIZE);
+  // Allocate the new buffer BEFORE freeing the existing backup. Under
+  // heap pressure (e.g. NimBLE's ~58 KB share) the malloc can fail, and
+  // we used to free the previous backup unconditionally — which left the
+  // caller with no usable framebuffer snapshot at all. The BookSettings
+  // drawer's onEnter triggers exactly this path: it calls storeBwBuffer
+  // right after the reader's render finished (which left its own backup
+  // around), and a malloc failure used to clobber the reader's backup
+  // and force the drawer to clearScreen(), producing a white background
+  // behind the panel.
+  uint8_t* const newBackup = static_cast<uint8_t*>(malloc(MAX_BW_COMPRESSED_SIZE));
+  if (!newBackup) {
+    LOG_ERR("GFX", "!! Failed to allocate BW compressed backup (%zu bytes); existing backup (if any) preserved",
+            MAX_BW_COMPRESSED_SIZE);
     return false;
   }
+
+  if (bwCompressedBackup) {
+    LOG_DBG("GFX", "BW backup already stored - freeing previous for new snapshot");
+    freeBwCompressedBackup();
+  }
+  bwCompressedBackup = newBackup;
 
   const uint8_t* src = frameBuffer;
   const uint8_t* srcEnd = frameBuffer + frameBufferSize;

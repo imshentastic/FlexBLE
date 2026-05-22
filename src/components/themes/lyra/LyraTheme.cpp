@@ -678,11 +678,15 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
   }
 }
 
-Rect LyraTheme::drawPopup(const GfxRenderer& renderer, const char* message) const {
+Rect LyraTheme::drawPopup(const GfxRenderer& renderer, const char* message, int minTextWidth,
+                          bool leftAlignText) const {
   // Scale y position proportionally to screen height (16.5% from top)
   const int y = static_cast<int>(renderer.getScreenHeight() * 0.165f);
   constexpr int outline = 2;
-  const int textWidth = renderer.getTextWidth(UI_12_FONT_ID, message, EpdFontFamily::REGULAR);
+  const int actualTextWidth = renderer.getTextWidth(UI_12_FONT_ID, message, EpdFontFamily::REGULAR);
+  // minTextWidth floors the box width for stable animated popups (see
+  // BaseTheme::drawPopup for the rationale).
+  const int textWidth = std::max(actualTextWidth, minTextWidth);
   const int textHeight = renderer.getLineHeight(UI_12_FONT_ID);
   const int w = textWidth + popupMarginX * 2;
   const int h = textHeight + popupMarginY * 2;
@@ -692,7 +696,9 @@ Rect LyraTheme::drawPopup(const GfxRenderer& renderer, const char* message) cons
                            Color::White);
   renderer.fillRoundedRect(x, y, w, h, cornerRadius, Color::Black);
 
-  const int textX = x + (w - textWidth) / 2;
+  // Center-align in the (possibly wider) box, OR left-anchor at the
+  // margin for dots-style animations that want the leading word pinned.
+  const int textX = leftAlignText ? (x + popupMarginX) : (x + (w - actualTextWidth) / 2);
   const int textY = y + popupMarginY - 2;
   renderer.drawText(UI_12_FONT_ID, textX, textY, message, false, EpdFontFamily::REGULAR);
   renderer.displayBuffer();
