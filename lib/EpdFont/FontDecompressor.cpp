@@ -190,6 +190,7 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     if (ESP.getMaxAllocHeap() < group.uncompressedSize + 256) {
       LOG_ERR("FDC", "Insufficient contiguous heap (max alloc %u) for hot group %u (%u bytes); skipping",
               ESP.getMaxAllocHeap(), groupIndex, group.uncompressedSize);
+      oomOccurred = true;
       stats.getBitmapTimeUs += micros() - tStart;
       return nullptr;
     }
@@ -227,6 +228,7 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     if (ESP.getMaxAllocHeap() < glyph->dataLength + 256) {
       LOG_ERR("FDC", "Insufficient heap (max alloc %u) for glyph buffer (%u bytes); skipping", ESP.getMaxAllocHeap(),
               glyph->dataLength);
+      oomOccurred = true;
       stats.getBitmapTimeUs += micros() - tStart;
       return nullptr;
     }

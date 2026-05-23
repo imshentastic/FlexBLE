@@ -72,6 +72,12 @@ class EpubReaderActivity final : public Activity {
   // Reader Menu -> Bluetooth to re-enable manually — checkAutoReconnect()
   // refuses to do anything while _enabled is false.
   bool bleAutoReEnableAfterReindex = false;
+  // CrumBLE: set once per book open when a page can't render with a BLE remote
+  // connected (image decode or glyphs starved by NimBLE's ~58 KB). We drop
+  // Bluetooth so the full heap renders the page (images AND text), and show the
+  // explanatory alert only once. Image-heavy books are simply unreadable with a
+  // remote attached on this chip; the user reads with device buttons.
+  bool btDisabledForMemoryThisBook = false;
   enum class BookmarkFeedbackType : uint8_t {
     Added,
     Removed,

@@ -57,6 +57,7 @@ class GfxRenderer {
   RenderMode renderMode;
   Orientation orientation;
   bool fadingFix;
+  mutable bool renderStarved = false;
   uint8_t* frameBuffer = nullptr;
   uint16_t panelWidth = HalDisplay::DISPLAY_WIDTH;
   uint16_t panelHeight = HalDisplay::DISPLAY_HEIGHT;
@@ -168,6 +169,20 @@ class GfxRenderer {
 
   // Fading fix control
   void setFadingFix(const bool enabled) { fadingFix = enabled; }
+
+  // Render-starvation signal. Set when a glyph couldn't be decompressed for OOM
+  // (getGlyphBitmap) or an image failed to decode (ImageBlock::render) — i.e.
+  // the page can't be drawn because contiguous heap is too tight, typically
+  // because a BLE remote (NimBLE ~58 KB) is connected. The reader reads+clears
+  // it after a page render to decide whether to drop Bluetooth for the book so
+  // the full heap is available. markRenderStarved is const (sets a mutable
+  // flag) so the const glyph path can call it.
+  void markRenderStarved() const { renderStarved = true; }
+  bool takeRenderStarved() {
+    const bool starved = renderStarved;
+    renderStarved = false;
+    return starved;
+  }
 
   // Screen ops
   int getScreenWidth() const;

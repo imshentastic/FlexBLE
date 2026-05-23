@@ -45,8 +45,20 @@ class FontDecompressor {
   void resetStats();
   const Stats& getStats() const { return stats; }
 
+  // Set when getBitmap() returns null specifically because a glyph buffer
+  // allocation couldn't be satisfied (OOM) — as opposed to a glyph simply not
+  // existing. Lets the renderer distinguish "starved by memory pressure" (e.g.
+  // a BLE remote holding ~58 KB) from a benign missing glyph. Read+cleared by
+  // consumeOom().
+  bool consumeOom() {
+    const bool v = oomOccurred;
+    oomOccurred = false;
+    return v;
+  }
+
  private:
   Stats stats;
+  bool oomOccurred = false;
   InflateReader inflateReader;
 
   // Page buffers: flat arrays of prewarmed glyph bitmaps with sorted lookup

@@ -1934,7 +1934,32 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const bool needsTextGrayscale = SETTINGS.textAntiAliasing;
   const bool needsAnyGrayscale = needsTextGrayscale || needsImageGrayscale;
 
+  renderer.takeRenderStarved();  // clear stale; capture only this render's failures
   page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+
+  // If this page couldn't render with a BLE remote connected — an image failed
+  // to decode, or glyphs were starved (missing text) — NimBLE's ~58 KB is the
+  // culprit. Image-heavy books are unreadable with a remote attached on this
+  // chip, and silently hiding content (white gaps) is worse than dropping the
+  // remote. Drop Bluetooth for the rest of this book so the full heap is
+  // available, then re-render this page cleanly (images AND text). The user
+  // reads with the device buttons; re-enabling BLE from the reader menu will
+  // just starve again. We return before any display so the broken frame is
+  // never shown — the panel keeps the previous page until the re-render lands.
+  if (BluetoothHIDManager::getInstance().isEnabled() && renderer.takeRenderStarved()) {
+    LOG_INF("ERS", "Page render starved with BLE up; dropping Bluetooth for this book");
+    BluetoothHIDManager::getInstance().requestDisableLater();
+    if (!btDisabledForMemoryThisBook) {
+      btDisabledForMemoryThisBook = true;
+      snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_BT_LOWMEM_TITLE));
+      snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), "%s", tr(STR_BT_LOWMEM_BODY));
+      APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
+      APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
+    }
+    requestUpdate();
+    return;
+  }
+
   renderStatusBar();
   if (pendingBookmarkFeedback) {
     const char* msg = tr(STR_BOOKMARK_ADDED);
