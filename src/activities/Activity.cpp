@@ -3,6 +3,7 @@
 #include <I18n.h>
 
 #include "ActivityManager.h"
+#include "boot_sleep/SleepActivity.h"
 #include "components/UITheme.h"
 
 void Activity::onEnter() { LOG_DBG("ACT", "Entering activity: %s", name.c_str()); }
@@ -16,6 +17,13 @@ RequestUpdateResult Activity::requestUpdateAndWait() { return activityManager.re
 void Activity::onGoHome(HomeMenuItem item) { activityManager.goHome(item); }
 
 void Activity::exitToHomeWithPopup() {
+  // Cache the clean current page for the deep-sleep screensaver-cycle path
+  // BEFORE drawing the "Going home..." popup, so transparent sleep PNGs show
+  // the page (not the popup) behind them when the user cycles screensavers.
+  // Only readers contribute — the cycle background is meant to be a book page.
+  if (canSnapshotForSleepOverlay()) {
+    SleepActivity::snapshotFramebufferForCycle();
+  }
   // FAST_REFRESH (drawPopup's default mode) gives the user instant
   // visual feedback before the activity teardown begins. Without
   // this, the reader's long-tail exit (BLE shutdown, session save,

@@ -334,10 +334,12 @@ void EpubReaderActivity::onEnter() {
 void EpubReaderActivity::onExit() {
   Activity::onExit();
 
-  // Snapshot the framebuffer (still holding the last rendered reader page at
-  // this point) to SD so the deep-sleep cycle path can use it as the background
-  // behind transparent sleep PNGs without needing fonts or the EPUB parser.
-  SleepActivity::snapshotFramebufferForCycle();
+  // NOTE: the deep-sleep cycle cache (last_reader_page.bin) is no longer
+  // snapshotted here. onExit runs AFTER the "Going home..." popup
+  // (exitToHomeWithPopup) has been drawn, which baked that popup into the
+  // cached background that transparent sleep PNGs show through. The clean page
+  // is now captured at the two real exit points before their popups:
+  // exitToHomeWithPopup() (go home) and SleepActivity::onEnter() (sleep).
 
   // BLE is a reader-session-only feature: turn it off whenever the user leaves
   // a book. The actual disable() is deferred to the next main-loop tick because

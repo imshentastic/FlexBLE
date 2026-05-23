@@ -550,6 +550,14 @@ void SleepActivity::onEnter() {
                             APP_STATE.lastSleepFromReader && renderer.storeBwBuffer();
   overlayPageBufferTrusted = overlayPageBufferStored && canSnapshotOverlayBackground;
 
+  // Cache the clean reader page for the deep-sleep screensaver-cycle path BEFORE
+  // the "Entering sleep" popup is drawn over it. Capturing later (the old
+  // reader-onExit snapshot) baked the popup into the cached background that
+  // transparent sleep PNGs show through when the user cycles screensavers.
+  if (APP_STATE.lastSleepFromReader) {
+    snapshotFramebufferForCycle();
+  }
+
   // Show the popup in the reader's orientation when sleep starts from an open book.
   // Reset to portrait afterwards so the sleep screen renderer keeps its existing layout.
   if (APP_STATE.lastSleepFromReader) {
