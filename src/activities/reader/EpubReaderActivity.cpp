@@ -1937,17 +1937,28 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   renderer.takeRenderStarved();  // clear stale; capture only this render's failures
   page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
 
-  // If this page couldn't render with a BLE remote connected — an image failed
-  // to decode, or glyphs were starved (missing text) — NimBLE's ~58 KB is the
-  // culprit. Image-heavy books are unreadable with a remote attached on this
-  // chip, and silently hiding content (white gaps) is worse than dropping the
-  // remote. Drop Bluetooth for the rest of this book so the full heap is
-  // available, then re-render this page cleanly (images AND text). The user
-  // reads with the device buttons; re-enabling BLE from the reader menu will
-  // just starve again. We return before any display so the broken frame is
-  // never shown — the panel keeps the previous page until the re-render lands.
-  if (BluetoothHIDManager::getInstance().isEnabled() && renderer.takeRenderStarved()) {
-    LOG_INF("ERS", "Page render starved with BLE up; dropping Bluetooth for this book");
+  // Note when the BLE remote came up. The connect handshake makes NimBLE grab
+  // its ~58 KB and churn temporary buffers, which briefly spikes heap pressure
+  // — enough to starve a single render even on books that otherwise read fine
+  // with BLE. We ignore starvation during a short post-connect grace window so
+  // we only drop Bluetooth for books that are *genuinely* unrenderable with it.
+  const bool btOn = BluetoothHIDManager::getInstance().isEnabled();
+  if (btOn && !btWasEnabled) btEnabledAtMs = millis();
+  btWasEnabled = btOn;
+  constexpr unsigned long kBtConnectGraceMs = 4000;
+  const bool pastBtConnectGrace = btOn && (millis() - btEnabledAtMs) > kBtConnectGraceMs;
+
+  // If this page still couldn't render with a BLE remote connected past the
+  // grace window — an image failed to decode, or glyphs were starved (missing
+  // text) — NimBLE's ~58 KB is the culprit and this book is genuinely
+  // unrenderable with the remote. Silently hiding content (white gaps) is worse
+  // than dropping the remote, so drop Bluetooth for the rest of this book, then
+  // re-render this page cleanly (images AND text). The user reads with the
+  // device buttons; re-enabling BLE from the reader menu will just starve
+  // again. We return before any display so the broken frame is never shown —
+  // the panel keeps the previous page until the re-render lands.
+  if (pastBtConnectGrace && renderer.takeRenderStarved()) {
+    LOG_INF("ERS", "Page render starved with BLE up past grace; dropping Bluetooth for this book");
     BluetoothHIDManager::getInstance().requestDisableLater();
     if (!btDisabledForMemoryThisBook) {
       btDisabledForMemoryThisBook = true;

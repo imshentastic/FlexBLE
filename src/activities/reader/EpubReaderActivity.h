@@ -78,6 +78,13 @@ class EpubReaderActivity final : public Activity {
   // explanatory alert only once. Image-heavy books are simply unreadable with a
   // remote attached on this chip; the user reads with device buttons.
   bool btDisabledForMemoryThisBook = false;
+  // Post-connect grace tracking for the auto-drop above. NimBLE's connect
+  // handshake briefly spikes heap pressure; a single render in that window can
+  // starve even on books that read fine with BLE. We ignore starvation until
+  // kBtConnectGraceMs after the remote came up, so the auto-drop only fires on
+  // books that stay unrenderable past the transient.
+  unsigned long btEnabledAtMs = 0UL;
+  bool btWasEnabled = false;
   enum class BookmarkFeedbackType : uint8_t {
     Added,
     Removed,
