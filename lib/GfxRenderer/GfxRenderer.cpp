@@ -1872,34 +1872,19 @@ void GfxRenderer::freeBwCompressedBackup() {
  * Returns true if the framebuffer was successfully stored, false if the
  * compressed buffer couldn't be allocated or the data overflowed.
  */
-bool GfxRenderer::storeBwBuffer() {
-  // Allocate the new buffer BEFORE freeing the existing backup. Under
-  // heap pressure (e.g. NimBLE's ~58 KB share) the malloc can fail, and
-  // we used to free the previous backup unconditionally — which left the
-  // caller with no usable framebuffer snapshot at all. The BookSettings
-  // drawer's onEnter triggers exactly this path: it calls storeBwBuffer
-  // right after the reader's render finished (which left its own backup
-  // around), and a malloc failure used to clobber the reader's backup
-  // and force the drawer to clearScreen(), producing a white background
-  // behind the panel.
-  uint8_t* const newBackup = static_cast<uint8_t*>(malloc(MAX_BW_COMPRESSED_SIZE));
-  if (!newBackup) {
-    LOG_ERR("GFX", "!! Failed to allocate BW compressed backup (%zu bytes); existing backup (if any) preserved",
-            MAX_BW_COMPRESSED_SIZE);
-    return false;
-  }
-
-  if (bwCompressedBackup) {
-    LOG_DBG("GFX", "BW backup already stored - freeing previous for new snapshot");
-    freeBwCompressedBackup();
-  }
-  bwCompressedBackup = newBackup;
-
-  const uint8_t* src = frameBuffer;
-  const uint8_t* srcEnd = frameBuffer + frameBufferSize;
-  uint8_t* dst = bwCompressedBackup;
-  uint8_t* dstEnd = bwCompressedBackup + MAX_BW_COMPRESSED_SIZE;
-
+// PackBits-style RLE compression of the framebuffer. When `dst` is non-null
+// the compressed bytes are written to it (the caller must have allocated at
+// least the size returned by a prior count pass); when `dst` is null nothing
+// is written and the function only computes the output size. The byte counts
+// are a pure function of the source contents and identical in both modes, so
+// a count pass and a write pass always agree.
+//
+// Encoding: a control byte then payload.
+//   0x80 | (n-1)  -> run: the next single byte repeated n times (3..128)
+//   (n-1)         -> literal: the next n bytes copied verbatim (1..128)
+static size_t packbitsCompressBw(const uint8_t* src, size_t srcSize, uint8_t* dst) {
+  const uint8_t* const srcEnd = src + srcSize;
+  size_t outSize = 0;
   while (src < srcEnd) {
     // Look ahead for a run of >=3 identical bytes — the break-even point
     // versus encoding them as a literal sequence.
@@ -1910,14 +1895,11 @@ bool GfxRenderer::storeBwBuffer() {
     }
 
     if (runLen >= 3) {
-      if (dst + 2 > dstEnd) {
-        freeBwCompressedBackup();
-        LOG_ERR("GFX", "!! BW backup compression overflow at run (frameOffset=%zu)",
-                static_cast<size_t>(src - frameBuffer));
-        return false;
+      if (dst) {
+        *dst++ = 0x80 | static_cast<uint8_t>(runLen - 1);
+        *dst++ = *src;
       }
-      *dst++ = 0x80 | static_cast<uint8_t>(runLen - 1);
-      *dst++ = *src;
+      outSize += 2;
       src += runLen;
     } else {
       // Literal run — read up to 128 bytes, stopping early if we spot a
@@ -1932,20 +1914,60 @@ bool GfxRenderer::storeBwBuffer() {
         }
         litLen++;
       }
-      if (dst + 1 + litLen > dstEnd) {
-        freeBwCompressedBackup();
-        LOG_ERR("GFX", "!! BW backup compression overflow at literal (frameOffset=%zu)",
-                static_cast<size_t>(src - frameBuffer));
-        return false;
+      if (dst) {
+        *dst++ = static_cast<uint8_t>(litLen - 1);
+        memcpy(dst, src, litLen);
+        dst += litLen;
       }
-      *dst++ = static_cast<uint8_t>(litLen - 1);
-      memcpy(dst, src, litLen);
-      dst += litLen;
+      outSize += 1 + litLen;
       src += litLen;
     }
   }
+  return outSize;
+}
 
-  bwCompressedBackupSize = dst - bwCompressedBackup;
+bool GfxRenderer::storeBwBuffer() {
+  if (!frameBuffer) {
+    LOG_ERR("GFX", "!! storeBwBuffer: no framebuffer");
+    return false;
+  }
+
+  // Two-pass exact-size allocation. Pass 1 measures the compressed size
+  // without writing or allocating; we then allocate exactly that many bytes
+  // and pass 2 fills it. This is the key to reliable grayscale AA while a
+  // Bluetooth remote is connected: a normal text page compresses to only
+  // 2-5 KB, and allocating *that* (rather than the worst-case 32 KB block
+  // the old single-buffer path grabbed up front) succeeds even when NimBLE
+  // (~58 KB) has fragmented the heap and there's no large contiguous span
+  // free. Dense/image pages that exceed the cap still gracefully skip AA.
+  const size_t compressedSize = packbitsCompressBw(frameBuffer, frameBufferSize, nullptr);
+  if (compressedSize == 0 || compressedSize > MAX_BW_COMPRESSED_SIZE) {
+    // Out of bounds (empty, or a page too complex to compress within the
+    // cap). Leave any existing backup intact so the BookSettings drawer's
+    // fallback (restore the reader's previous snapshot) still works.
+    LOG_ERR("GFX", "!! BW backup compressed size %zu out of bounds (cap %zu); skipping grayscale", compressedSize,
+            MAX_BW_COMPRESSED_SIZE);
+    return false;
+  }
+
+  // Allocate the exact-size buffer BEFORE freeing the existing backup, so a
+  // malloc failure preserves the old snapshot for the drawer fallback rather
+  // than clobbering it (which used to leave the drawer painting on white).
+  uint8_t* const newBackup = static_cast<uint8_t*>(malloc(compressedSize));
+  if (!newBackup) {
+    LOG_ERR("GFX", "!! Failed to allocate %zu-byte BW backup; skipping grayscale (existing backup preserved)",
+            compressedSize);
+    return false;
+  }
+
+  // Pass 2: compress for real into the right-sized buffer.
+  packbitsCompressBw(frameBuffer, frameBufferSize, newBackup);
+
+  if (bwCompressedBackup) {
+    freeBwCompressedBackup();
+  }
+  bwCompressedBackup = newBackup;
+  bwCompressedBackupSize = compressedSize;
   LOG_DBG("GFX", "Stored BW buffer compressed: %lu -> %zu bytes (%.1f%%)", static_cast<unsigned long>(frameBufferSize),
           bwCompressedBackupSize, (100.0f * bwCompressedBackupSize) / frameBufferSize);
   return true;

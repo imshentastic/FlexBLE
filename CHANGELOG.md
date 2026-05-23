@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Anti-aliasing now works with a Bluetooth remote connected** (resolves the
+  v2.1.1 known limitation). Two changes:
+  - The BW grayscale-backup buffer is now allocated at the page's *exact*
+    compressed size (two-pass: measure, then allocate) instead of grabbing a
+    32 KB worst-case block up front. A normal text page needs only ~2-5 KB, so
+    the allocation succeeds even with NimBLE fragmenting the heap.
+  - When the backup still can't be allocated on a dense page while BLE is
+    active, the reader falls back to **re-rendering** the B&W page after the
+    grayscale pass instead of restoring from a backup — no backup buffer
+    needed at all. (Includes the display-controller grayscale cleanup, so no
+    ghosting.) Costs one extra render pass, and only while the remote is
+    connected. Net: AA stays on for all pages, with or without the remote.
+
 ## [crumble-v2.1.1] - 2026-05-22
 Patch release. No upstream version sync (still CrossInk 1.2.11.1).
 
