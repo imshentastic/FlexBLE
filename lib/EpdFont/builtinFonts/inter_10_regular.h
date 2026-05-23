@@ -4210,7 +4210,7 @@ static const int8_t inter_10_regularKernMatrix[] = {
        0,    0,    0,    0,    0,    0,    0,    0,  -23,    0,  -23,  -13,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,  -17,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,  -23,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
 };
 
-static const EpdFontData inter_10_regular = {
+static constexpr EpdFontData inter_10_regular = {
     inter_10_regularBitmaps,
     inter_10_regularGlyphs,
     inter_10_regularIntervals,

@@ -16,7 +16,7 @@
 
 namespace {
 constexpr uint32_t TXT_CACHE_MAGIC = 0x54585449;  // "TXTI"
-constexpr uint8_t TXT_CACHE_VERSION = 2;
+constexpr uint8_t TXT_CACHE_VERSION = 3;
 
 float clampProgressPercent(const float progress) { return std::clamp(progress, 0.0f, 100.0f); }
 

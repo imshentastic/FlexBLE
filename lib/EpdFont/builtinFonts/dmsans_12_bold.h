@@ -1762,7 +1762,7 @@ static const EpdLigaturePair dmsans_12_boldLigaturePairs[] = {
     { 0x0066006C, 0xFB02 }, // f l -> U+FB02
 };
 
-static const EpdFontData dmsans_12_bold = {
+static constexpr EpdFontData dmsans_12_bold = {
     dmsans_12_boldBitmaps,
     dmsans_12_boldGlyphs,
     dmsans_12_boldIntervals,

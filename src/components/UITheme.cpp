@@ -76,16 +76,9 @@ void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
       currentMetrics = &LyraFlowMetrics::values;
       break;
     case CrossPointSettings::UI_THEME::LYRA_CAROUSEL:
-#if defined(CROSSINK_ENABLE_LYRA_CAROUSEL) && CROSSINK_ENABLE_LYRA_CAROUSEL
       LOG_DBG("UI", "Using Lyra Carousel theme");
       currentTheme = std::make_unique<LyraCarouselTheme>();
       currentMetrics = &LyraCarouselMetrics::values;
-#else
-      LOG_DBG("UI", "Lyra Carousel theme is disabled; using Lyra theme");
-      SETTINGS.uiTheme = static_cast<uint8_t>(CrossPointSettings::UI_THEME::LYRA);
-      currentTheme = std::make_unique<LyraTheme>();
-      currentMetrics = &LyraMetrics::values;
-#endif
       break;
     case CrossPointSettings::UI_THEME::MINIMAL:
       LOG_DBG("UI", "Using Minimal theme");
@@ -103,6 +96,7 @@ void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
 int UITheme::getNumberOfItemsPerPage(const GfxRenderer& renderer, bool hasHeader, bool hasTabBar, bool hasButtonHints,
                                      bool hasSubtitle, int extraReservedHeight) {
   const ThemeMetrics& metrics = UITheme::getInstance().getMetrics();
+  auto orientation = renderer.getOrientation();
   int reservedHeight = metrics.topPadding;
   if (hasHeader) {
     reservedHeight += metrics.headerHeight + metrics.verticalSpacing;
@@ -110,12 +104,47 @@ int UITheme::getNumberOfItemsPerPage(const GfxRenderer& renderer, bool hasHeader
   if (hasTabBar) {
     reservedHeight += metrics.tabBarHeight;
   }
-  if (hasButtonHints) {
+  if (hasButtonHints && orientation != GfxRenderer::Orientation::LandscapeClockwise &&
+      orientation != GfxRenderer::Orientation::LandscapeCounterClockwise) {
     reservedHeight += metrics.verticalSpacing + metrics.buttonHintsHeight;
   }
   const int availableHeight = renderer.getScreenHeight() - reservedHeight - extraReservedHeight;
   int rowHeight = hasSubtitle ? metrics.listWithSubtitleRowHeight : metrics.listRowHeight;
   return availableHeight / rowHeight;
+}
+
+// Screen area excluding the button hints
+Rect UITheme::getScreenSafeArea(const GfxRenderer& renderer, bool hasFrontButtonHints, bool hasSideButtonHints) {
+  (void)hasSideButtonHints;
+  auto orientation = renderer.getOrientation();
+  const int screenWidth = renderer.getScreenWidth();
+  const int screenHeight = renderer.getScreenHeight();
+  Rect safeArea = Rect{0, 0, screenWidth, screenHeight};
+  switch (orientation) {
+    case GfxRenderer::Orientation::Portrait:
+      if (hasFrontButtonHints) {
+        safeArea.height -= currentMetrics->buttonHintsHeight;
+      }
+      break;
+    case GfxRenderer::Orientation::LandscapeClockwise:
+      if (hasFrontButtonHints) {
+        safeArea.x += currentMetrics->buttonHintsHeight;
+        safeArea.width -= currentMetrics->buttonHintsHeight;
+      }
+      break;
+    case GfxRenderer::Orientation::PortraitInverted:
+      if (hasFrontButtonHints) {
+        safeArea.y += currentMetrics->buttonHintsHeight;
+        safeArea.height -= currentMetrics->buttonHintsHeight;
+      }
+      break;
+    case GfxRenderer::Orientation::LandscapeCounterClockwise:
+      if (hasFrontButtonHints) {
+        safeArea.width -= currentMetrics->buttonHintsHeight;
+      }
+      break;
+  }
+  return safeArea;
 }
 
 std::string UITheme::getCoverThumbPath(const std::string& coverBmpPath, int coverHeight) {
@@ -204,4 +233,11 @@ int UITheme::getProgressBarHeight() {
   const bool showProgressBar =
       SETTINGS.statusBarProgressBar != CrossPointSettings::STATUS_BAR_PROGRESS_BAR::HIDE_PROGRESS;
   return (showProgressBar ? (((SETTINGS.statusBarProgressBarThickness + 1) * 2) + metrics.progressBarMarginTop) : 0);
+}
+
+// Centered text implementation that takes the safe area into account
+void UITheme::drawCenteredText(const GfxRenderer& renderer, Rect screen, int fontId, int y, const char* text,
+                               bool black, EpdFontFamily::Style style) {
+  const int x = screen.x + (screen.width - renderer.getTextWidth(fontId, text, style)) / 2;
+  renderer.drawText(fontId, x, y, text, black, style);
 }

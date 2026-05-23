@@ -21,7 +21,7 @@ class Epub {
   std::string filepath;
   // the base path for items in the EPUB file
   std::string contentBasePath;
-  // Uniq cache key based on filepath
+  // Stable cache path based on filepath
   std::string cachePath;
   // Spine and TOC cache
   std::unique_ptr<BookMetadataCache> bookMetadataCache;
@@ -36,6 +36,7 @@ class Epub {
   std::string lastSeriesName;
   std::string lastSeriesIndex;
 
+  void migrateLegacyCachePath(const std::string& cacheDir) const;
   bool findContentOpfFile(std::string* contentOpfFile) const;
   bool parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata);
   bool parseTocNcxFile() const;
@@ -43,11 +44,9 @@ class Epub {
   void parseCssFiles() const;
 
  public:
-  explicit Epub(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)) {
-    // create a cache key based on the filepath
-    cachePath = cacheDir + "/epub_" + std::to_string(std::hash<std::string>{}(this->filepath));
-  }
+  explicit Epub(std::string filepath, const std::string& cacheDir);
   ~Epub() = default;
+  static std::string cachePathForFilePath(const std::string& filepath, const std::string& cacheDir);
   std::string& getBasePath() { return contentBasePath; }
   bool load(bool buildIfMissing = true, bool skipLoadingCss = false);
   bool clearCache() const;
@@ -83,6 +82,9 @@ class Epub {
   // (width:height) thumbnail width from height; height <= 0 uses the default
   // thumbnail height.
   std::string getThumbBmpPath(int width, int height) const;
+  // Returns a Minimal-style adaptive thumbnail path. Normal cover ratios fill
+  // the requested box; unusual ratios are contained inside the box.
+  std::string getAdaptiveThumbBmpPath(int width, int height) const;
   // Deprecated compatibility wrapper; forwards to generateThumbBmp(0, height).
   [[deprecated("use generateThumbBmp(int width, int height)")]]
   bool generateThumbBmp(int height) const;
@@ -101,6 +103,9 @@ class Epub {
   // caller can render a placeholder cheaply. Non-const because it (re)sets
   // the metadata cache and may run the OPF parse.
   bool generateThumbBmpNoIndex(int width, int height);
+  // Writes a thumbnail that can either crop-to-fill or contain unusual cover
+  // ratios, depending on the source image dimensions.
+  bool generateAdaptiveThumbBmp(int width, int height) const;
   uint8_t* readItemContentsToBytes(const std::string& itemHref, size_t* size = nullptr,
                                    bool trailingNullByte = false) const;
   bool readItemContentsToStream(const std::string& itemHref, Print& out, size_t chunkSize) const;
@@ -120,11 +125,13 @@ class Epub {
   int resolveHrefToSpineIndex(const std::string& href) const;
 
  private:
-  bool generateThumbBmpInternal(int width, int height) const;
+  bool generateThumbBmpInternal(int width, int height, bool adaptiveContain) const;
   // Shared cover-image -> 1-bit BMP conversion used by both the cached
   // (generateThumbBmpInternal) and no-index (generateThumbBmpNoIndex)
   // thumbnail paths. coverImageHref must already be resolved against the
-  // EPUB's content base path. Returns false for empty/unsupported covers.
+  // EPUB's content base path. adaptiveContain selects crop-to-fill vs
+  // contain-unusual-ratios behaviour. Returns false for empty/unsupported
+  // covers.
   bool convertCoverToThumbBmp(const std::string& coverImageHref, const std::string& thumbPath, int width,
-                              int height) const;
+                              int height, bool adaptiveContain = false) const;
 };

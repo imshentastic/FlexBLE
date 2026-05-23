@@ -154,17 +154,19 @@ void HalTiltSensor::update(const uint8_t mode, const uint8_t orientation, const 
     return;
   }
 
-  // State machine: wake up or sleep based on the enabled flag
-  if ((mode != CrossPointTiltPageTurn::TILT_OFF) && !_isAwake) {
+  const bool shouldBeAwake = (mode != CrossPointTiltPageTurn::TILT_OFF) && inReader;
+
+  // State machine: keep the sensor awake only while tilt is enabled in a reader.
+  if (shouldBeAwake && !_isAwake) {
     _isAwake = wake();
     return;
-  } else if ((mode == CrossPointTiltPageTurn::TILT_OFF) && _isAwake) {
+  } else if (!shouldBeAwake && _isAwake) {
     _isAwake = !deepSleep();
     return;
   }
 
-  // If disabled, skip the rest of the polling logic and avoid unnecessary I2C traffic in non-reader activities
-  if ((mode == CrossPointTiltPageTurn::TILT_OFF) || !inReader) {
+  // If disabled or outside a reader, skip polling and avoid unnecessary I2C traffic.
+  if (!shouldBeAwake) {
     return;
   }
 

@@ -32,6 +32,9 @@ const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DIS
                                                               StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM};
 
 namespace {
+constexpr int systemVersionFooterSideMargin = 20;
+constexpr int systemVersionFooterBottomInset = 15;
+
 uint8_t enumDisplayIndexForRawValue(const SettingInfo& setting, uint8_t rawValue) {
   if (setting.enumRawValues.empty()) {
     return rawValue;
@@ -52,6 +55,53 @@ uint8_t enumRawValueForDisplayIndex(const SettingInfo& setting, uint8_t displayI
     return setting.enumRawValues.front();
   }
   return setting.enumRawValues[displayIndex];
+}
+
+void drawCenteredTextLine(const GfxRenderer& renderer, const int pageWidth, const int y, const std::string& text) {
+  const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, text.c_str());
+  const int labelX = (pageWidth - labelWidth) / 2;
+  renderer.drawText(SMALL_FONT_ID, labelX, y, text.c_str());
+}
+
+bool isVersionBreakChar(const char c) { return c == ' ' || c == '-' || c == '+' || c == '.' || c == '_'; }
+
+void drawSystemVersionFooter(const GfxRenderer& renderer, const int pageWidth, const int pageHeight,
+                             const ThemeMetrics& metrics) {
+  const std::string label = "CrossInk " CROSSINK_VERSION;
+  const int maxWidth = pageWidth - systemVersionFooterSideMargin * 2;
+  const int bottomLineY =
+      pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing - systemVersionFooterBottomInset;
+
+  if (renderer.getTextWidth(SMALL_FONT_ID, label.c_str()) <= maxWidth) {
+    drawCenteredTextLine(renderer, pageWidth, bottomLineY, label);
+    return;
+  }
+
+  size_t fallbackBreak = std::string::npos;
+  size_t preferredBreak = std::string::npos;
+  for (size_t i = 1; i < label.size(); i++) {
+    if (!isVersionBreakChar(label[i - 1])) continue;
+
+    const std::string firstLine = label.substr(0, i);
+    if (renderer.getTextWidth(SMALL_FONT_ID, firstLine.c_str()) > maxWidth) break;
+
+    fallbackBreak = i;
+    const std::string secondLine = label.substr(i);
+    if (renderer.getTextWidth(SMALL_FONT_ID, secondLine.c_str()) <= maxWidth) {
+      preferredBreak = i;
+    }
+  }
+
+  const size_t lineBreak = preferredBreak != std::string::npos ? preferredBreak : fallbackBreak;
+  const std::string firstLine = lineBreak == std::string::npos
+                                    ? renderer.truncatedText(SMALL_FONT_ID, label.c_str(), maxWidth)
+                                    : label.substr(0, lineBreak);
+  const std::string secondLine = lineBreak == std::string::npos
+                                     ? ""
+                                     : renderer.truncatedText(SMALL_FONT_ID, label.substr(lineBreak).c_str(), maxWidth);
+  const int lineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  drawCenteredTextLine(renderer, pageWidth, bottomLineY - lineHeight, firstLine);
+  drawCenteredTextLine(renderer, pageWidth, bottomLineY, secondLine);
 }
 }  // namespace
 
@@ -167,6 +217,10 @@ void SettingsActivity::onEnter() {
   // Reset selection to first category
   selectedCategoryIndex = 0;
   selectedSettingIndex = 0;
+  preserveQuickResumeTimeoutOn =
+      SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
+  quickResumeTimeoutAutoEnabled = false;
+  syncQuickResumeTimeoutForSleepScreen(/*sleepScreenChanged=*/true, /*quickResumeTimeoutChanged=*/false);
 
   rebuildSettingsLists();
 
@@ -275,6 +329,8 @@ void SettingsActivity::toggleCurrentSetting() {
   }
 
   const auto& setting = (*currentSettings)[selectedSetting];
+  const bool sleepScreenChanged = setting.valuePtr == &CrossPointSettings::sleepScreen;
+  const bool quickResumeTimeoutChanged = setting.valuePtr == &CrossPointSettings::quickResumeSleepScreen;
 
   if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
     openSleepTimeoutPicker();
@@ -288,7 +344,9 @@ void SettingsActivity::toggleCurrentSetting() {
   } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
     const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
     const uint8_t currentIndex = enumDisplayIndexForRawValue(setting, currentValue);
-    const uint8_t nextIndex = (currentIndex + 1) % static_cast<uint8_t>(setting.enumValues.size());
+    const size_t optionCount = settingEnumOptionCount(setting);
+    if (optionCount == 0) return;
+    const uint8_t nextIndex = (currentIndex + 1) % static_cast<uint8_t>(optionCount);
     SETTINGS.*(setting.valuePtr) = enumRawValueForDisplayIndex(setting, nextIndex);
   } else if (setting.type == SettingType::ENUM && setting.valueGetter && setting.valueSetter) {
     if (setting.nameId == StrId::STR_FONT_FAMILY) {
@@ -300,9 +358,9 @@ void SettingsActivity::toggleCurrentSetting() {
                              });
       return;
     }
-    const uint8_t totalValues = setting.enumStringValues.empty()
-                                    ? static_cast<uint8_t>(setting.enumValues.size())
-                                    : static_cast<uint8_t>(setting.enumStringValues.size());
+    const size_t optionCount = settingEnumOptionCount(setting);
+    if (optionCount == 0) return;
+    const uint8_t totalValues = static_cast<uint8_t>(optionCount);
     const uint8_t cur = setting.valueGetter();
     setting.valueSetter((cur + 1) % totalValues);
   } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
@@ -362,7 +420,31 @@ void SettingsActivity::toggleCurrentSetting() {
     return;
   }
 
+  syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
   SETTINGS.saveToFile();
+}
+
+void SettingsActivity::syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged) {
+  if (quickResumeTimeoutChanged) {
+    preserveQuickResumeTimeoutOn =
+        SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
+    quickResumeTimeoutAutoEnabled = false;
+  }
+
+  if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME) {
+    if (SETTINGS.quickResumeSleepScreen != CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT) {
+      SETTINGS.quickResumeSleepScreen = CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
+      quickResumeTimeoutAutoEnabled = !preserveQuickResumeTimeoutOn;
+    } else if (sleepScreenChanged && !preserveQuickResumeTimeoutOn) {
+      quickResumeTimeoutAutoEnabled = true;
+    }
+    return;
+  }
+
+  if (sleepScreenChanged && quickResumeTimeoutAutoEnabled && !preserveQuickResumeTimeoutOn) {
+    SETTINGS.quickResumeSleepScreen = CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_NEVER;
+    quickResumeTimeoutAutoEnabled = false;
+  }
 }
 
 void SettingsActivity::openSleepTimeoutPicker() {
@@ -415,15 +497,12 @@ void SettingsActivity::render(RenderLock&&) {
         } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
           const uint8_t value = SETTINGS.*(setting.valuePtr);
           const uint8_t displayValue = enumDisplayIndexForRawValue(setting, value);
-          const uint8_t safeValue = displayValue < setting.enumValues.size() ? displayValue : 0;
-          valueText = I18N.get(setting.enumValues[safeValue]);
+          const size_t optionCount = settingEnumOptionCount(setting);
+          const uint8_t safeValue = displayValue < optionCount ? displayValue : 0;
+          valueText = settingEnumOptionLabel(setting, safeValue);
         } else if (setting.type == SettingType::ENUM && setting.valueGetter) {
           const uint8_t value = setting.valueGetter();
-          if (!setting.enumStringValues.empty() && value < setting.enumStringValues.size()) {
-            valueText = setting.enumStringValues[value];
-          } else if (value < setting.enumValues.size()) {
-            valueText = I18N.get(setting.enumValues[value]);
-          }
+          valueText = settingEnumOptionLabel(setting, value);
         } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
           if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
             char valueBuffer[32];

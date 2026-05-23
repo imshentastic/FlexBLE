@@ -1,182 +1,25 @@
 # Changelog
 
-## [Unreleased]
-
-## [crumble-v2.1.2] - 2026-05-22
-Patch release. No upstream version sync (still CrossInk 1.2.11.1).
-
-### Fixed
-- **Anti-aliasing now works with a Bluetooth remote connected** (resolves the
-  v2.1.1 known limitation). Two changes:
-  - The BW grayscale-backup buffer is now allocated at the page's *exact*
-    compressed size (two-pass: measure, then allocate) instead of grabbing a
-    32 KB worst-case block up front. A normal text page needs only ~2-5 KB, so
-    the allocation succeeds even with NimBLE fragmenting the heap.
-  - When the backup still can't be allocated on a dense page while BLE is
-    active, the reader falls back to **re-rendering** the B&W page after the
-    grayscale pass instead of restoring from a backup — no backup buffer
-    needed at all. (Includes the display-controller grayscale cleanup, so no
-    ghosting.) Costs one extra render pass, and only while the remote is
-    connected. Net: AA stays on for all pages, with or without the remote.
-- **Long "Loading" freeze when scrolling a collection of never-opened books**
-  (e.g. Recently Added). Generating a shelf cover thumbnail used to build the
-  book's *entire* spine/TOC index (`book.bin`) just to locate the cover image —
-  and the spine pass alone can run hundreds of ms per manifest item — only to
-  discover many books have no extractable cover. Thumbnail generation now
-  parses just `content.opf` (no spine resolution, no TOC, no `book.bin`), so a
-  coverless book falls back to the placeholder in OPF-parse time instead of
-  freezing the UI. The full index is still built later, when the book is
-  actually opened.
-- **Stuck "Loading" / "Detecting series…" popup over the carousel.** The popup
-  was drawn during a render and then captured into the cached framebuffer
-  snapshot; the carousel/shelf fast-paths restored that snapshot without
-  repainting the carousel, so the popup stayed on screen until you navigated to
-  the carousel. The frame is now flagged when a popup is drawn so the snapshot
-  is skipped and the next render does a clean repaint that erases it.
-- **Carousel reading-progress bar started slightly too wide, then shrank.** The
-  bar tracks the cover width, but on the fast-path render that width was left at
-  the default until the cover bitmap reloaded. The center cover's true
-  dimensions are now read on every render, so the bar is the correct width from
-  the first paint.
-- **Collections now recall their shelf position.** Switching the active
-  collection on the shelf header and switching back used to jump to book 0
-  (while the restored framebuffer still showed your old scroll spot). Each
-  collection's scroll offset + focused book are now remembered and restored, so
-  the visible shelf and the book you land on stay consistent. Resets each home
-  visit.
-
-## [crumble-v2.1.1] - 2026-05-22
-Patch release. No upstream version sync (still CrossInk 1.2.11.1).
-
-### Fixed
-- Home screen no longer flashes/loops when a book in the active collection has
-  an unreadable cover. A thumbnail that fails to generate is now recorded and
-  rendered as a blank cover instead of being retried (and re-popping the
-  "Loading" overlay) on every render.
-
-### Known limitations
-- **Anti-aliasing is unavailable while a Bluetooth remote is connected.** It's
-  a hard RAM ceiling, not a tuning issue: the grayscale AA pass needs a ~32 KB
-  contiguous buffer, and NimBLE holds ~58 KB once a remote is paired, leaving
-  only ~25 KB free — not enough for the AA buffer. So with the remote
-  connected, pages render crisp B&W (no AA); disconnect the remote and AA
-  returns. No buffer size threads the needle: small enough to fit alongside
-  BLE (≤~20 KB) overflows on real text pages, and large enough to hold pages
-  (32 KB) can't be allocated with BLE active (and reserving it permanently
-  starved BLE pairing and froze the device). In short: anti-aliased text OR a
-  Bluetooth page-turner, not both at once.
-
-## [crumble-v2.1.0] - 2026-05-22
-Bug-fix bundle from device testing, plus two default changes. Minor bump
-for the new defaults; everything else is fixes. No upstream version sync
-(still CrossInk 1.2.11.1).
-
-### Changed (defaults — first boot only; existing settings.json wins)
-- **UI theme defaults to Flow** (LYRA_FLOW). The 3D-perspective book
-  carousel is the visual centerpiece of the fork; new users land on it.
-- **Tap Power While Asleep to Cycle defaults to on.** The on-demand
-  sleep-screen cycler is a headline feature; opt-out fits better than
-  opt-in given the small per-cycle battery cost.
+## [v1.3.0] - 2026-05-21
 
 ### Added
-- **Animated Indexing popup.** The chapter parser ticks the popup every
-  ~250 ms and cycles trailing dots ("Indexing" → "..."). Fixed-width,
-  left-anchored box so it doesn't pulse or shift between frames. Replaces
-  the static popup that looked frozen during multi-second chapter builds.
+- Added Back/Cancel support while downloading books from OPDS catalogs.
+- Added a Recent Books long-press menu in both List and Grid views with delete, cache delete, completion, and remove-from-recents actions.
+- Added a Minimal sleep screen option that shows the current book cover and reading progress on a dark background.
+- Added more detailed WiFi connection debug logs for scans, selected networks, status changes, disconnect reasons, and timeouts.
+- Added a 9pt `Itty Bitty` reader font size, plus build flags for omitting Itty Bitty and Large reader font assets in size-constrained firmware variants.
+- Added an in-reader confirmation message when a shortcut turns tilt-to-turn on or off.
 
 ### Fixed
-- **Book Settings drawer "????"** — the drawer captured pointers into a
-  temporary `getSettingsList()` vector; they dangled after the build loop
-  and got clobbered by later allocations (a font change's heap churn was
-  the reliable trigger), so Line Spacing / Orientation rendered as
-  "????". Now each row's lambda owns a `SettingInfo` copy by value.
-- **Drawer white background** — `storeBwBuffer()` freed the existing BW
-  backup before a malloc that can fail under BLE heap pressure, leaving
-  the drawer to `clearScreen()` over a white page. Now allocates first
-  (preserving the old backup on failure) and the drawer tiers its
-  fallbacks: own snapshot → reader's existing backup → leave the
-  framebuffer as-is. Never clears to white.
-- **Carousel stale cover after Remove from Recent Books** — the handler
-  refreshed the data layer but didn't invalidate the cached carousel
-  frames / shelf snapshot, so the removed cover lingered until the next
-  selector move. Now flushes every relevant cache flag.
-- **BLE indexing hang + no reconnect.** Heavy re-layouts (font/margin
-  change, chapter boundary crossing) ran the parser while NimBLE still
-  held its ~58 KB, which could hang the indexer. Now render()'s
-  cache-miss path drops BLE before any section build and re-enables +
-  reconnects to the bonded remote afterward (via a programmatic
-  connectToDevice that bypasses checkAutoReconnect's local-button gate).
-- **Parser hangs on heavy chapters / rapid Back spam** — added `yield()`
-  per parse chunk so long-running element handlers can't starve the
-  watchdog or the input/activity tasks. Also adds a debug-only per-chunk
-  progress log (compiled out at the production log level).
-- **Position memory** — switching between the shelf and the bottom menu
-  row restores each side's previous position instead of jumping to 0.
-- **Lyra Flow carousel ghosting** — max-size cover-slot clear before each
-  paint, thinned selection border (4 → 2 px), dropped the always-on
-  inner frame so successive scrolls don't leave outline residue.
+- Fixed WiFi and OPDS connection-flow edge cases so manual Settings connections show the connected status first, copied or corrupted saved-password files are rejected before use, OPDS retries show loading before requests, and large OPDS feeds fail safely under low memory instead of rebooting.
+- Fixed reader and Home UI polish issues, including landscape status-bar settings, missing Vietnamese labels, File Browser and Lyra Carousel icon alignment, cover thumbnail artifacts, and duplicate Home progress/stat loading.
+- Fixed EPUB cache and low-memory handling by using stable cache folder keys, migrating older cache folders where possible, rebuilding stale section caches, laying out very long text blocks earlier, streaming table fallback content when heap is tight, and clarifying the warning text.
+- Fixed sleep-entry, network, and SD-card font download reliability issues by reusing cached sleep-screen assets, idling OPDS pages normally after load, putting the X3 tilt sensor back to sleep outside the reader, disabling WiFi power saving during transfers, reducing WebDAV stack usage, tolerating longer stalls, retrying interrupted font files, and freeing active reader fonts when needed.
+- Fixed remaining reader service edge cases, including an XTC chapter selector crash on memory-constrained builds, SD-card font size selection, SD-card font-size shortcuts skipping manually installed sizes, and KOReader Sync login compatibility with self-hosted servers that return valid JSON on success.
 
-## [crumble-v2.0.0] - 2026-05-20
-**Rebrand: FlexBLE → CrumBLE.** The fork's identity changed; major bump to mark v1.x as the FlexBLE era and v2.x as the CrumBLE era. No upstream version sync (still on CrossInk 1.2.11.1).
-
-### Changed (rebrand)
-- Project renamed FlexBLE → CrumBLE across all source files, build flags, i18n strings, and boot/sleep screens. `FLEXBLE_VERSION` → `CRUMBLE_VERSION`, `STR_FLEXBLE` → `STR_CRUMBLE`, `flexble_version` → `crumble_version` in `platformio.ini`.
-- New boot/sleep logo: chocolate-chip cookie with a bite taken out, replacing the previous triangle mark. 1-bit silhouette at 120×120 traced from brand reference; generator preserved at `src/images/gen_logo.py`.
-- Local folder renamed `FlexBLE/` → `CrumBLE/`. GitHub repo renamed to match.
-
-### Added (Collections)
-- **Collections system** (Phases 1–3): user-defined book collections backed by `collections.json` on SD. Virtual collections (All Books, Favorites, Recent, Currently Reading, Finished) computed lazily. Long-press Confirm on a book in the shelf to add/remove from collections; long-press on a shelf header for collection-level actions.
-- **Rename + Delete user collections** from the shelf-header action menu (rejected for virtual collections; Favorites refuses delete).
-- **+ New Collection** from any header (including locked virtual ones) — quick entry point for creating a new collection without first navigating to a user collection.
-- **Add/Remove Books** multi-select picker (`AddBooksToCollectionActivity`). Pick books to toggle membership in the active user collection in a single batch.
-- **Per-collection settings** persisted in `collections.json`: `sortMode` (Title / Author / Date Added) and `collapseSeries` (on/off).
-- **Sort menu** (Sort A–Z / Z–A / Author / Date Added) per collection, accessed via long-press on the shelf header. New `SortPickerActivity`.
-
-### Added (Series)
-- Opt-in **series detection** via EPUB metadata (`calibre:series` and OPF series fields). New `SeriesIndex` cache, `ContentOpfParser` series support.
-- **Shelf series collapse**: books in the same series collapse to a single spine glyph. Tap-through opens a mini-picker (`SeriesMiniPickerActivity`) listing the books in the series.
-- **Book metadata viewer** (`BookMetadataViewerActivity`) shows author, series, language, publisher pulled from EPUB OPF.
-- Series detection defaulted **off** in settings; toggling on triggers a one-time scan of the library to populate `SeriesIndex`.
-
-### Added (UX)
-- **Remember last shelf position** when switching to the bottom menu icon row and back.
-- **Remember last menu row position** when switching between menu and shelf.
-- **Carousel ghosting fixes** on the Lyra Flow theme: max-size slot clear before each cover paint, removed always-on inner frame, thinned selection border 4 px → 2 px.
-- **Progress-bar ghost-text fix**: footer pre-clear widened to full page width so adjacent books with different aspect ratios don't leak text.
-- **End-of-book navigation** and **going-home popup** improvements (see commits for details).
-- Header arrows enlarged on the shelf; cover-ghost outline removed during paint to prevent corner-hook artifacts.
-
-### Fixed (Reader stats)
-- **Never lose reading time** on power-off: deep-sleep commit path now flushes the active session segment; idempotent re-commit via `sessionSegmentStartMs` prevents double-counting; the 10 s floor was dropped so very short sessions count. Ported from aalu's reading-stats fix (MIT, attributed).
-
-## [crumble-v1.0.0] - 2026-05-17
-First stable CrumBLE release post-upstream-merge. CrumBLE now uses its own semver (`crumble_version`) independent of upstream CrossInk's versioning. The `crossink_version` field continues to track the upstream sync point (currently 1.2.11.1).
-
-### Added (CrumBLE fork)
-- BLE HID page-turner support. From inside a book, open the reader menu and select **Bluetooth** to pair a Bluetooth remote (e.g. IINE GameBrick) and use its buttons as virtual page-turn keys. Reader-session-only: BLE auto-disables when you exit the book. Pairing is remembered across reboots; enable Bluetooth in a later reader session to auto-reconnect.
-- **BT Quick Connect** action in the Global Book Settings drawer. From inside a book, long-press the menu button → scroll to "BT Quick Connect" → activates BLE and reconnects to the last bonded remote (or launches the pairing UI if no remote is saved). Closes the drawer back to the book on success.
-- After a successful BT connection from the in-book Bluetooth menu, CrumBLE now auto-pops both the BT settings and the reader menu so the user lands straight back in the book — no manual back-tapping required.
-- New "Tap Power While Asleep to Cycle" display setting. When on, a brief power-button tap from sleep picks a fresh random image from `/.sleep` and re-enters deep sleep, instead of waking. Off by default — each cycle costs a boot + e-ink half-refresh worth of battery. Pinned sleep images are skipped in cycle mode (always random).
-- `.png` sleep images (including transparency) are now accepted in **Custom** Sleep Screen mode, not just Page Overlay. Transparent regions compose over the last reader page so a transparent PNG sleep screen reveals book text underneath. On the deep-sleep cycle path (tap-power-while-asleep), the last reader page is restored from a small SD-cached snapshot written when leaving a book.
-- **Global Book Settings** drawer. Long-press the menu button in a book to pop up a bottom-drawer-style quick-settings panel with a "Global Book Settings" tab on top. Lists every reader setting (font, layout, hyphenation, bionic, images, etc.) and uses e-ink fast refresh so toggling is snappy. Closing the drawer re-flows the page immediately when a setting was actually changed; a no-op visit skips the re-layout. Triggered via the existing `longPressMenuAction` setting (default flipped to the new "Book Settings" option). Architecture adapted from [inx by Dave Allie](https://github.com/obijuankenobiii/inx) (MIT).
-- **PackBits-compressed BW backup** for the grayscale anti-aliasing pass. Replaces the chunked 12 × 4 KB lazy allocation with a single 16-32 KB worst-case bounded buffer. Typical reader pages compress to 2-5 KB, dramatically reducing the fragmentation pressure that caused grayscale to fail when BLE was active.
-- Auto-retry on chapter-layout abort: if the parser trips the low-heap floor while BLE is consuming its ~58 KB share, CrumBLE silently drops BLE, retries the layout (now with the extra headroom), and lets the existing auto-reconnect logic re-establish the link on the user's next remote button press.
-
-### Changed (CrumBLE fork)
-- Bluetooth main menu now uses Up/Down labels and binds both side U/D and front L/R to navigation, matching Reader Options and Controls Options conventions.
-- LYRA_FLOW (5-book carousel) preserved as a first-class theme option through the upstream merge. Front Prev/Next iterates within the carousel only; side Up/Down jumps to the menu list and iterates through it, with the carousel staying pinned to the last selected book.
-- Reader setting labels dropped the redundant "Reader" prefix ("Font Family", "Font Size", "Line Spacing", "Screen Margin", "Paragraph Alignment") so they fit better in the drawer.
-- Default `tiny` build now omits the Teensy (8px) font variant to make room for the NimBLE-Arduino BLE stack. Re-enable by removing `OMIT_TEENSY_FONT` from `platformio.ini` if you don't need Bluetooth.
-- EPUB layout heap thresholds relaxed for BLE-paired sessions: text-layout floor 48 → 16 KB free, image-extraction floor 72 → 56 KB free. Brings parser within reach of the heap remaining after NimBLE allocations; failures still degrade gracefully (image extraction falls back to "page rendered without images"; layout aborts trigger the new BLE-disable-and-retry path).
-- BookSettingsDrawer hint area enlarged so the bottom button labels render fully (were clipped against the screen edge at the previous height).
-- Settings → System now displays `CrumBLE x.y.z (CrossInk x.y.z.z)` so both the fork and upstream sync version are visible.
-- Merged upstream CrossInk v1.2.10 and v1.2.11/v1.2.11.1 (see entries below for what those releases brought).
-
-### Fixed (CrumBLE fork)
-- BLE page-turner could hang at chapter boundaries when a release HID frame was dropped (NimBLE task starvation during the heavy section-load render is a common trigger). Subsequent presses were silently filtered out by both the BLE-side `activeInjectedButton` gate and HalGPIO's same-state short-circuit, requiring a book exit/re-enter to recover. Added two backstops: a 2 s max-hold auto-release on virtual buttons (suppressed release edge so no phantom page turn fires), and a force-release of a stuck injection in Game Brick's same-key re-press promotion path.
-- BluetoothSettings used `wasPressed(Confirm)` for action triggers instead of `wasReleased`, causing the Confirm release to leak through pop transitions and re-launch the BT menu from the reader menu underneath. All five action handlers now consistently use `wasReleased`.
-- Reader exit during BLE reconnect: tapping Back impatiently during the 2-3 s connect freeze used to leak the release through to the reader's home-on-back-release handler, exiting the book and auto-disabling BLE. The next Back release is now suppressed when `checkAutoReconnect` blocked for >500 ms.
-- Flow theme home carousel input grammar fixed across the merge — front Prev/Next stays within the carousel, side U/D moves through menu items without dragging the carousel along.
+### Changed
+- Modified upstream "page-as-sleep" behavior into a new `Sleep Screen > Quick Resume` option, which also keeps `Quick Resume on Timeout` on, and renamed the timeout-only toggle.
+- Improved reader and browser menu behavior by moving the Footnotes shortcut above Select Chapter, wrapping long book titles in action menus, and reducing progress-screen repaint work during OPDS and SD font downloads.
 
 ## [v1.2.11.1] - 2026-05-15
 
@@ -185,7 +28,7 @@ First stable CrumBLE release post-upstream-merge. CrumBLE now uses its own semve
 
 ### Fixed
 - Included Lyra Carousel by activating the build flag `DCROSSINK_ENABLE_LYRA_CAROUSEL=1`
-
+---
 ## [v1.2.11] - 2026-05-14
 
 ### Added
@@ -195,12 +38,14 @@ First stable CrumBLE release post-upstream-merge. CrumBLE now uses its own semve
 - Added bookmark cleanup shortcuts: hold Select on a bookmark to delete it, or hold Open on a book in Bookmarks to clear that book's bookmark list.
 - Added a confirmation message after deleting a book's cache from the reader or File Browser.
 - Added a File Browser long-press action for deleting an EPUB or XTC book's cache
+- Added a downloaded-font size range setting so SD-card fonts can use compact, default, or large point-size sets.
 - Added a File Browser long-press action for marking EPUB books as finished or unfinished.
 
 ### Changed
 - Hardened deep sleep entry by shutting WiFi down before waiting for the power button to be released.
 - Raised the web file-transfer filename limit from 100 to 150 bytes so longer uploaded filenames are preserved.
 - Made the in-reader Reader Options menu include the same Reader settings and actions as Settings > Reader.
+- Split SD-card font descriptions and supported languages into separate lines in the font download screen.
 
 ### Fixed
 - Fixed inline EPUB images disappearing in landscape when their bottom edge slightly overlaps the screen margin.
@@ -224,7 +69,6 @@ First stable CrumBLE release post-upstream-merge. CrumBLE now uses its own semve
 ### Changed
 - Reduced Controls settings section spacing so the grouped controls fit better on X3 screens.
 - Made front reader long-press actions trigger when the hold delay is reached while normal page turns still trigger on release.
-
 - Used the fast EPUB spine/TOC indexing path for books with 300+ spine entries so heavily split books build `book.bin` faster on first open.
 - Allowed the web file manager and WebDAV to browse dot-prefixed hidden files when hidden files are enabled, matching the device file browser.
 
@@ -241,7 +85,7 @@ First stable CrumBLE release post-upstream-merge. CrumBLE now uses its own semve
 - Fixed concurrent render/storage crashes by serializing `GfxRenderer` scratch-buffer access, shared SPI bus access, and failed SPI lock cleanup.
 - Fixed Recent Books, EPUB/XTC thumbnail caches, deleted-folder metadata, and XTC cover scaling so cached book data stays in sync and grid covers fill their slots correctly.
 - Fixed simulator build configuration so SDL2 and simulator-provided network/OTA shims compile cleanly.
-
+---
 ## [v1.2.9.1] - 2026-05-03
 
 ### Changed

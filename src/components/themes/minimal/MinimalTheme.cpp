@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 #include <Bitmap.h>
+#include <Epub.h>
+#include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalPowerManager.h>
 #include <HalStorage.h>
@@ -42,9 +44,6 @@ constexpr int kFileBrowserIconSize = 24;
 constexpr int kFileBrowserRowVerticalPadding = 6;
 constexpr int kFileBrowserTextGap = 8;
 constexpr int kFileBrowserValueMaxWidth = 76;
-constexpr int kFileBrowserFolderTextYOffset = 7;
-constexpr int kFileBrowserFolderIconYOffset = 10;
-constexpr int kFileBrowserFolderValueYOffset = 6;
 constexpr int kMenuPanelWidth = 384;
 constexpr int kMenuRowHeight = 64;
 constexpr int kMenuPanelTop = 210;
@@ -60,10 +59,17 @@ int homeButtonHintSelection = -1;
 
 Rect coverRectForScreen(const GfxRenderer& renderer, const Rect& rect) {
   const int coverH = MinimalMetrics::values.homeCoverHeight;
-  const int coverW = static_cast<int>((static_cast<int64_t>(coverH) * 3 + 2) / 5);
+  const int coverW = MinimalMetrics::homeCoverWidth;
   const int coverX = (renderer.getScreenWidth() - coverW) / 2;
   const int coverY = rect.y + kCoverTopOffset;
   return Rect{coverX, coverY, coverW, coverH};
+}
+
+Rect coverImageRectForFrame(const Rect& coverRect) {
+  const int imageW = std::min(coverRect.width, MinimalMetrics::homeCoverImageWidth);
+  const int imageH = std::min(coverRect.height, MinimalMetrics::homeCoverImageHeight);
+  return Rect{coverRect.x + (coverRect.width - imageW) / 2, coverRect.y + (coverRect.height - imageH) / 2, imageW,
+              imageH};
 }
 
 Rect fittedBitmapRect(const Bitmap& bitmap, const Rect& target) {
@@ -79,6 +85,22 @@ Rect fittedBitmapRect(const Bitmap& bitmap, const Rect& target) {
   return Rect{target.x + (target.width - drawnW) / 2, target.y + (target.height - drawnH) / 2, drawnW, drawnH};
 }
 
+std::string coverPathForImageRect(const RecentBook& book, const Rect& imageRect) {
+  if (book.coverBmpPath.empty()) {
+    return {};
+  }
+
+  if (FsHelpers::hasEpubExtension(book.path)) {
+    return Epub(book.path, "/.crosspoint").getAdaptiveThumbBmpPath(imageRect.width, imageRect.height);
+  }
+
+  std::string coverBmpPath = UITheme::getCoverThumbPath(book.coverBmpPath, imageRect.width, imageRect.height);
+  if (coverBmpPath.empty() || !Storage.exists(coverBmpPath.c_str())) {
+    coverBmpPath = UITheme::getCoverThumbPath(book.coverBmpPath, imageRect.height);
+  }
+  return coverBmpPath;
+}
+
 uint8_t selectedQuoteIndex() {
   static bool initialized = false;
   static uint8_t index = 0;
@@ -89,8 +111,12 @@ uint8_t selectedQuoteIndex() {
   return index;
 }
 
+int centeredRowY(const int rowY, const int rowHeight, const int contentHeight) {
+  return rowY + std::max(0, rowHeight - contentHeight) / 2;
+}
+
 void drawProgressBlock(const GfxRenderer& renderer, const Rect& coverRect, const BookReadingStats* stats,
-                       float progressPercent) {
+                       float progressPercent, const bool inverted) {
   if ((stats == nullptr || stats->totalReadingSeconds == 0) && progressPercent < 0.0f) {
     return;
   }
@@ -99,11 +125,12 @@ void drawProgressBlock(const GfxRenderer& renderer, const Rect& coverRect, const
   const int barX = coverRect.x;
   const int durationY = coverRect.y + coverRect.height + kProgressBlockGap;
   const int barY = durationY + renderer.getLineHeight(UI_10_FONT_ID) + kProgressBarGap;
+  const bool textBlack = !inverted;
 
   if (stats != nullptr && stats->totalReadingSeconds > 0) {
     char duration[32];
     BookReadingStats::formatDuration(stats->totalReadingSeconds, duration, sizeof(duration));
-    renderer.drawText(UI_10_FONT_ID, barX, durationY, duration);
+    renderer.drawText(UI_10_FONT_ID, barX, durationY, duration, textBlack);
   }
 
   if (progressPercent < 0.0f) {
@@ -112,15 +139,23 @@ void drawProgressBlock(const GfxRenderer& renderer, const Rect& coverRect, const
 
   const int progress = std::clamp(static_cast<int>(progressPercent + 0.5f), 0, 100);
   const int fillW = (barW * progress) / 100;
-  renderer.fillRectDither(barX, barY, barW, kProgressBarHeight, Color::LightGray);
-  if (fillW > 0) {
-    renderer.fillRectDither(barX, barY, fillW, kProgressBarHeight, Color::DarkGray);
+  if (inverted) {
+    renderer.drawRect(barX, barY, barW, kProgressBarHeight, false);
+    if (fillW > 0) {
+      renderer.fillRect(barX, barY, fillW, kProgressBarHeight, false);
+    }
+  } else {
+    renderer.fillRectDither(barX, barY, barW, kProgressBarHeight, Color::LightGray);
+    if (fillW > 0) {
+      renderer.fillRectDither(barX, barY, fillW, kProgressBarHeight, Color::DarkGray);
+    }
   }
 
   char progressLabel[12];
   snprintf(progressLabel, sizeof(progressLabel), "%d%%", progress);
   const int labelW = renderer.getTextWidth(UI_10_FONT_ID, progressLabel);
-  renderer.drawText(UI_10_FONT_ID, barX + barW - labelW, barY + kProgressBarHeight + kProgressLabelGap, progressLabel);
+  renderer.drawText(UI_10_FONT_ID, barX + barW - labelW, barY + kProgressBarHeight + kProgressLabelGap, progressLabel,
+                    textBlack);
 }
 
 void drawMissingBookCover(const GfxRenderer& renderer, const Rect& coverRect, const RecentBook& book) {
@@ -177,6 +212,39 @@ void drawMissingBookCover(const GfxRenderer& renderer, const Rect& coverRect, co
       renderer.drawText(UI_10_FONT_ID, placeholderRect.x + (placeholderRect.width - lineW) / 2, textY, line.c_str());
       textY += authorLineHeight;
     }
+  }
+}
+
+void drawBookCover(const GfxRenderer& renderer, const Rect& coverRect, const RecentBook& book,
+                   const Color backgroundColor) {
+  bool hasCover = false;
+  if (!book.coverBmpPath.empty()) {
+    const Rect imageRect = coverImageRectForFrame(coverRect);
+    const std::string coverBmpPath = coverPathForImageRect(book, imageRect);
+    if (!coverBmpPath.empty() && Storage.exists(coverBmpPath.c_str())) {
+      FsFile file;
+      if (Storage.openFileForRead("HOME", coverBmpPath, file)) {
+        Bitmap bitmap(file);
+        if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+          const Rect bitmapRect = fittedBitmapRect(bitmap, imageRect);
+          renderer.fillRoundedRect(coverRect.x, coverRect.y, coverRect.width, coverRect.height, kCoverCornerRadius,
+                                   backgroundColor);
+          renderer.fillRoundedRect(bitmapRect.x, bitmapRect.y, bitmapRect.width, bitmapRect.height, kCoverCornerRadius,
+                                   Color::White);
+          renderer.drawBitmap(bitmap, bitmapRect.x, bitmapRect.y, bitmapRect.width, bitmapRect.height);
+          renderer.maskRoundedRectOutsideCorners(bitmapRect.x, bitmapRect.y, bitmapRect.width, bitmapRect.height,
+                                                 kCoverCornerRadius, backgroundColor);
+          renderer.drawRoundedRect(bitmapRect.x, bitmapRect.y, bitmapRect.width, bitmapRect.height, 1,
+                                   kCoverCornerRadius, true);
+          hasCover = true;
+        }
+        file.close();
+      }
+    }
+  }
+
+  if (!hasCover) {
+    drawMissingBookCover(renderer, coverRect, book);
   }
 }
 }  // namespace
@@ -328,22 +396,21 @@ void MinimalTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCoun
 
     const uint8_t* iconBitmap = iconForName(rowIcon(i), kFileBrowserIconSize);
     if (iconBitmap != nullptr) {
-      const int iconY =
-          folderRow ? itemY + kFileBrowserFolderIconYOffset : itemY + (rowHeight - kFileBrowserIconSize) / 2;
+      const int iconY = centeredRowY(itemY, rowHeight, kFileBrowserIconSize);
       renderer.drawIcon(iconBitmap, iconX, iconY, kFileBrowserIconSize, kFileBrowserIconSize);
     }
 
     const int maxTitleLines = folderRow ? 1 : 2;
     auto lines = renderer.wrappedText(UI_10_FONT_ID, rowTitle(i).c_str(), textWidth, maxTitleLines);
     const int textBlockHeight = static_cast<int>(lines.size()) * lineHeight;
-    int textY = folderRow ? itemY + kFileBrowserFolderTextYOffset : itemY + (rowHeight - textBlockHeight) / 2;
+    int textY = centeredRowY(itemY, rowHeight, textBlockHeight);
     for (const auto& line : lines) {
       renderer.drawText(UI_10_FONT_ID, textX, textY, line.c_str(), true);
       textY += lineHeight;
     }
 
     if (!valueText.empty()) {
-      const int valueY = folderRow ? itemY + kFileBrowserFolderValueYOffset : itemY + (rowHeight - lineHeight) / 2;
+      const int valueY = centeredRowY(itemY, rowHeight, lineHeight);
       renderer.drawText(UI_10_FONT_ID, rect.x + contentWidth - MinimalMetrics::values.contentSidePadding - valueWidth,
                         valueY, valueText.c_str(), true);
     }
@@ -435,39 +502,23 @@ void MinimalTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const s
   }
 
   if (!coverRendered) {
-    bool hasCover = false;
-    const RecentBook& book = recentBooks[0];
-    if (!book.coverBmpPath.empty()) {
-      std::string coverBmpPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverRect.width, coverRect.height);
-      if (coverBmpPath.empty() || !Storage.exists(coverBmpPath.c_str())) {
-        coverBmpPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverRect.height);
-      }
-      FsFile file;
-      if (Storage.openFileForRead("HOME", coverBmpPath, file)) {
-        Bitmap bitmap(file);
-        if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-          const Rect bitmapRect = fittedBitmapRect(bitmap, coverRect);
-          renderer.fillRoundedRect(coverRect.x, coverRect.y, coverRect.width, coverRect.height, kCoverCornerRadius,
-                                   Color::White);
-          renderer.drawBitmap(bitmap, bitmapRect.x, bitmapRect.y, bitmapRect.width, bitmapRect.height);
-          renderer.maskRoundedRectOutsideCorners(bitmapRect.x, bitmapRect.y, bitmapRect.width, bitmapRect.height,
-                                                 kCoverCornerRadius);
-          renderer.drawRoundedRect(bitmapRect.x, bitmapRect.y, bitmapRect.width, bitmapRect.height, 1,
-                                   kCoverCornerRadius, true);
-          hasCover = true;
-        }
-        file.close();
-      }
-    }
-
-    if (!hasCover) {
-      drawMissingBookCover(renderer, coverRect, recentBooks[0]);
-    }
+    drawBookCover(renderer, coverRect, recentBooks[0], Color::White);
     coverBufferStored = storeCoverBuffer();
     coverRendered = coverBufferStored;
   }
 
-  drawProgressBlock(renderer, coverRect, stats, progressPercent);
+  drawProgressBlock(renderer, coverRect, stats, progressPercent, false);
+}
+
+void MinimalTheme::drawSleepScreen(const GfxRenderer& renderer, const RecentBook& book, const BookReadingStats* stats,
+                                   const float progressPercent) const {
+  renderer.clearScreen(0x00);
+
+  const Rect contentRect{0, MinimalMetrics::values.homeTopPadding, renderer.getScreenWidth(),
+                         MinimalMetrics::values.homeCoverTileHeight};
+  const Rect coverRect = coverRectForScreen(renderer, contentRect);
+  drawBookCover(renderer, coverRect, book, Color::Black);
+  drawProgressBlock(renderer, coverRect, stats, progressPercent, true);
 }
 
 void MinimalTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,

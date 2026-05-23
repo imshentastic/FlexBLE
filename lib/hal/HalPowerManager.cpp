@@ -22,7 +22,7 @@ void disableWiFiBeforeDeepSleep() {
     WiFi.softAPdisconnect(true);
   }
   if (wifiMode & WIFI_MODE_STA) {
-    WiFi.disconnect(false);
+    WiFi.disconnect(true);
   }
   delay(30);
   WiFi.mode(WIFI_OFF);
@@ -88,7 +88,29 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
     delay(50);
     gpio.update();
   }
+
+#ifdef ENABLE_SERIAL_LOG
+  // Tear down HWCDC so the host sees a clean disconnect and the peripheral
+  // doesn't hold power domains that interfere with USB-powered GPIO wake.
+  // logSerial is the raw HWCDC reference; Serial is the MySerialImpl proxy
+  // (which doesn't expose end()).
+  logSerial.end();
+#endif
+
+  // Pre-sleep routines from the original firmware
+  // GPIO13 is connected to battery latch MOSFET, we need to make sure it's low during sleep
+  // Note that this means the MCU will be completely powered off during sleep, including RTC
+  constexpr gpio_num_t GPIO_SPIWP = GPIO_NUM_13;
+  gpio_set_direction(GPIO_SPIWP, GPIO_MODE_OUTPUT);
+  gpio_set_level(GPIO_SPIWP, 0);
+  esp_sleep_config_gpio_isolate();
+  gpio_deep_sleep_hold_en();
+  gpio_hold_en(GPIO_SPIWP);
+  pinMode(InputManager::POWER_BUTTON_PIN, INPUT_PULLUP);
   // Arm the wakeup trigger *after* the button is released
+  // Note: this is only useful for waking up on USB power. On battery, the MCU will be completely powered off, so the
+  // power button is hard-wired to briefly provide power to the MCU, waking it up regardless of the wakeup source
+  // configuration
   esp_deep_sleep_enable_gpio_wakeup(1ULL << InputManager::POWER_BUTTON_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
   // Enter Deep Sleep
   esp_deep_sleep_start();

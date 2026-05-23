@@ -15,6 +15,11 @@
 #define LEXENDDECA_8_FONT_ID (-2007827299)
 #endif
 #ifdef OMIT_EMOJI_FONTS
+#define LEXENDDECA_9_FONT_ID (-2008194964)
+#else
+#define LEXENDDECA_9_FONT_ID (1036661063)
+#endif
+#ifdef OMIT_EMOJI_FONTS
 #define LEXENDDECA_10_FONT_ID (-1178760654)
 #else
 #define LEXENDDECA_10_FONT_ID (-833446840)
@@ -50,6 +55,11 @@
 #define CHAREINK_8_FONT_ID (-2129730116)
 #endif
 #ifdef OMIT_EMOJI_FONTS
+#define CHAREINK_9_FONT_ID (1442685477)
+#else
+#define CHAREINK_9_FONT_ID (-209223555)
+#endif
+#ifdef OMIT_EMOJI_FONTS
 #define CHAREINK_10_FONT_ID (2016565087)
 #else
 #define CHAREINK_10_FONT_ID (-1653202343)
@@ -83,6 +93,11 @@
 #define BITTER_8_FONT_ID (396692004)
 #else
 #define BITTER_8_FONT_ID (954763661)
+#endif
+#ifdef OMIT_EMOJI_FONTS
+#define BITTER_9_FONT_ID (-1611440024)
+#else
+#define BITTER_9_FONT_ID (-947908170)
 #endif
 #ifdef OMIT_EMOJI_FONTS
 #define BITTER_10_FONT_ID (-1655643523)
@@ -129,6 +144,7 @@ static_assert(NOTOSYMBOLS_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(NOTOSYMBOLS_14_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(NOTOSYMBOLS_16_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(LEXENDDECA_8_FONT_ID != 0, "Font ID collision with sentinel");
+static_assert(LEXENDDECA_9_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(LEXENDDECA_10_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(LEXENDDECA_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(LEXENDDECA_14_FONT_ID != 0, "Font ID collision with sentinel");
@@ -136,6 +152,7 @@ static_assert(LEXENDDECA_16_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(LEXENDDECA_18_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(LEXENDDECA_20_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(CHAREINK_8_FONT_ID != 0, "Font ID collision with sentinel");
+static_assert(CHAREINK_9_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(CHAREINK_10_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(CHAREINK_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(CHAREINK_14_FONT_ID != 0, "Font ID collision with sentinel");
@@ -143,6 +160,7 @@ static_assert(CHAREINK_16_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(CHAREINK_18_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(CHAREINK_20_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(BITTER_8_FONT_ID != 0, "Font ID collision with sentinel");
+static_assert(BITTER_9_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(BITTER_10_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(BITTER_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(BITTER_14_FONT_ID != 0, "Font ID collision with sentinel");

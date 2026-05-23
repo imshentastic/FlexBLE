@@ -166,7 +166,7 @@ static const EpdFontGroup notoemoji_16_mediumGroups[] = {
     { 1034, 568, 2493, 8, 20 },
 };
 
-static const EpdFontData notoemoji_16_medium = {
+static constexpr EpdFontData notoemoji_16_medium = {
     notoemoji_16_mediumBitmaps,
     notoemoji_16_mediumGlyphs,
     notoemoji_16_mediumIntervals,

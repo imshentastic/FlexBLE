@@ -5,12 +5,6 @@
 
 #include "CrossPointSettings.h"
 
-static uint8_t fontSizeEnumFromSettings() {
-  uint8_t e = SETTINGS.fontSize;
-  if (e >= CrossPointSettings::FONT_SIZE_COUNT) e = 1;  // default to MEDIUM
-  return e;
-}
-
 void SdCardFontSystem::begin(GfxRenderer& renderer) {
   registry_.discover();
 
@@ -25,7 +19,7 @@ void SdCardFontSystem::begin(GfxRenderer& renderer) {
   if (SETTINGS.sdFontFamilyName[0] != '\0') {
     const auto* family = registry_.findFamily(SETTINGS.sdFontFamilyName);
     if (family) {
-      if (manager_.loadFamily(*family, renderer, fontSizeEnumFromSettings())) {
+      if (manager_.loadFamily(*family, renderer, SETTINGS.getSdFontTargetPointSize(), SETTINGS.fontSize)) {
         LOG_DBG("SDFS", "Loaded SD card font family: %s", SETTINGS.sdFontFamilyName);
       } else {
         LOG_ERR("SDFS", "Failed to load SD font family: %s (clearing)", SETTINGS.sdFontFamilyName);
@@ -53,7 +47,8 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
 
   const char* wantedFamily = SETTINGS.sdFontFamilyName;
   const std::string& currentFamily = manager_.currentFamilyName();
-  const uint8_t sizeEnum = fontSizeEnumFromSettings();
+  const uint8_t targetPointSize = SETTINGS.getSdFontTargetPointSize();
+  const uint8_t sizeStep = SETTINGS.fontSize;
 
   if (wantedFamily[0] == '\0') {
     if (!currentFamily.empty()) {
@@ -74,13 +69,11 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
       SETTINGS.sdFontFamilyName[0] = '\0';
       return;
     }
-    auto sizes = family->availableSizes();
-    uint8_t idx = sizeEnum;
-    if (idx >= sizes.size()) idx = sizes.size() - 1;
-    uint8_t wantedPt = sizes.empty() ? 0 : sizes[idx];
+    const auto* wantedFile = family->selectFile(targetPointSize, sizeStep);
+    uint8_t wantedPt = wantedFile ? wantedFile->pointSize : 0;
     if (!registryWasDirty && wantedPt == manager_.currentPointSize()) return;
-    LOG_DBG("SDFS", "Reloading %s: size %u -> %u (enum %u)%s", wantedFamily, manager_.currentPointSize(), wantedPt,
-            sizeEnum, registryWasDirty ? " [registry dirty]" : "");
+    LOG_DBG("SDFS", "Reloading %s: size %u -> %u (target %u step %u)%s", wantedFamily, manager_.currentPointSize(),
+            wantedPt, targetPointSize, sizeStep, registryWasDirty ? " [registry dirty]" : "");
   }
 
   if (!currentFamily.empty()) {
@@ -89,7 +82,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
 
   const auto* family = registry_.findFamily(wantedFamily);
   if (family) {
-    if (manager_.loadFamily(*family, renderer, sizeEnum)) {
+    if (manager_.loadFamily(*family, renderer, targetPointSize, sizeStep)) {
       LOG_DBG("SDFS", "Loaded SD font family: %s", wantedFamily);
     } else {
       LOG_ERR("SDFS", "Failed to load SD font family: %s (clearing)", wantedFamily);
@@ -101,9 +94,41 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
   }
 }
 
+void SdCardFontSystem::releaseLoadedFont(GfxRenderer& renderer) {
+  if (manager_.currentFamilyName().empty()) return;
+
+  const std::string familyName = manager_.currentFamilyName();
+  (void)familyName;
+  manager_.unloadAll(renderer);
+  LOG_DBG("SDFS", "Released SD card font before low-memory operation: %s", familyName.c_str());
+}
+
 int SdCardFontSystem::resolveFontId(const char* familyName, uint8_t /*fontSizeEnum*/) const {
   // The manager loads exactly one size (closest to SETTINGS.fontSize), so the
   // enum is implicit — always return the single loaded font ID for this family.
   // ensureLoaded() must have been called with the current settings before this.
   return manager_.getFontId(familyName);
+}
+
+bool SdCardFontSystem::changeReaderFontSize(const bool larger) {
+  refreshIfDirty();
+
+  if (SETTINGS.sdFontFamilyName[0] != '\0') {
+    const auto* family = registry_.findFamily(SETTINGS.sdFontFamilyName);
+    if (family) {
+      const auto sizes = family->availableSizes();
+      if (sizes.size() > 1) {
+        uint8_t current = SETTINGS.fontSize < sizes.size() ? SETTINGS.fontSize : static_cast<uint8_t>(sizes.size() - 1);
+        if (larger) {
+          current = static_cast<uint8_t>((current + 1) % sizes.size());
+        } else {
+          current = current == 0 ? static_cast<uint8_t>(sizes.size() - 1) : static_cast<uint8_t>(current - 1);
+        }
+        SETTINGS.fontSize = current;
+        return true;
+      }
+    }
+  }
+
+  return SETTINGS.changeReaderFontSize(larger);
 }

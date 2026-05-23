@@ -6,28 +6,32 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <PNGdec.h>
-#include <Txt.h>
-#include <Xtc.h>
 
 #include <algorithm>
-#include <functional>
+#include <cstdint>
 #include <new>
 
+#include "../home/RecentBookProgress.h"
 #include "../reader/BookStatsView.h"
 #include "../reader/EpubReaderActivity.h"
 #include "../reader/TxtReaderActivity.h"
 #include "../reader/XtcReaderActivity.h"
+#include "AppVersion.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "RecentBooksStore.h"
+#include "SleepCoverAssets.h"
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
+#include "components/themes/minimal/MinimalTheme.h"
 #include "fontIds.h"
 #include "images/Logo120.h"
+#include "images/MoonIcon.h"
 
 namespace {
 
 constexpr bool TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH = true;
+constexpr int sleepBuildInfoSideMargin = 20;
 
 // Snapshot of the last reader-rendered framebuffer, written on EpubReaderActivity::onExit
 // and read by cycleScreensaverFromDeepSleep so the cold-boot cycle path can show the last
@@ -379,6 +383,30 @@ std::string recentTitleForPath(const std::string& path) {
   return book == books.end() ? std::string{} : book->title;
 }
 
+RecentBook recentBookForPath(const std::string& path) {
+  const auto& books = RECENT_BOOKS.getBooks();
+  const auto book =
+      std::find_if(books.begin(), books.end(), [&path](const RecentBook& candidate) { return candidate.path == path; });
+  if (book != books.end()) {
+    return *book;
+  }
+
+  RecentBook loadedBook = RECENT_BOOKS.getDataFromBook(path);
+  if (loadedBook.title.empty()) {
+    loadedBook.title = filenameFromPath(path);
+  }
+  return loadedBook;
+}
+
+std::string epubCachePathFor(const std::string& path) { return Epub::cachePathForFilePath(path, "/.crosspoint"); }
+
+BookReadingStats loadBookStatsForPath(const std::string& path) {
+  if (!FsHelpers::hasEpubExtension(path)) {
+    return BookReadingStats{};
+  }
+  return BookReadingStats::load(epubCachePathFor(path));
+}
+
 enum class OverlayDrawResult : uint8_t { NotFound, Drawn, Failed };
 
 enum class SleepImageMode : uint8_t { Custom, Overlay };
@@ -509,6 +537,15 @@ bool selectRandomSleepImage(SleepImageMode /*mode*/, SleepImageSelection& select
 void SleepActivity::onEnter() {
   Activity::onEnter();
 
+  const bool renderQuickResume =
+      SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
+      (fromTimeout &&
+       SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
+
+  if (renderQuickResume) {
+    return renderLastScreenSleepScreen();
+  }
+
   overlayPageBufferStored = SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY &&
                             APP_STATE.lastSleepFromReader && renderer.storeBwBuffer();
   overlayPageBufferTrusted = overlayPageBufferStored && canSnapshotOverlayBackground;
@@ -540,6 +577,8 @@ void SleepActivity::onEnter() {
       return renderOverlaySleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::READING_STATS_SLEEP):
       return renderReadingStatsSleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::MINIMAL_SLEEP):
+      return renderMinimalSleepScreen();
     default:
       return renderDefaultSleepScreen();
   }
@@ -600,9 +639,17 @@ void SleepActivity::renderDefaultSleepScreen() const {
   renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 95, tr(STR_SLEEPING));
 
   // Make sleep screen dark unless light is selected in settings
-  if (SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT) {
+  const bool lightSleepScreen = SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT;
+  if (!lightSleepScreen) {
     renderer.invertScreen();
   }
+
+#ifdef CROSSINK_SHOW_SLEEP_BUILD_INFO
+  const std::string buildInfo = std::string(CROSSINK_BUILD_ENV) + " " + CROSSINK_VERSION;
+  const std::string visibleBuildInfo =
+      renderer.truncatedText(SMALL_FONT_ID, buildInfo.c_str(), pageWidth - sleepBuildInfoSideMargin * 2);
+  renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 118, visibleBuildInfo.c_str(), lightSleepScreen);
+#endif
 
   renderer.displayBuffer(HalDisplay::HALF_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
 }
@@ -682,58 +729,14 @@ void SleepActivity::renderCoverSleepScreen() const {
       break;
   }
 
-  if (APP_STATE.openEpubPath.empty()) {
+  const std::string& path = currentBookPath.empty() ? APP_STATE.openEpubPath : currentBookPath;
+  if (path.empty()) {
     return (this->*renderNoCoverSleepScreen)();
   }
 
-  std::string coverBmpPath;
   bool cropped = SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP;
-
-  // Check if the current book is XTC, TXT, or EPUB
-  if (FsHelpers::hasXtcExtension(APP_STATE.openEpubPath)) {
-    // Handle XTC file
-    Xtc lastXtc(APP_STATE.openEpubPath, "/.crosspoint");
-    if (!lastXtc.load()) {
-      LOG_ERR("SLP", "Failed to load last XTC");
-      return (this->*renderNoCoverSleepScreen)();
-    }
-
-    if (!lastXtc.generateCoverBmp()) {
-      LOG_ERR("SLP", "Failed to generate XTC cover bmp");
-      return (this->*renderNoCoverSleepScreen)();
-    }
-
-    coverBmpPath = lastXtc.getCoverBmpPath();
-  } else if (FsHelpers::hasTxtExtension(APP_STATE.openEpubPath)) {
-    // Handle TXT file - looks for cover image in the same folder
-    Txt lastTxt(APP_STATE.openEpubPath, "/.crosspoint");
-    if (!lastTxt.load()) {
-      LOG_ERR("SLP", "Failed to load last TXT");
-      return (this->*renderNoCoverSleepScreen)();
-    }
-
-    if (!lastTxt.generateCoverBmp()) {
-      LOG_ERR("SLP", "No cover image found for TXT file");
-      return (this->*renderNoCoverSleepScreen)();
-    }
-
-    coverBmpPath = lastTxt.getCoverBmpPath();
-  } else if (FsHelpers::hasEpubExtension(APP_STATE.openEpubPath)) {
-    // Handle EPUB file
-    Epub lastEpub(APP_STATE.openEpubPath, "/.crosspoint");
-    // Skip loading css since we only need metadata here
-    if (!lastEpub.load(true, true)) {
-      LOG_ERR("SLP", "Failed to load last epub");
-      return (this->*renderNoCoverSleepScreen)();
-    }
-
-    if (!lastEpub.generateCoverBmp(cropped)) {
-      LOG_ERR("SLP", "Failed to generate cover bmp");
-      return (this->*renderNoCoverSleepScreen)();
-    }
-
-    coverBmpPath = lastEpub.getCoverBmpPath(cropped);
-  } else {
+  const std::string coverBmpPath = SleepCoverAssets::cachedCoverPathFor(path, cropped);
+  if (coverBmpPath.empty()) {
     return (this->*renderNoCoverSleepScreen)();
   }
 
@@ -760,14 +763,33 @@ void SleepActivity::renderReadingStatsSleepScreen() const {
     const std::string recentTitle = recentTitleForPath(path);
     bookTitle = recentTitle.empty() ? filenameFromPath(path) : recentTitle;
 
-    if (FsHelpers::hasEpubExtension(path)) {
-      const std::string cachePath = "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(path));
-      bookStats = BookReadingStats::load(cachePath);
-    }
+    bookStats = loadBookStatsForPath(path);
   }
 
   renderBookStatsView(renderer, nullptr, bookTitle, bookStats, globalStats, false);
   renderer.displayBuffer(HalDisplay::HALF_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
+}
+
+void SleepActivity::renderMinimalSleepScreen() const {
+  const std::string& path = currentBookPath.empty() ? APP_STATE.openEpubPath : currentBookPath;
+  if (path.empty()) {
+    return renderDefaultSleepScreen();
+  }
+
+  RecentBook book = recentBookForPath(path);
+  book.coverBmpPath = SleepCoverAssets::cachedMinimalCoverPathFor(path);
+
+  const BookReadingStats bookStats = loadBookStatsForPath(path);
+  const float progressPercent = RecentBookProgress::loadPercent(book);
+  MinimalTheme theme;
+  theme.drawSleepScreen(renderer, book, &bookStats, progressPercent);
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
+}
+
+void SleepActivity::renderLastScreenSleepScreen() const {
+  const auto pageHeight = renderer.getScreenHeight();
+  renderer.drawImage(MoonIcon, 0, pageHeight - MOONICON_HEIGHT, MOONICON_WIDTH, MOONICON_HEIGHT);
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
 }
 
 void SleepActivity::renderBlankSleepScreen() const {

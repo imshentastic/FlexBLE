@@ -6,6 +6,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <MemoryBudget.h>
 #include <Serialization.h>
 #include <Utf8.h>
 #include <Xtc.h>
@@ -48,7 +49,7 @@
 
 namespace {
 constexpr uint32_t CAROUSEL_CACHE_MAGIC = 0x43434152;  // "CCAR"
-constexpr uint16_t CAROUSEL_CACHE_VERSION = 2;
+constexpr uint16_t CAROUSEL_CACHE_VERSION = 4;
 constexpr char CAROUSEL_CACHE_PATH[] = "/.crosspoint/home_carousel_cache.bin";
 constexpr char CAROUSEL_CACHE_TMP_PATH[] = "/.crosspoint/home_carousel_cache.tmp";
 
@@ -63,7 +64,7 @@ enum class HomeMenuAction {
   Settings,
 };
 
-struct HomeMenuItem {
+struct HomeMenuEntry {
   const char* label;
   UIIcon icon;
   HomeMenuAction action;
@@ -131,7 +132,7 @@ void appendHashedFileStateToKey(std::string& key, const std::string& path) {
 
 std::string getRecentBookCachePath(const RecentBook& book) {
   if (FsHelpers::hasEpubExtension(book.path)) {
-    return "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(book.path));
+    return Epub::cachePathForFilePath(book.path, "/.crosspoint");
   }
   if (FsHelpers::hasXtcExtension(book.path)) {
     return "/.crosspoint/xtc_" + std::to_string(std::hash<std::string>{}(book.path));
@@ -186,8 +187,8 @@ bool ensureReusableCoverPath(RecentBook& book) {
   return true;
 }
 
-std::vector<HomeMenuItem> buildHomeMenuItems(bool hasOpdsServers, bool hasReadingStats, bool hasBookmarks) {
-  std::vector<HomeMenuItem> items = {
+std::vector<HomeMenuEntry> buildHomeMenuItems(bool hasOpdsServers, bool hasReadingStats, bool hasBookmarks) {
+  std::vector<HomeMenuEntry> items = {
       {tr(STR_BROWSE_FILES), Folder, HomeMenuAction::BrowseFiles},
       {tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks},
   };
@@ -207,8 +208,8 @@ std::vector<HomeMenuItem> buildHomeMenuItems(bool hasOpdsServers, bool hasReadin
   return items;
 }
 
-std::vector<HomeMenuItem> buildMinimalMenuItems(bool hasOpdsServers, bool hasReadingStats, bool hasBookmarks) {
-  std::vector<HomeMenuItem> items = {
+std::vector<HomeMenuEntry> buildMinimalMenuItems(bool hasOpdsServers, bool hasReadingStats, bool hasBookmarks) {
+  std::vector<HomeMenuEntry> items = {
       {tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks},
   };
 
@@ -226,6 +227,42 @@ std::vector<HomeMenuItem> buildMinimalMenuItems(bool hasOpdsServers, bool hasRea
   return items;
 }
 
+std::vector<HomeMenuEntry> buildSelectableHomeMenuItems(bool hasOpdsServers, bool hasReadingStats, bool hasBookmarks,
+                                                        bool includeContinueReading) {
+  auto items = buildHomeMenuItems(hasOpdsServers, hasReadingStats, hasBookmarks);
+  if (includeContinueReading) {
+    items.insert(items.begin(), {tr(STR_CONTINUE_READING), Book, HomeMenuAction::ContinueReading});
+  }
+  return items;
+}
+
+HomeMenuAction homeActionForInitialMenuItem(HomeMenuItem item) {
+  switch (item) {
+    case HomeMenuItem::FILE_BROWSER:
+      return HomeMenuAction::BrowseFiles;
+    case HomeMenuItem::RECENTS:
+      return HomeMenuAction::RecentBooks;
+    case HomeMenuItem::OPDS_BROWSER:
+      return HomeMenuAction::OpdsBrowser;
+    case HomeMenuItem::FILE_TRANSFER:
+      return HomeMenuAction::FileTransfer;
+    case HomeMenuItem::SETTINGS_MENU:
+      return HomeMenuAction::Settings;
+    case HomeMenuItem::NONE:
+    default:
+      return HomeMenuAction::ContinueReading;
+  }
+}
+
+int findMenuActionIndex(const std::vector<HomeMenuEntry>& items, HomeMenuAction action) {
+  for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+    if (items[i].action == action) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 bool isMinimalTheme() {
   return static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::MINIMAL;
 }
@@ -238,10 +275,26 @@ bool isAnyFrontButtonPressed(const MappedInputManager& mappedInput) {
 
 int minimalHomeNavCount(const bool hasCurrentBook) { return hasCurrentBook ? 4 : 3; }
 
-int minimalHomeCoverWidth(int coverHeight) { return static_cast<int>((static_cast<int64_t>(coverHeight) * 3 + 2) / 5); }
+int minimalHomeCoverWidth(int coverHeight) {
+  (void)coverHeight;
+  return MinimalMetrics::homeCoverImageWidth;
+}
+
+int minimalHomeCoverHeight(int coverHeight) {
+  (void)coverHeight;
+  return MinimalMetrics::homeCoverImageHeight;
+}
 
 std::string minimalHomeCoverPath(const RecentBook& book, int coverHeight) {
-  return UITheme::getCoverThumbPath(book.coverBmpPath, minimalHomeCoverWidth(coverHeight), coverHeight);
+  if (book.coverBmpPath.empty()) {
+    return {};
+  }
+  if (FsHelpers::hasEpubExtension(book.path)) {
+    return Epub(book.path, "/.crosspoint")
+        .getAdaptiveThumbBmpPath(minimalHomeCoverWidth(coverHeight), minimalHomeCoverHeight(coverHeight));
+  }
+  return UITheme::getCoverThumbPath(book.coverBmpPath, minimalHomeCoverWidth(coverHeight),
+                                    minimalHomeCoverHeight(coverHeight));
 }
 
 void appendCarouselCoverStateToKey(std::string& key, const RecentBook& book) {
@@ -257,7 +310,7 @@ void appendCarouselCoverStateToKey(std::string& key, const RecentBook& book) {
   }
 
   const std::string centerPath =
-      UITheme::getCoverThumbPath(book.coverBmpPath, LyraCarouselTheme::kCenterCoverW, LyraCarouselTheme::kCenterCoverH);
+      UITheme::getCoverThumbPath(book.coverBmpPath, LyraCarouselTheme::kCenterThumbW, LyraCarouselTheme::kCenterThumbH);
   const std::string sidePath =
       UITheme::getCoverThumbPath(book.coverBmpPath, LyraCarouselTheme::kSideCoverW, LyraCarouselTheme::kSideCoverH);
   key += Storage.exists(centerPath.c_str()) ? '1' : '0';
@@ -292,8 +345,8 @@ bool isCarouselCacheHeaderValid(const CarouselCacheHeader& header, uint64_t cach
   return header.magic == CAROUSEL_CACHE_MAGIC && header.version == CAROUSEL_CACHE_VERSION &&
          header.keyHash == cacheKeyHash && header.frameCount == bookCount &&
          header.frameBufferSize == renderer.getBufferSize() && header.screenWidth == renderer.getScreenWidth() &&
-         header.screenHeight == renderer.getScreenHeight() && header.centerCoverW == LyraCarouselTheme::kCenterCoverW &&
-         header.centerCoverH == LyraCarouselTheme::kCenterCoverH &&
+         header.screenHeight == renderer.getScreenHeight() && header.centerCoverW == LyraCarouselTheme::kCenterThumbW &&
+         header.centerCoverH == LyraCarouselTheme::kCenterThumbH &&
          header.sideCoverW == LyraCarouselTheme::kSideCoverW && header.sideCoverH == LyraCarouselTheme::kSideCoverH;
 }
 
@@ -422,7 +475,7 @@ void HomeActivity::loadRecentBooks(int maxBooks) {
     }
 
     RecentBook book = storedBook;
-    if (!Storage.exists(book.path.c_str())) {
+    if (RecentBooksStore::isMissing(book)) {
       continue;
     }
 
@@ -464,10 +517,10 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
     }
     if (!book.coverBmpPath.empty()) {
       if (isCarouselTheme) {
-        // For carousel: generate exact-size thumbnails for center and side slots.
+        // For carousel: generate exact-size thumbnails for the center image rect and side slots.
         // Load the source image once even when both sizes are missing.
-        const std::string centerPath = UITheme::getCoverThumbPath(book.coverBmpPath, LyraCarouselTheme::kCenterCoverW,
-                                                                  LyraCarouselTheme::kCenterCoverH);
+        const std::string centerPath = UITheme::getCoverThumbPath(book.coverBmpPath, LyraCarouselTheme::kCenterThumbW,
+                                                                  LyraCarouselTheme::kCenterThumbH);
         const std::string sidePath = UITheme::getCoverThumbPath(book.coverBmpPath, LyraCarouselTheme::kSideCoverW,
                                                                 LyraCarouselTheme::kSideCoverH);
         const bool centerMissing = !Storage.exists(centerPath.c_str());
@@ -493,7 +546,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             bool success = true;
             if (centerMissing)
               success =
-                  epub.generateThumbBmp(LyraCarouselTheme::kCenterCoverW, LyraCarouselTheme::kCenterCoverH) && success;
+                  epub.generateThumbBmp(LyraCarouselTheme::kCenterThumbW, LyraCarouselTheme::kCenterThumbH) && success;
             if (sideMissing)
               success =
                   epub.generateThumbBmp(LyraCarouselTheme::kSideCoverW, LyraCarouselTheme::kSideCoverH) && success;
@@ -516,7 +569,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               bool success = true;
               if (centerMissing)
                 success =
-                    xtc.generateThumbBmp(LyraCarouselTheme::kCenterCoverW, LyraCarouselTheme::kCenterCoverH) && success;
+                    xtc.generateThumbBmp(LyraCarouselTheme::kCenterThumbW, LyraCarouselTheme::kCenterThumbH) && success;
               if (sideMissing)
                 success =
                     xtc.generateThumbBmp(LyraCarouselTheme::kSideCoverW, LyraCarouselTheme::kSideCoverH) && success;
@@ -532,8 +585,9 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
           }
         }
       } else {
-        // Non-carousel: generate height-keyed thumbnail
-        const bool useMinimalThumb = isMinimal && FsHelpers::hasEpubExtension(book.path);
+        // Non-carousel: generate the active theme's thumbnail size.
+        const bool useMinimalThumb =
+            isMinimal && (FsHelpers::hasEpubExtension(book.path) || FsHelpers::hasXtcExtension(book.path));
         const std::string coverPath = useMinimalThumb ? minimalHomeCoverPath(book, coverHeight)
                                                       : UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
         if (coverPath.empty() || !Storage.exists(coverPath.c_str())) {
@@ -553,9 +607,9 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               progress++;
               continue;
             }
-            const bool success = useMinimalThumb
-                                     ? epub.generateThumbBmp(minimalHomeCoverWidth(coverHeight), coverHeight)
-                                     : epub.generateThumbBmp(0, coverHeight);
+            const bool success = useMinimalThumb ? epub.generateAdaptiveThumbBmp(minimalHomeCoverWidth(coverHeight),
+                                                                                 minimalHomeCoverHeight(coverHeight))
+                                                 : epub.generateThumbBmp(0, coverHeight);
             if (!success) {
               updateRecentBookCoverPath(book, "");
               book.coverBmpPath = "";
@@ -572,7 +626,10 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
                 popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
               }
               GUI.fillPopupProgress(renderer, popupRect, 10 + progress * progressIncrement);
-              bool success = xtc.generateThumbBmp(coverHeight);
+              const bool success =
+                  useMinimalThumb ? xtc.generateThumbBmp(static_cast<uint16_t>(minimalHomeCoverWidth(coverHeight)),
+                                                         static_cast<uint16_t>(minimalHomeCoverHeight(coverHeight)))
+                                  : xtc.generateThumbBmp(coverHeight);
               if (!success) {
                 updateRecentBookCoverPath(book, "");
                 book.coverBmpPath = "";
@@ -671,6 +728,19 @@ void HomeActivity::enrichActiveCollectionForSeries() {
     return;
   }
 
+  // Memory guard BEFORE drawing the popup or scanning. Parsing OPF + growing
+  // and persisting SeriesIndex needs headroom; on a large collection a low-heap
+  // scan can OOM mid-pass, and since this re-runs on every home render until it
+  // completes, that becomes a crash-loop the user can't escape (they can't
+  // reach Settings to disable the feature). If headroom is too low, skip this
+  // pass entirely — no popup, no scan, no crash — and retry on a later render
+  // once heap frees up. Leaving seriesEnrichmentNeededForActive set means we'll
+  // try again rather than silently giving up.
+  if (!MemoryBudget::hasHeapForSeriesScan()) {
+    LOG_DBG("HOME", "Series scan deferred: low heap (free=%u maxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    return;
+  }
+
   const Rect popupRect = GUI.drawPopup(renderer, "Detecting series...");
   // Popup drawn over the framebuffer; flag the frame so the end-of-render
   // snapshot is skipped and the follow-up render erases it (see
@@ -680,16 +750,27 @@ void HomeActivity::enrichActiveCollectionForSeries() {
   const int total = static_cast<int>(toCheck.size());
   int processed = 0;
   for (const auto& p : toCheck) {
+    // Per-book memory guard: heap can drop as the index grows over a long scan.
+    // Stop this pass before an allocation fails rather than OOM-crashing; the
+    // books processed so far are persisted (record() saves incrementally), so
+    // the next pass resumes from here.
+    if (!MemoryBudget::hasHeapForSeriesScan()) {
+      LOG_DBG("HOME", "Series scan stopped mid-pass: low heap after %d books", processed);
+      break;
+    }
+    // Mark this book checked BEFORE the risky parse. extractSeriesFromOpf
+    // returns false gracefully for a missing/odd OPF, but a hard crash inside
+    // the parser (e.g. malformed XML) would otherwise leave the book unrecorded
+    // and re-trigger the same crash on every boot — an inescapable loop. By
+    // recording it first, a crash mid-parse still leaves it "checked", so the
+    // next boot skips it and the home screen recovers.
+    SeriesIndex::getInstance().record(p, "", "");
     Epub epub(p, "/.crosspoint");
     // extractSeriesFromOpf doesn't touch book.bin — safe to call on
-    // books with or without an existing cache.
+    // books with or without an existing cache. On success, overwrite the
+    // placeholder record with the real series name/index.
     if (epub.extractSeriesFromOpf()) {
       SeriesIndex::getInstance().record(p, epub.getSeriesName(), epub.getSeriesIndex());
-    } else {
-      // Couldn't read OPF — record empty so we don't keep retrying
-      // this book on every collection visit. The user can manually
-      // re-trigger via a rescan if they want.
-      SeriesIndex::getInstance().record(p, "", "");
     }
     processed++;
     GUI.fillPopupProgress(renderer, popupRect, 5 + (processed * 90) / total);
@@ -769,6 +850,18 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffs
       continue;
     }
 
+    // First-index safety cap: on the very first boot (fresh library index just
+    // built), stop generating new covers past the cap so a large library can't
+    // OOM mid first-time setup (the SD walk just ran; heap is fragmented).
+    // Capped books are recorded like a failed cover (blank, no retry this
+    // session) and generate normally on the next boot, when wasFreshFirstBoot()
+    // is false and there's no walk competing for heap.
+    if (LibraryIndex::getInstance().wasFreshFirstBoot() && firstIndexCoversGenerated >= kFirstIndexCoverCap) {
+      failedShelfCovers.push_back(bookPath);
+      processed++;
+      continue;
+    }
+
     // Need to generate. Show a loading popup if this is the first book in
     // this pass that's missing — matches the loadRecentCovers UX.
     if (!showingLoading) {
@@ -807,6 +900,9 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffs
       LOG_ERR("HOME", "shelf: thumb generation failed for %s; rendering blank (won't retry this session)",
               bookPath.c_str());
     }
+    // Count this generation attempt toward the first-index cap (only enforced
+    // while wasFreshFirstBoot(); harmless to increment otherwise).
+    firstIndexCoversGenerated++;
     processed++;
   }
 
@@ -1439,6 +1535,17 @@ void HomeActivity::onEnter() {
   }
   updateHighlightedBookContext();
 
+  if (initialMenuItem != HomeMenuItem::NONE) {
+    const bool includeContinueReading = metrics.homeContinueReadingInMenu && !recentBooks.empty();
+    const auto menuItems =
+        buildSelectableHomeMenuItems(hasOpdsServers, hasReadingStats, hasBookmarks, includeContinueReading);
+    const int menuIndex = findMenuActionIndex(menuItems, homeActionForInitialMenuItem(initialMenuItem));
+    if (menuIndex >= 0) {
+      selectorIndex = getHomeMenuSelectionOffset(recentBooks) + menuIndex;
+      updateHighlightedBookContext();
+    }
+  }
+
   if (isCarouselTheme && hasValidCarouselDiskCache(recentBooks, renderer)) {
     preRenderCarouselFrames(false);
   }
@@ -1454,6 +1561,11 @@ int HomeActivity::getHighlightedBookIndex() const {
   const int bookCount = static_cast<int>(recentBooks.size());
   const int highlightedBookIdx = (selectorIndex < bookCount) ? selectorIndex : lastCarouselBookIndex;
   return std::clamp(highlightedBookIdx, 0, bookCount - 1);
+}
+
+std::string HomeActivity::getCurrentBookPath() const {
+  const int idx = getHighlightedBookIndex();
+  return idx >= 0 ? recentBooks[idx].path : std::string{};
 }
 
 void HomeActivity::updateHighlightedBookContext() {
@@ -1474,8 +1586,8 @@ void HomeActivity::updateHighlightedBookContext() {
   }
 
   hasReadingStats = hasAnyBookStats(currentBookStats) || hasAnyGlobalStats(globalStats);
-  LOG_DBG("HOME", "carousel: updateHighlightedBookContext idx=%d cached=%s took %lums", idx,
-          useCachedStats ? "yes" : "no", millis() - start);
+  LOG_DBG("HOME", "updateHighlightedBookContext idx=%d cached=%s took %lums", idx, useCachedStats ? "yes" : "no",
+          millis() - start);
 }
 
 void HomeActivity::onExit() {
@@ -1488,37 +1600,58 @@ void HomeActivity::onExit() {
 }
 
 bool HomeActivity::storeCoverBuffer() {
-  uint8_t* frameBuffer = renderer.getFrameBuffer();
-  if (!frameBuffer) {
-    return false;
-  }
-
-  // Free any existing buffer first
   freeCoverBuffer();
-
-  const size_t bufferSize = renderer.getBufferSize();
-  coverBuffer = static_cast<uint8_t*>(malloc(bufferSize));
+  const bool isFlow =
+      static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_FLOW;
+  if (isFlow) {
+    // CrumBLE Flow: the shelf-skip fast-path restores the WHOLE home
+    // (carousel + shelf + header + menu) on the next render, so snapshot the
+    // full framebuffer — not just the cover tile (1.3's optimization, used in
+    // the non-Flow carousel branch below).
+    uint8_t* frameBuffer = renderer.getFrameBuffer();
+    if (!frameBuffer) return false;
+    const size_t bufferSize = renderer.getBufferSize();
+    coverBuffer = static_cast<uint8_t*>(malloc(bufferSize));
+    if (!coverBuffer) {
+      LOG_ERR("HOME", "OOM: cover buffer (full, %u bytes)", (unsigned)bufferSize);
+      return false;
+    }
+    coverBufferSize = bufferSize;
+    memcpy(coverBuffer, frameBuffer, bufferSize);
+    return true;
+  }
+  // Non-Flow (CrossInk 1.3 carousel): snapshot just the cover tile. render()
+  // must have set the cover rect; without it we'd clone the whole framebuffer.
+  if (coverRectW <= 0 || coverRectH <= 0) return false;
+  const size_t needed = renderer.getRegionByteSize(coverRectX, coverRectY, coverRectW, coverRectH);
+  if (needed == 0) return false;
+  coverBuffer = static_cast<uint8_t*>(malloc(needed));
   if (!coverBuffer) {
+    LOG_ERR("HOME", "OOM: cover buffer (%u bytes)", (unsigned)needed);
     return false;
   }
-
-  memcpy(coverBuffer, frameBuffer, bufferSize);
+  coverBufferSize = needed;
+  if (!renderer.copyRegionToBuffer(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, coverBufferSize)) {
+    free(coverBuffer);
+    coverBuffer = nullptr;
+    coverBufferSize = 0;
+    return false;
+  }
   return true;
 }
 
 bool HomeActivity::restoreCoverBuffer() {
-  if (!coverBuffer) {
-    return false;
+  if (!coverBuffer) return false;
+  // Distinguish a full-framebuffer snapshot (Flow) from a cover-tile snapshot
+  // (non-Flow) by the stored size.
+  if (coverBufferSize == renderer.getBufferSize()) {
+    uint8_t* frameBuffer = renderer.getFrameBuffer();
+    if (!frameBuffer) return false;
+    memcpy(frameBuffer, coverBuffer, coverBufferSize);
+    return true;
   }
-
-  uint8_t* frameBuffer = renderer.getFrameBuffer();
-  if (!frameBuffer) {
-    return false;
-  }
-
-  const size_t bufferSize = renderer.getBufferSize();
-  memcpy(frameBuffer, coverBuffer, bufferSize);
-  return true;
+  if (coverRectW <= 0 || coverRectH <= 0) return false;
+  return renderer.copyBufferToRegion(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, coverBufferSize);
 }
 
 void HomeActivity::freeCoverBuffer() {
@@ -1526,6 +1659,7 @@ void HomeActivity::freeCoverBuffer() {
     free(coverBuffer);
     coverBuffer = nullptr;
   }
+  coverBufferSize = 0;
   coverBufferStored = false;
 }
 
@@ -1648,8 +1782,8 @@ bool HomeActivity::buildCarouselCacheFile(const std::string& cacheKey, uint64_t 
       cacheKeyHash,
       static_cast<uint16_t>(renderer.getScreenWidth()),
       static_cast<uint16_t>(renderer.getScreenHeight()),
-      static_cast<uint16_t>(LyraCarouselTheme::kCenterCoverW),
-      static_cast<uint16_t>(LyraCarouselTheme::kCenterCoverH),
+      static_cast<uint16_t>(LyraCarouselTheme::kCenterThumbW),
+      static_cast<uint16_t>(LyraCarouselTheme::kCenterThumbH),
       static_cast<uint16_t>(LyraCarouselTheme::kSideCoverW),
       static_cast<uint16_t>(LyraCarouselTheme::kSideCoverH),
   };
@@ -2419,8 +2553,7 @@ void HomeActivity::render(RenderLock&&) {
       minimalHomeNavIndex = homeNavCount - 1;
     }
     MinimalTheme::setHomeButtonHintSelection(minimalHomeNavIndex);
-    GUI.drawButtonHints(renderer, tr(STR_MENU), tr(STR_BROWSE), tr(STR_SETTINGS_TITLE),
-                        recentBooks.empty() ? "" : tr(STR_READ));
+    GUI.drawButtonHints(renderer, "Menu", "Browse", "Settings", recentBooks.empty() ? "" : "Read");
 
     renderer.displayBuffer();
 
@@ -2540,6 +2673,14 @@ void HomeActivity::render(RenderLock&&) {
     // a single-flight assignment through the const theme reference.
     static_cast<const LyraFlowTheme&>(GUI).skipCarouselCoverLoads = canSkipCovers;
   }
+  // Record the tile rect so storeCoverBuffer (called from the theme) knows
+  // which sub-region of the framebuffer to snapshot. ~16 KB in Portrait
+  // instead of the 48 KB full framebuffer the previous bind captured.
+  coverRectX = 0;
+  coverRectY = metrics.homeTopPadding;
+  coverRectW = pageWidth;
+  coverRectH = metrics.homeCoverTileHeight;
+
   GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
                           recentBooks, coverSelectorIndex, coverRendered, coverBufferStored, bufferRestored,
                           storer,
@@ -2550,7 +2691,8 @@ void HomeActivity::render(RenderLock&&) {
     lastRenderedCoverSelectorValid = true;
   }
 
-  auto menuItems = buildHomeMenuItems(hasOpdsServers, hasReadingStats, hasBookmarks);
+  auto menuItems = buildSelectableHomeMenuItems(hasOpdsServers, hasReadingStats, hasBookmarks,
+                                                metrics.homeContinueReadingInMenu && !recentBooks.empty());
 
   const int menuStartY = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
   const int menuEndY = pageHeight - metrics.buttonHintsHeight;

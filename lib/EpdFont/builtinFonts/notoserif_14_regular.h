@@ -4096,7 +4096,7 @@ static const EpdLigaturePair notoserif_14_regularLigaturePairs[] = {
     { 0xFB00006C, 0xFB04 }, // U+FB00 l -> U+FB04
 };
 
-static const EpdFontData notoserif_14_regular = {
+static constexpr EpdFontData notoserif_14_regular = {
     notoserif_14_regularBitmaps,
     notoserif_14_regularGlyphs,
     notoserif_14_regularIntervals,

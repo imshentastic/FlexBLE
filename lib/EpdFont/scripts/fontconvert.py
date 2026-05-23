@@ -1010,7 +1010,7 @@ if ligature_pairs:
         print(f"    {{ 0x{packed_pair:08X}, 0x{lig_cp:04X} }}, // {cp_label(packed_pair >> 16)} {cp_label(packed_pair & 0xFFFF)} -> {cp_label(lig_cp)}")
     print("};\n")
 
-print(f"static const EpdFontData {font_name} = {{")
+print(f"static constexpr EpdFontData {font_name} = {{")
 print(f"    {font_name}Bitmaps,")
 print(f"    {font_name}Glyphs,")
 print(f"    {font_name}Intervals,")

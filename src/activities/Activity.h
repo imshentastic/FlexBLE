@@ -53,6 +53,7 @@ class Activity {
   virtual bool isReaderActivity() const { return false; }
   virtual bool allowPowerAsConfirmInReaderMode() const { return false; }
   virtual bool canSnapshotForSleepOverlay() const { return false; }
+  virtual std::string getCurrentBookPath() const { return {}; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 
   // Start a new activity without destroying the current one
@@ -67,7 +68,7 @@ class Activity {
 
   // Convenience method to facilitate API transition to ActivityManager
   // TODO: remove this in near future
-  void onGoHome();
+  void onGoHome(HomeMenuItem item = HomeMenuItem::NONE);
   void onSelectBook(const std::string& path);
 
   // Like onGoHome(), but paints a brief "Going home..." popup with

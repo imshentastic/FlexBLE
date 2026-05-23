@@ -3085,7 +3085,7 @@ static const EpdLigaturePair lexenddeca_10_regularLigaturePairs[] = {
     { 0x0066006C, 0xFB02 }, // f l -> U+FB02
 };
 
-static const EpdFontData lexenddeca_10_regular = {
+static constexpr EpdFontData lexenddeca_10_regular = {
     lexenddeca_10_regularBitmaps,
     lexenddeca_10_regularGlyphs,
     lexenddeca_10_regularIntervals,

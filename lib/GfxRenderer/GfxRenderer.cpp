@@ -35,7 +35,13 @@ const uint8_t* GfxRenderer::getGlyphBitmap(const EpdFontData* fontData, const Ep
     // For page-buffer hits the pointer is stable for the page lifetime.
     // For hot-group hits it is valid only until the next getBitmap() call — callers
     // must consume it (draw the glyph) before requesting another bitmap.
-    return fd->getBitmap(fontData, glyph, glyphIndex);
+    const uint8_t* bitmap = fd->getBitmap(fontData, glyph, glyphIndex);
+    // Distinguish an OOM-skipped glyph (page can't render -> drop BLE) from a
+    // benignly-missing glyph.
+    if (bitmap == nullptr && fd->consumeOom()) {
+      markRenderStarved();
+    }
+    return bitmap;
   }
   // For SD card fonts, check if the glyph was loaded on demand into the overflow
   // buffer.  getOverflowBitmap() returns:
@@ -547,6 +553,17 @@ void GfxRenderer::drawPixel(const int x, const int y, const bool state) const {
 }
 
 int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style) const {
+  // SD-card fonts can measure from their persistent advance table during layout.
+  auto sdIt = sdCardFonts_.find(fontId);
+  if (sdIt != sdCardFonts_.end() && sdIt->second->hasAdvanceTable()) {
+    int32_t widthFP = 0;
+    const uint8_t styleIdx = resolveSdCardStyle(*sdIt->second, style);
+    while (uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text))) {
+      widthFP += sdIt->second->getAdvance(cp, styleIdx);
+    }
+    return fp4::toPixel(widthFP);
+  }
+
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", fontId);
@@ -1082,7 +1099,58 @@ void GfxRenderer::drawImage(const uint8_t bitmap[], const int x, const int y, co
 }
 
 void GfxRenderer::drawIcon(const uint8_t bitmap[], const int x, const int y, const int width, const int height) const {
-  display.drawImageTransparent(bitmap, y, getScreenWidth() - width - x, height, width);
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
+
+  // Portrait-mode coordinate transform (x<->y swap). Draw black source pixels
+  // transparently while preserving sub-byte x offsets; EInkDisplay's transparent
+  // blit is byte-aligned, which can visually shift icons when y is not /8.
+  const int physX = y;
+  const int physY = getScreenWidth() - width - x;
+  const int imgW = height;
+  const int imgH = width;
+  const int srcStride = (imgW + 7) / 8;
+
+  if (physX + imgW <= 0 || physX >= panelWidth) return;
+  if (physY + imgH <= 0 || physY >= panelHeight) return;
+
+  const int baseByte = (physX >= 0) ? (physX >> 3) : -(((-physX) + 7) >> 3);
+  const int bitShift = ((physX % 8) + 8) % 8;
+  const int trail = srcStride * 8 - imgW;
+  const uint8_t trailMask = static_cast<uint8_t>(0xFF << trail);
+  const int lastCol = srcStride - 1;
+
+  for (int row = 0; row < imgH; ++row) {
+    const int destY = physY + row;
+    if (destY < 0 || destY >= panelHeight) continue;
+    const int rowBase = destY * panelWidthBytes;
+    const int srcOffset = row * srcStride;
+
+    if (bitShift == 0) {
+      for (int col = 0; col < srcStride; ++col) {
+        const int dst = baseByte + col;
+        if (dst < 0) continue;
+        if (dst >= panelWidthBytes) break;
+        uint8_t blackPixels = ~bitmap[srcOffset + col];
+        if (col == lastCol && trail > 0) blackPixels &= trailMask;
+        frameBuffer[rowBase + dst] &= static_cast<uint8_t>(~blackPixels);
+      }
+    } else {
+      const int rsh = bitShift;
+      const int lsh = 8 - bitShift;
+      for (int col = 0; col < srcStride; ++col) {
+        uint8_t blackPixels = ~bitmap[srcOffset + col];
+        if (col == lastCol && trail > 0) blackPixels &= trailMask;
+        const int dstHi = baseByte + col;
+        const int dstLo = dstHi + 1;
+        if (dstHi >= 0 && dstHi < panelWidthBytes) {
+          frameBuffer[rowBase + dstHi] &= static_cast<uint8_t>(~static_cast<uint8_t>(blackPixels >> rsh));
+        }
+        if (dstLo >= 0 && dstLo < panelWidthBytes) {
+          frameBuffer[rowBase + dstLo] &= static_cast<uint8_t>(~static_cast<uint8_t>(blackPixels << lsh));
+        }
+      }
+    }
+  }
 }
 
 void GfxRenderer::drawIconInverted(const uint8_t bitmap[], const int x, const int y, const int width,
@@ -1099,8 +1167,8 @@ void GfxRenderer::drawIconInverted(const uint8_t bitmap[], const int x, const in
   const int srcStride = (imgW + 7) / 8;  // round up so non-byte-aligned widths copy fully
 
   // Trivial off-screen rejection.
-  if (physX + imgW <= 0 || physX >= HalDisplay::DISPLAY_WIDTH) return;
-  if (physY + imgH <= 0 || physY >= HalDisplay::DISPLAY_HEIGHT) return;
+  if (physX + imgW <= 0 || physX >= panelWidth) return;
+  if (physY + imgH <= 0 || physY >= panelHeight) return;
 
   // Floor-divide so a negative physX produces the correct (negative) base byte;
   // C++ integer division truncates toward zero, which would round up for negatives.
@@ -1116,15 +1184,15 @@ void GfxRenderer::drawIconInverted(const uint8_t bitmap[], const int x, const in
 
   for (int row = 0; row < imgH; ++row) {
     const int destY = physY + row;
-    if (destY < 0 || destY >= HalDisplay::DISPLAY_HEIGHT) continue;
-    const int rowBase = destY * HalDisplay::DISPLAY_WIDTH_BYTES;
+    if (destY < 0 || destY >= panelHeight) continue;
+    const int rowBase = destY * panelWidthBytes;
     const int srcOffset = row * srcStride;
 
     if (bitShift == 0) {
       for (int col = 0; col < srcStride; ++col) {
         const int dst = baseByte + col;
         if (dst < 0) continue;
-        if (dst >= HalDisplay::DISPLAY_WIDTH_BYTES) break;
+        if (dst >= panelWidthBytes) break;
         uint8_t inv = ~bitmap[srcOffset + col];
         if (col == lastCol && trail > 0) inv &= trailMask;
         frameBuffer[rowBase + dst] |= inv;
@@ -1137,10 +1205,10 @@ void GfxRenderer::drawIconInverted(const uint8_t bitmap[], const int x, const in
         if (col == lastCol && trail > 0) inv &= trailMask;
         const int dstHi = baseByte + col;
         const int dstLo = dstHi + 1;
-        if (dstHi >= 0 && dstHi < HalDisplay::DISPLAY_WIDTH_BYTES) {
+        if (dstHi >= 0 && dstHi < panelWidthBytes) {
           frameBuffer[rowBase + dstHi] |= static_cast<uint8_t>(inv >> rsh);
         }
-        if (dstLo >= 0 && dstLo < HalDisplay::DISPLAY_WIDTH_BYTES) {
+        if (dstLo >= 0 && dstLo < panelWidthBytes) {
           frameBuffer[rowBase + dstLo] |= static_cast<uint8_t>(inv << lsh);
         }
       }
@@ -1563,6 +1631,89 @@ int GfxRenderer::getScreenHeight() const {
       return panelHeight;
   }
   return panelWidth;
+}
+
+// Translate a logical rect through rotateCoordinates and take the bounding
+// box of its four corners on the physical panel. Output coords are inclusive
+// and clamped. Returns false if the rect ends up fully off-panel.
+static bool logicalRectToPhysicalBounds(GfxRenderer::Orientation orientation, int lx, int ly, int lw, int lh,
+                                        uint16_t panelWidth, uint16_t panelHeight, int* outX0, int* outY0, int* outX1,
+                                        int* outY1) {
+  if (lw <= 0 || lh <= 0) return false;
+  int minX = INT32_MAX;
+  int minY = INT32_MAX;
+  int maxX = INT32_MIN;
+  int maxY = INT32_MIN;
+  const int corners[4][2] = {{lx, ly}, {lx + lw - 1, ly}, {lx, ly + lh - 1}, {lx + lw - 1, ly + lh - 1}};
+  for (auto& c : corners) {
+    int phyX;
+    int phyY;
+    rotateCoordinates(orientation, c[0], c[1], &phyX, &phyY, panelWidth, panelHeight);
+    if (phyX < minX) minX = phyX;
+    if (phyY < minY) minY = phyY;
+    if (phyX > maxX) maxX = phyX;
+    if (phyY > maxY) maxY = phyY;
+  }
+  if (minX < 0) minX = 0;
+  if (minY < 0) minY = 0;
+  if (maxX >= panelWidth) maxX = panelWidth - 1;
+  if (maxY >= panelHeight) maxY = panelHeight - 1;
+  if (minX > maxX || minY > maxY) return false;
+  *outX0 = minX;
+  *outY0 = minY;
+  *outX1 = maxX;
+  *outY1 = maxY;
+  return true;
+}
+
+size_t GfxRenderer::getRegionByteSize(int lx, int ly, int lw, int lh) const {
+  int x0, y0, x1, y1;
+  if (!logicalRectToPhysicalBounds(orientation, lx, ly, lw, lh, panelWidth, panelHeight, &x0, &y0, &x1, &y1)) {
+    return 0;
+  }
+  // x bounds are in pixels; widen to byte boundaries on either side so per-row
+  // memcpy stays byte-aligned even when the logical rect doesn't.
+  const int byteX0 = x0 / 8;
+  const int byteX1 = x1 / 8;
+  const int bytesPerRow = byteX1 - byteX0 + 1;
+  const int rowCount = y1 - y0 + 1;
+  return static_cast<size_t>(bytesPerRow) * static_cast<size_t>(rowCount);
+}
+
+bool GfxRenderer::copyRegionToBuffer(int lx, int ly, int lw, int lh, uint8_t* buf, size_t bufSize) const {
+  int x0, y0, x1, y1;
+  if (!logicalRectToPhysicalBounds(orientation, lx, ly, lw, lh, panelWidth, panelHeight, &x0, &y0, &x1, &y1)) {
+    return false;
+  }
+  const int byteX0 = x0 / 8;
+  const int byteX1 = x1 / 8;
+  const int bytesPerRow = byteX1 - byteX0 + 1;
+  const int rowCount = y1 - y0 + 1;
+  const size_t needed = static_cast<size_t>(bytesPerRow) * static_cast<size_t>(rowCount);
+  if (bufSize < needed || !frameBuffer || !buf) return false;
+  for (int row = 0; row < rowCount; row++) {
+    const uint8_t* src = frameBuffer + (y0 + row) * panelWidthBytes + byteX0;
+    memcpy(buf + row * bytesPerRow, src, bytesPerRow);
+  }
+  return true;
+}
+
+bool GfxRenderer::copyBufferToRegion(int lx, int ly, int lw, int lh, const uint8_t* buf, size_t bufSize) const {
+  int x0, y0, x1, y1;
+  if (!logicalRectToPhysicalBounds(orientation, lx, ly, lw, lh, panelWidth, panelHeight, &x0, &y0, &x1, &y1)) {
+    return false;
+  }
+  const int byteX0 = x0 / 8;
+  const int byteX1 = x1 / 8;
+  const int bytesPerRow = byteX1 - byteX0 + 1;
+  const int rowCount = y1 - y0 + 1;
+  const size_t needed = static_cast<size_t>(bytesPerRow) * static_cast<size_t>(rowCount);
+  if (bufSize < needed || !frameBuffer || !buf) return false;
+  for (int row = 0; row < rowCount; row++) {
+    uint8_t* dst = frameBuffer + (y0 + row) * panelWidthBytes + byteX0;
+    memcpy(dst, buf + row * bytesPerRow, bytesPerRow);
+  }
+  return true;
 }
 
 int GfxRenderer::getSpaceWidth(const int fontId, const EpdFontFamily::Style style) const {

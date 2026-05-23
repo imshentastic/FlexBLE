@@ -57,6 +57,7 @@ class GfxRenderer {
   RenderMode renderMode;
   Orientation orientation;
   bool fadingFix;
+  mutable bool renderStarved = false;
   uint8_t* frameBuffer = nullptr;
   uint16_t panelWidth = HalDisplay::DISPLAY_WIDTH;
   uint16_t panelHeight = HalDisplay::DISPLAY_HEIGHT;
@@ -169,6 +170,20 @@ class GfxRenderer {
   // Fading fix control
   void setFadingFix(const bool enabled) { fadingFix = enabled; }
 
+  // Render-starvation signal. Set when a glyph couldn't be decompressed for OOM
+  // (getGlyphBitmap) or an image failed to decode (ImageBlock::render) — i.e.
+  // the page can't be drawn because contiguous heap is too tight, typically
+  // because a BLE remote (NimBLE ~58 KB) is connected. The reader reads+clears
+  // it after a page render to decide whether to drop Bluetooth for the book so
+  // the full heap is available. markRenderStarved is const (sets a mutable
+  // flag) so the const glyph path can call it.
+  void markRenderStarved() const { renderStarved = true; }
+  bool takeRenderStarved() {
+    const bool starved = renderStarved;
+    renderStarved = false;
+    return starved;
+  }
+
   // Screen ops
   int getScreenWidth() const;
   int getScreenHeight() const;
@@ -261,4 +276,16 @@ class GfxRenderer {
   uint16_t getDisplayWidth() const { return panelWidth; }
   uint16_t getDisplayHeight() const { return panelHeight; }
   uint16_t getDisplayWidthBytes() const { return panelWidthBytes; }
+
+  // Region cache: take a logical (orientation-aware) rect, hit the framebuffer
+  // bytes that the rect can have touched, and pump them in or out of a caller-
+  // supplied buffer. Used by HomeActivity to snapshot just the cover tile
+  // (~16 KB in Portrait) instead of cloning the entire 48 KB framebuffer.
+  //
+  // getRegionByteSize: required buffer length for the rect at current orientation.
+  // copyRegionToBuffer / copyBufferToRegion: false if `bufSize` is smaller than that.
+  size_t getRegionByteSize(int logicalX, int logicalY, int logicalW, int logicalH) const;
+  bool copyRegionToBuffer(int logicalX, int logicalY, int logicalW, int logicalH, uint8_t* buf, size_t bufSize) const;
+  bool copyBufferToRegion(int logicalX, int logicalY, int logicalW, int logicalH, const uint8_t* buf,
+                          size_t bufSize) const;
 };

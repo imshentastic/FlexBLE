@@ -20,6 +20,7 @@
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "XtcReaderChapterSelectionActivity.h"
+#include "activities/boot_sleep/SleepCoverAssets.h"
 #include "components/UITheme.h"
 #include "components/themes/lyra/LyraCarouselTheme.h"
 #include "fontIds.h"
@@ -43,6 +44,7 @@ void XtcReaderActivity::onEnter() {
   APP_STATE.openEpubPath = xtc->getPath();
   APP_STATE.saveToFile();
   RECENT_BOOKS.addOrUpdateBook(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getThumbBmpPath());
+  SleepCoverAssets::prepareXtc(*xtc);
 
   // Trigger first update
   requestUpdate();
@@ -244,7 +246,7 @@ XtcReaderActivity::StatusBarInfo XtcReaderActivity::getStatusBarInfo() const {
     return StatusBarInfo{bookPage, bookPageCount, std::move(title)};
   }
 
-  const auto& chapters = xtc->getChapters();
+  const auto chapters = xtc->getChapters();
   const auto chapterIt = std::find_if(chapters.begin(), chapters.end(), [this](const xtc::ChapterInfo& chapter) {
     return currentPage >= chapter.startPage && currentPage <= chapter.endPage;
   });
@@ -254,7 +256,7 @@ XtcReaderActivity::StatusBarInfo XtcReaderActivity::getStatusBarInfo() const {
   }
 
   if (SETTINGS.statusBarTitle == CrossPointSettings::STATUS_BAR_TITLE::CHAPTER_TITLE) {
-    title = chapterIt->name.empty() ? tr(STR_UNNAMED) : chapterIt->name;
+    title = chapterIt->name[0] == '\0' ? tr(STR_UNNAMED) : chapterIt->name;
   }
 
   return StatusBarInfo{static_cast<int>(currentPage - chapterIt->startPage) + 1,

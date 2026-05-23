@@ -64,9 +64,14 @@ KOReaderSyncClient::Error validateAuthResponse(const char* body) {
     return KOReaderSyncClient::JSON_ERROR;
   }
 
-  const char* authorized = doc["authorized"] | "";
-  if (std::strcmp(authorized, "OK") != 0) {
-    LOG_ERR("KOSync", "Auth response missing authorized=OK");
+  if (!doc.is<JsonObject>()) {
+    LOG_ERR("KOSync", "Auth response was not a JSON object");
+    return KOReaderSyncClient::INVALID_AUTH_RESPONSE;
+  }
+
+  const char* authorized = doc["authorized"] | nullptr;
+  if (authorized && std::strcmp(authorized, "OK") != 0) {
+    LOG_ERR("KOSync", "Auth response explicitly denied authorization");
     return KOReaderSyncClient::INVALID_AUTH_RESPONSE;
   }
 

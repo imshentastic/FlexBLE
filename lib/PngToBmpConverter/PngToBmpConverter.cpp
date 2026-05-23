@@ -5,6 +5,8 @@
 #include <InflateReader.h>
 #include <Logging.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 
@@ -170,6 +172,92 @@ void writeBmpHeader2bit(Print& bmpOut, const int width, const int height) {
   for (const uint8_t i : palette) {
     bmpOut.write(i);
   }
+}
+
+struct OutputGeometry {
+  int outWidth;
+  int outHeight;
+  uint32_t scaleX_fp;
+  uint32_t scaleY_fp;
+  uint32_t srcXOffset_fp;
+  uint32_t srcYOffset_fp;
+  bool needsScaling;
+};
+
+static uint32_t fpPerOutputPixel(const uint64_t srcSpan_fp, const int outPixels) {
+  if (outPixels <= 0) return 65536;
+  const uint64_t value = srcSpan_fp / static_cast<uint64_t>(outPixels);
+  if (value == 0) return 1;
+  if (value > UINT32_MAX) return UINT32_MAX;
+  return static_cast<uint32_t>(value);
+}
+
+static OutputGeometry calculateOutputGeometry(const int srcWidth, const int srcHeight, const int targetWidth,
+                                              const int targetHeight, const bool crop) {
+  OutputGeometry geometry{srcWidth, srcHeight, 65536, 65536, 0, 0, false};
+  if (targetWidth <= 0 || targetHeight <= 0 || srcWidth <= 0 || srcHeight <= 0) {
+    return geometry;
+  }
+
+  if (crop) {
+    geometry.outWidth = targetWidth;
+    geometry.outHeight = targetHeight;
+
+    const uint64_t srcWidth_fp = static_cast<uint64_t>(srcWidth) << 16;
+    const uint64_t srcHeight_fp = static_cast<uint64_t>(srcHeight) << 16;
+    uint64_t cropWidth_fp = srcWidth_fp;
+    uint64_t cropHeight_fp = srcHeight_fp;
+    const int64_t sourceVsTarget =
+        static_cast<int64_t>(srcWidth) * targetHeight - static_cast<int64_t>(targetWidth) * srcHeight;
+
+    if (sourceVsTarget > 0) {
+      cropWidth_fp = (static_cast<uint64_t>(targetWidth) * static_cast<uint64_t>(srcHeight) << 16) / targetHeight;
+      if (cropWidth_fp > srcWidth_fp) cropWidth_fp = srcWidth_fp;
+      geometry.srcXOffset_fp = static_cast<uint32_t>((srcWidth_fp - cropWidth_fp) / 2);
+    } else if (sourceVsTarget < 0) {
+      cropHeight_fp = (static_cast<uint64_t>(targetHeight) * static_cast<uint64_t>(srcWidth) << 16) / targetWidth;
+      if (cropHeight_fp > srcHeight_fp) cropHeight_fp = srcHeight_fp;
+      geometry.srcYOffset_fp = static_cast<uint32_t>((srcHeight_fp - cropHeight_fp) / 2);
+    }
+
+    geometry.scaleX_fp = fpPerOutputPixel(cropWidth_fp, targetWidth);
+    geometry.scaleY_fp = fpPerOutputPixel(cropHeight_fp, targetHeight);
+    geometry.needsScaling = srcWidth != targetWidth || srcHeight != targetHeight || geometry.srcXOffset_fp != 0 ||
+                            geometry.srcYOffset_fp != 0;
+    return geometry;
+  }
+
+  if (srcWidth != targetWidth || srcHeight != targetHeight) {
+    const float scaleToFitWidth = static_cast<float>(targetWidth) / srcWidth;
+    const float scaleToFitHeight = static_cast<float>(targetHeight) / srcHeight;
+    const float scale = (scaleToFitWidth < scaleToFitHeight) ? scaleToFitWidth : scaleToFitHeight;
+
+    geometry.outWidth = static_cast<int>(srcWidth * scale);
+    geometry.outHeight = static_cast<int>(srcHeight * scale);
+    if (geometry.outWidth < 1) geometry.outWidth = 1;
+    if (geometry.outHeight < 1) geometry.outHeight = 1;
+
+    geometry.scaleX_fp = fpPerOutputPixel(static_cast<uint64_t>(srcWidth) << 16, geometry.outWidth);
+    geometry.scaleY_fp = fpPerOutputPixel(static_cast<uint64_t>(srcHeight) << 16, geometry.outHeight);
+    geometry.needsScaling = true;
+  }
+
+  return geometry;
+}
+
+static bool shouldContainAdaptive(const int srcWidth, const int srcHeight, const int targetWidth,
+                                  const int targetHeight) {
+  if (srcWidth <= 0 || srcHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
+    return false;
+  }
+
+  constexpr int64_t kAspectTolerancePercent = 18;
+  const int64_t sourceScaledToTargetHeight = static_cast<int64_t>(srcWidth) * targetHeight;
+  const int64_t targetScaledToSourceHeight = static_cast<int64_t>(targetWidth) * srcHeight;
+  const int64_t diff = sourceScaledToTargetHeight > targetScaledToSourceHeight
+                           ? sourceScaledToTargetHeight - targetScaledToSourceHeight
+                           : targetScaledToSourceHeight - sourceScaledToTargetHeight;
+  return diff * 100 > targetScaledToSourceHeight * kAspectTolerancePercent;
 }
 }  // namespace
 
@@ -396,7 +484,7 @@ static void convertScanlineToGray(const PngDecodeContext& ctx, uint8_t* grayRow)
 }
 
 bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOut, int targetWidth, int targetHeight,
-                                                   bool oneBit, bool crop) {
+                                                   bool oneBit, bool crop, bool adaptiveContain) {
   LOG_DBG("PNG", "Converting PNG to %s BMP (target: %dx%d)", oneBit ? "1-bit" : "2-bit", targetWidth, targetHeight);
 
   // Verify PNG signature
@@ -566,36 +654,20 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
   // PNG IDAT data is zlib-wrapped: consume the 2-byte zlib header (CMF + FLG)
   ctx.reader.skipZlibHeader();
 
-  // Calculate output dimensions (same logic as JpegToBmpConverter)
-  int outWidth = width;
-  int outHeight = height;
-  uint32_t scaleX_fp = 65536;
-  uint32_t scaleY_fp = 65536;
-  bool needsScaling = false;
-
-  if (targetWidth > 0 && targetHeight > 0 &&
-      (static_cast<int>(width) != targetWidth || static_cast<int>(height) != targetHeight)) {
-    const float scaleToFitWidth = static_cast<float>(targetWidth) / width;
-    const float scaleToFitHeight = static_cast<float>(targetHeight) / height;
-    float scale = 1.0;
-    if (crop) {
-      scale = (scaleToFitWidth > scaleToFitHeight) ? scaleToFitWidth : scaleToFitHeight;
-    } else {
-      scale = (scaleToFitWidth < scaleToFitHeight) ? scaleToFitWidth : scaleToFitHeight;
-    }
-
-    outWidth = static_cast<int>(width * scale);
-    outHeight = static_cast<int>(height * scale);
-    if (outWidth < 1) outWidth = 1;
-    if (outHeight < 1) outHeight = 1;
-
-    scaleX_fp = (width << 16) / outWidth;
-    scaleY_fp = (height << 16) / outHeight;
-    needsScaling = true;
-
-    LOG_DBG("PNG", "Scaling %ux%u -> %dx%d (target %dx%d)", width, height, outWidth, outHeight, targetWidth,
-            targetHeight);
-  }
+  // Calculate output dimensions. Crop mode behaves like CSS object-fit: cover:
+  // scale to fill the requested box, then sample a centered source crop before dithering.
+  const bool containInsteadOfCrop =
+      crop && adaptiveContain &&
+      shouldContainAdaptive(static_cast<int>(width), static_cast<int>(height), targetWidth, targetHeight);
+  const bool cropOutput = crop && !containInsteadOfCrop;
+  const OutputGeometry geometry =
+      calculateOutputGeometry(static_cast<int>(width), static_cast<int>(height), targetWidth, targetHeight, cropOutput);
+  const int outWidth = geometry.outWidth;
+  const int outHeight = geometry.outHeight;
+  const bool needsScaling = geometry.needsScaling;
+  LOG_DBG("PNG", "Scaling %ux%u -> %dx%d (target %dx%d, mode=%s, offset %u,%u)", width, height, outWidth, outHeight,
+          targetWidth, targetHeight, cropOutput ? "cover" : "contain", geometry.srcXOffset_fp >> 16,
+          geometry.srcYOffset_fp >> 16);
 
   // Write BMP header
   int bytesPerRow;
@@ -643,7 +715,7 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
   if (needsScaling) {
     rowAccum = new uint32_t[outWidth]();
     rowCount = new uint16_t[outWidth]();
-    nextOutY_srcStart = scaleY_fp;
+    nextOutY_srcStart = geometry.srcYOffset_fp + geometry.scaleY_fp;
   }
 
   // Allocate grayscale row buffer - batch-convert each scanline to avoid
@@ -715,10 +787,19 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
       }
       bmpOut.write(rowBuffer, bytesPerRow);
     } else {
+      const uint64_t srcY_fp = static_cast<uint64_t>(y + 1) << 16;
+      if (srcY_fp <= geometry.srcYOffset_fp) {
+        continue;
+      }
+
       // Area-averaging scaling (same as JpegToBmpConverter)
       for (int outX = 0; outX < outWidth; outX++) {
-        const int srcXStart = (static_cast<uint32_t>(outX) * scaleX_fp) >> 16;
-        const int srcXEnd = (static_cast<uint32_t>(outX + 1) * scaleX_fp) >> 16;
+        const uint64_t srcXStart_fp =
+            static_cast<uint64_t>(geometry.srcXOffset_fp) + static_cast<uint64_t>(outX) * geometry.scaleX_fp;
+        const uint64_t srcXEnd_fp =
+            static_cast<uint64_t>(geometry.srcXOffset_fp) + static_cast<uint64_t>(outX + 1) * geometry.scaleX_fp;
+        const int srcXStart = std::min(static_cast<int>(width) - 1, static_cast<int>(srcXStart_fp >> 16));
+        const int srcXEnd = std::min(static_cast<int>(width), static_cast<int>(srcXEnd_fp >> 16));
 
         int sum = 0;
         int count = 0;
@@ -737,8 +818,6 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
       }
 
       // Check if we've crossed into the next output row(s)
-      const uint32_t srcY_fp = static_cast<uint32_t>(y + 1) << 16;
-
       // Output all rows whose boundaries we've crossed (handles both up and downscaling)
       // For upscaling, one source row may produce multiple output rows
       while (srcY_fp >= nextOutY_srcStart && currentOutY < outHeight) {
@@ -783,7 +862,8 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(FsFile& pngFile, Print& bmpOu
         bmpOut.write(rowBuffer, bytesPerRow);
         currentOutY++;
 
-        nextOutY_srcStart = static_cast<uint32_t>(currentOutY + 1) * scaleY_fp;
+        nextOutY_srcStart = static_cast<uint32_t>(static_cast<uint64_t>(geometry.srcYOffset_fp) +
+                                                  static_cast<uint64_t>(currentOutY + 1) * geometry.scaleY_fp);
 
         // For upscaling: don't reset accumulators if next output row uses same source data
         // Only reset when we'll move to a new source row
@@ -828,11 +908,11 @@ bool PngToBmpConverter::pngFileToBmpStream(FsFile& pngFile, Print& bmpOut, bool 
 }
 
 bool PngToBmpConverter::pngFileToBmpStreamWithSize(FsFile& pngFile, Print& bmpOut, int targetMaxWidth,
-                                                   int targetMaxHeight) {
-  return pngFileToBmpStreamInternal(pngFile, bmpOut, targetMaxWidth, targetMaxHeight, false);
+                                                   int targetMaxHeight, bool adaptiveContain) {
+  return pngFileToBmpStreamInternal(pngFile, bmpOut, targetMaxWidth, targetMaxHeight, false, true, adaptiveContain);
 }
 
 bool PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(FsFile& pngFile, Print& bmpOut, int targetMaxWidth,
-                                                       int targetMaxHeight) {
-  return pngFileToBmpStreamInternal(pngFile, bmpOut, targetMaxWidth, targetMaxHeight, true, true);
+                                                       int targetMaxHeight, bool adaptiveContain) {
+  return pngFileToBmpStreamInternal(pngFile, bmpOut, targetMaxWidth, targetMaxHeight, true, true, adaptiveContain);
 }
