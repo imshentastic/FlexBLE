@@ -354,6 +354,14 @@ class CrossPointSettings {
   char sdFontFamilyName[64] = "";
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
   uint8_t showHiddenFiles = 0;
+  // CrumBLE: Bluetooth HID page-turner support. When on, the device scans,
+  // pairs, and reconnects to a bonded HID remote while reading.
+  uint8_t bluetoothEnabled = 0;
+  // Address (e.g. "AA:BB:CC:DD:EE:FF"), name, and address type of the last
+  // successfully bonded BLE HID remote, for one-tap reconnect.
+  char bleBondedDeviceAddr[18] = "";
+  char bleBondedDeviceName[32] = "";
+  uint8_t bleBondedDeviceAddrType = 0;
   // Remove a book from the Recent Books list when its End-of-Book screen is reached (0 = off, 1 = on)
   uint8_t removeReadBooksFromRecents = 0;
   // Move epub to /Read/ folder on SD card when marked as finished (0 = disabled, 1 = enabled)

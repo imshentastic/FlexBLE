@@ -21,6 +21,10 @@ struct MenuResult {
   int action = -1;
   uint8_t orientation = 0;
   bool settingsChanged = false;
+  // CrumBLE: a child menu (e.g. Bluetooth settings opened from the in-reader
+  // menu) sets this so the launching parent menu also pops itself, returning
+  // the user straight to the book instead of back through the menu chain.
+  bool autoExitParent = false;
 };
 
 struct ChapterResult {
