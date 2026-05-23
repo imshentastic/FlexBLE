@@ -1927,18 +1927,28 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const auto tBwStore = millis();
   (void)bwStoreHeapBefore;
   (void)bwStoreHeapAfter;
-  const bool canApplyGrayscale = needsAnyGrayscale && storedBwBuffer;
-  if (needsAnyGrayscale && !storedBwBuffer) {
-    LOG_ERR("ERS", "Skipping grayscale enhancement: failed to store BW backup");
+  // Apply grayscale AA when we either captured a BW backup (fast path: restore
+  // it after the gray pass) OR Bluetooth is active. With BLE on, NimBLE's heap
+  // squeeze usually defeats the backup allocation; rather than drop AA we fall
+  // back to RE-RENDERING the BW page after the gray pass (see
+  // grayscaleNeedsReRender below) — one extra render pass, but it needs no
+  // backup buffer, so AA survives even when there's no room for the snapshot.
+  // Without BLE *and* without a backup the page is genuinely too dense to fit
+  // the 32 KB cap (rare); skip AA there since re-rendering would just slow
+  // every page with no memory pressure to justify it.
+  const bool bleActive = BluetoothHIDManager::getInstance().isEnabled();
+  const bool canApplyGrayscale = needsAnyGrayscale && (storedBwBuffer || bleActive);
+  const bool grayscaleNeedsReRender = canApplyGrayscale && !storedBwBuffer;
+  if (needsAnyGrayscale && !canApplyGrayscale) {
+    LOG_ERR("ERS", "Skipping grayscale enhancement: no BW backup and BLE off");
   }
-  // Explicit per-page anti-aliasing status for diagnosing AA issues. DBG
-  // level so it's compiled out of the production build (no serial spam) but
-  // available in a LOG_LEVEL=2 debug build: textAA reflects the setting,
-  // applied=YES means the grayscale pass actually ran this page, bwStore
-  // shows whether the 32 KB compressed-backup allocation succeeded.
-  LOG_DBG("ERS", "AA: textAA=%s images=%s applied=%s bwStore=%s freeHeap=%u",
+  // Per-page AA status for diagnosis. DBG level (compiled out of the
+  // production build). mode=re-render means we drew the page twice to avoid
+  // the backup buffer; mode=backup is the fast snapshot/restore path.
+  LOG_DBG("ERS", "AA: textAA=%s images=%s applied=%s mode=%s bwStore=%s freeHeap=%u",
           needsTextGrayscale ? "on" : "off", needsImageGrayscale ? "yes" : "no",
-          canApplyGrayscale ? "YES" : "no", storedBwBuffer ? "ok" : "FAILED", esp_get_free_heap_size());
+          canApplyGrayscale ? "YES" : "no", grayscaleNeedsReRender ? "re-render" : "backup",
+          storedBwBuffer ? "ok" : "FAILED", esp_get_free_heap_size());
 
   // grayscale rendering
   if (canApplyGrayscale) {
@@ -1967,8 +1977,25 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     renderer.displayGrayBuffer();
     const auto tGrayDisplay = millis();
     renderer.setRenderMode(GfxRenderer::BW);
-    // restore the bw data
-    renderer.restoreBwBuffer();
+    // Restore the BW framebuffer so the next partial refresh has the correct
+    // base image. Fast path: blit it back from the compressed backup. Fallback
+    // (BLE active, backup alloc failed): re-render the page in BW — one extra
+    // render pass, but needs no backup buffer, which is the whole point: AA
+    // works even when NimBLE has eaten the heap.
+    if (storedBwBuffer) {
+      renderer.restoreBwBuffer();
+    } else {
+      // Re-render fallback. Two parts mirror what restoreBwBuffer() does:
+      // (1) put the BW page back in the framebuffer (here by redrawing it),
+      // and (2) clean up the display controller's grayscale RAM state by
+      // writing that BW framebuffer back to it. Skipping (2) was the cause
+      // of the heavy ghosting — the panel kept the 4-level grayscale RAM
+      // and the next refresh smeared against it.
+      renderer.clearScreen();
+      page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+      renderStatusBar();
+      renderer.cleanupGrayscaleWithFrameBuffer();
+    }
     const auto tBwRestore = millis();
 
     const auto tEnd = millis();
