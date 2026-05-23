@@ -5,6 +5,7 @@
 
 #include <cstring>
 
+#include "../settings/BluetoothSettingsActivity.h"
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -116,6 +117,7 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
   items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
   items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS});
   items.push_back({MenuAction::READING_STATS, StrId::STR_READING_STATS});
+  items.push_back({MenuAction::BLUETOOTH, StrId::STR_BLUETOOTH});
   items.push_back(
       {MenuAction::TOGGLE_COMPLETED, isBookCompleted ? StrId::STR_MARK_UNFINISHED : StrId::STR_MARK_FINISHED});
   return items;
@@ -146,6 +148,31 @@ void EpubReaderMenuActivity::loop() {
       // Cycle orientation preview locally; actual rotation happens on menu exit.
       pendingOrientation = (pendingOrientation + 1) % orientationLabels.size();
       requestUpdate();
+      return;
+    }
+
+    if (selectedAction == MenuAction::BLUETOOTH) {
+      // exitOnSuccessfulConnect=true: when the user pairs a new remote or
+      // reconnects to a bonded one from inside the book, BluetoothSettings
+      // sets MenuResult.autoExitParent=true and pops itself. We then also
+      // finish this menu so the user lands straight back in the book —
+      // ActivityManager chains the two pops in the same loop iteration so
+      // the menu never visibly re-renders.
+      startActivityForResult(
+          std::make_unique<BluetoothSettingsActivity>(renderer, mappedInput, [] { activityManager.popActivity(); },
+                                                      /*exitOnSuccessfulConnect=*/true),
+          [this](const ActivityResult& result) {
+            const auto* menu = std::get_if<MenuResult>(&result.data);
+            if (menu && menu->autoExitParent) {
+              ActivityResult myResult;
+              myResult.isCancelled = true;
+              myResult.data = MenuResult{-1, pendingOrientation, settingsChanged};
+              setResult(std::move(myResult));
+              finish();
+              return;
+            }
+            requestUpdate();
+          });
       return;
     }
 
