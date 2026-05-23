@@ -838,24 +838,17 @@ void SleepActivity::composePngOverReaderPage(const std::string& pngPath) const {
 
   if (overlayPageBufferTrusted) {
     renderer.restoreBwBuffer();
-  } else if (canSnapshotOverlayBackground && !path.empty()) {
-    // Only use a reader page as the background when we actually slept from a
-    // book. Sleeping from elsewhere (e.g. the home carousel) must NOT pull the
-    // last-opened book's page in as a backdrop — that surfaces a stale cover
-    // that reads as a "zoomed-in home screen". In that case fall through to a
-    // clean white background below.
-    backgroundWasRebuilt = renderSavedReaderPage();
-    if (!backgroundWasRebuilt) {
-      if (overlayPageBufferStored) {
-        LOG_DBG("SLP", "Compose PNG: page re-render failed, using captured screen");
-        renderer.restoreBwBuffer();
-      } else {
-        LOG_DBG("SLP", "Compose PNG: page re-render failed, using white background");
-        renderer.clearScreen();
-      }
-    }
+  } else if (canSnapshotOverlayBackground && restoreFramebufferFromCycleCache()) {
+    // Heap-light background: reuse the clean reader-page snapshot captured in
+    // onEnter() instead of re-rendering the page through the section cache. The
+    // re-render rebuilds the section cache on every sleep ("SCT: parameters do
+    // not match") and, on a long reading session, can exhaust the heap — which
+    // then left no room for the PNG decoder and froze the "Going to sleep"
+    // popup on screen. The snapshot is the exact page that was on screen, and
+    // is only written when we slept from a book (so sleeping from the home
+    // carousel still falls through to the clean white background below).
   } else {
-    // Not sleeping from a book: blank background behind the (transparent) PNG.
+    // Not sleeping from a book (or no snapshot available): blank background.
     renderer.clearScreen();
   }
 
@@ -863,6 +856,11 @@ void SleepActivity::composePngOverReaderPage(const std::string& pngPath) const {
 
   if (!decodeSleepPngToBuffer(renderer, pngPath, pageWidth, pageHeight)) {
     LOG_ERR("SLP", "Failed to compose PNG over reader page: %s", pngPath.c_str());
+    // Never leave the "Going to sleep" popup frozen on screen. Fall back to a
+    // clean, heap-light default sleep screen so a proper sleep state is always
+    // shown even when the PNG decoder is out of memory.
+    renderer.setOrientation(GfxRenderer::Portrait);
+    renderDefaultSleepScreen();
     renderer.setOrientation(savedOrientation);
     return;
   }
