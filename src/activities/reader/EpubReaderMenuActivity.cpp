@@ -176,6 +176,7 @@ void EpubReaderMenuActivity::loop() {
     }
 
     if (selectedAction == MenuAction::BLUETOOTH) {
+#ifndef SIMULATOR
       // exitOnSuccessfulConnect=true: when the user pairs a new remote or
       // reconnects to a bonded one from inside the book, BluetoothSettings
       // sets MenuResult.autoExitParent=true and pops itself. We then also
@@ -197,6 +198,7 @@ void EpubReaderMenuActivity::loop() {
             }
             requestUpdate();
           });
+#endif  // SIMULATOR: BLE pairing UI needs NimBLE; no-op in the native simulator.
       return;
     }
 
