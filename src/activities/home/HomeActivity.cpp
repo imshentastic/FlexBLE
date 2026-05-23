@@ -6,6 +6,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <MemoryBudget.h>
 #include <Serialization.h>
 #include <Utf8.h>
 #include <Xtc.h>
@@ -727,6 +728,19 @@ void HomeActivity::enrichActiveCollectionForSeries() {
     return;
   }
 
+  // Memory guard BEFORE drawing the popup or scanning. Parsing OPF + growing
+  // and persisting SeriesIndex needs headroom; on a large collection a low-heap
+  // scan can OOM mid-pass, and since this re-runs on every home render until it
+  // completes, that becomes a crash-loop the user can't escape (they can't
+  // reach Settings to disable the feature). If headroom is too low, skip this
+  // pass entirely — no popup, no scan, no crash — and retry on a later render
+  // once heap frees up. Leaving seriesEnrichmentNeededForActive set means we'll
+  // try again rather than silently giving up.
+  if (!MemoryBudget::hasHeapForSeriesScan()) {
+    LOG_DBG("HOME", "Series scan deferred: low heap (free=%u maxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    return;
+  }
+
   const Rect popupRect = GUI.drawPopup(renderer, "Detecting series...");
   // Popup drawn over the framebuffer; flag the frame so the end-of-render
   // snapshot is skipped and the follow-up render erases it (see
@@ -736,16 +750,27 @@ void HomeActivity::enrichActiveCollectionForSeries() {
   const int total = static_cast<int>(toCheck.size());
   int processed = 0;
   for (const auto& p : toCheck) {
+    // Per-book memory guard: heap can drop as the index grows over a long scan.
+    // Stop this pass before an allocation fails rather than OOM-crashing; the
+    // books processed so far are persisted (record() saves incrementally), so
+    // the next pass resumes from here.
+    if (!MemoryBudget::hasHeapForSeriesScan()) {
+      LOG_DBG("HOME", "Series scan stopped mid-pass: low heap after %d books", processed);
+      break;
+    }
+    // Mark this book checked BEFORE the risky parse. extractSeriesFromOpf
+    // returns false gracefully for a missing/odd OPF, but a hard crash inside
+    // the parser (e.g. malformed XML) would otherwise leave the book unrecorded
+    // and re-trigger the same crash on every boot — an inescapable loop. By
+    // recording it first, a crash mid-parse still leaves it "checked", so the
+    // next boot skips it and the home screen recovers.
+    SeriesIndex::getInstance().record(p, "", "");
     Epub epub(p, "/.crosspoint");
     // extractSeriesFromOpf doesn't touch book.bin — safe to call on
-    // books with or without an existing cache.
+    // books with or without an existing cache. On success, overwrite the
+    // placeholder record with the real series name/index.
     if (epub.extractSeriesFromOpf()) {
       SeriesIndex::getInstance().record(p, epub.getSeriesName(), epub.getSeriesIndex());
-    } else {
-      // Couldn't read OPF — record empty so we don't keep retrying
-      // this book on every collection visit. The user can manually
-      // re-trigger via a rescan if they want.
-      SeriesIndex::getInstance().record(p, "", "");
     }
     processed++;
     GUI.fillPopupProgress(renderer, popupRect, 5 + (processed * 90) / total);

@@ -93,6 +93,16 @@ inline bool hasHeapForOptionalEpubRebuild(const char* tag, const char* action, c
   return false;
 }
 
+// Series-metadata scan (OPF parse + SeriesIndex growth/persist). It runs on
+// the home screen (BLE off) and re-runs every render until complete, so an OOM
+// mid-scan would crash-loop the home screen — which the user can't escape to
+// disable the feature. Callers bail when this returns false; the collection
+// just renders without full series collapse instead of crashing.
+constexpr uint32_t SERIES_SCAN_MIN_FREE = 48U * 1024U;
+constexpr uint32_t SERIES_SCAN_MIN_MAX_ALLOC = 24U * 1024U;
+
+inline bool hasHeapForSeriesScan() { return hasHeap(snapshot(), SERIES_SCAN_MIN_FREE, SERIES_SCAN_MIN_MAX_ALLOC); }
+
 inline bool hasHeapForImageDecoder(const char* tag, const char* decoderName, const uint32_t decoderApproxBytes) {
   const auto heap = snapshot();
   const uint32_t minFree = decoderApproxBytes + IMAGE_DECODER_HEADROOM;
