@@ -1,7 +1,13 @@
 # Name,   Type, SubType, Offset,  Size, Flags
+# CrumBLE v3.0.0 (rebased on CrossInk 1.3): app slots enlarged 6.25MB -> 7.5MB
+# each by reclaiming the unused `spiffs` partition (nothing reads/writes it;
+# web assets are PROGMEM, books live on SD). Needed to fit BLE + Collections +
+# Flow + AA on top of the larger 1.3 base. NOTE: this changes the partition
+# table, so upgrading from a 6.25MB-slot build requires a one-time wired/SD
+# reflash (OTA can't repartition).
 nvs,      data, nvs,     0x9000,  0x5000,
 otadata,  data, ota,     0xe000,  0x2000,
-app0,     app,  ota_0,   0x10000, 0x640000,
-app1,     app,  ota_1,   0x650000,0x640000,
-spiffs,   data, spiffs,  0xc90000,0x360000,
+app0,     app,  ota_0,   0x10000, 0x780000,
+app1,     app,  ota_1,   0x790000,0x780000,
+spiffs,   data, spiffs,  0xF10000,0xE0000,
 coredump, data, coredump,0xFF0000,0x10000,
