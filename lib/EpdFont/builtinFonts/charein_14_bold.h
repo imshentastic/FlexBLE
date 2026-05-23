@@ -4385,7 +4385,7 @@ static const EpdLigaturePair charein_14_boldLigaturePairs[] = {
     { 0xFB00006C, 0xFB04 }, // U+FB00 l -> U+FB04
 };
 
-static const EpdFontData charein_14_bold = {
+static constexpr EpdFontData charein_14_bold = {
     charein_14_boldBitmaps,
     charein_14_boldGlyphs,
     charein_14_boldIntervals,

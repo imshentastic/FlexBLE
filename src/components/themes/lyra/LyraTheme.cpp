@@ -38,13 +38,15 @@ namespace {
 constexpr int hPaddingInSelection = 8;
 constexpr int cornerRadius = 6;
 constexpr int topHintButtonY = 345;
-constexpr int popupMarginX = 16;
-constexpr int popupMarginY = 12;
 constexpr int maxListValueWidth = 200;
 constexpr uint32_t mainMenuIconSize = 32;
 constexpr uint32_t listIconSize = 24;
 constexpr int mainMenuColumns = 2;
 int coverWidth = 0;
+
+int centeredRowY(const int rowY, const int rowHeight, const int contentHeight) {
+  return rowY + std::max(0, rowHeight - contentHeight) / 2;
+}
 
 }  // namespace
 
@@ -284,8 +286,9 @@ void LyraTheme::drawListWithMetrics(const GfxRenderer& renderer, Rect rect, int 
     textWidth -= iconSize + hPaddingInSelection;
   }
 
-  // Draw all items using a running Y to accommodate variable-height section headers
-  int iconY = (rowSubtitle != nullptr) ? 16 : 10;
+  const int titleLineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+
+  // Draw all items using a running Y to accommodate variable-height section headers.
   int currentY = rect.y;
   for (int i = pageStartIndex; i < itemCount && i < pageStartIndex + pageItems; i++) {
     if (i > pageStartIndex && isHeaderRow(i)) currentY += sectionHeaderTopPadding;
@@ -324,13 +327,13 @@ void LyraTheme::drawListWithMetrics(const GfxRenderer& renderer, Rect rect, int 
 
     auto itemName = rowTitle(i);
     auto item = renderer.truncatedText(UI_10_FONT_ID, itemName.c_str(), rowTextWidth);
-    renderer.drawText(UI_10_FONT_ID, textX, itemY + 7, item.c_str(), foreground);
+    const int titleY = rowSubtitle != nullptr ? itemY + 7 : centeredRowY(itemY, currentRowHeight, titleLineHeight);
+    renderer.drawText(UI_10_FONT_ID, textX, titleY, item.c_str(), foreground);
 
     // Apply checkerboard dither to create gray text effect for dimmed items
     if (rowDimmed && rowDimmed(i) && !selectedRow) {
       const int titleWidth = renderer.getTextWidth(UI_10_FONT_ID, item.c_str());
-      const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
-      for (int py = itemY + 7; py < itemY + 7 + lineH; py++)
+      for (int py = titleY; py < titleY + titleLineHeight; py++)
         for (int px = textX; px < textX + titleWidth; px++)
           if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
     }
@@ -340,10 +343,12 @@ void LyraTheme::drawListWithMetrics(const GfxRenderer& renderer, Rect rect, int 
       const uint8_t* iconBitmap = iconForName(icon, iconSize);
       if (iconBitmap != nullptr) {
         const int iconX = rect.x + metrics.contentSidePadding + hPaddingInSelection;
+        const int iconY =
+            rowSubtitle != nullptr ? itemY + 16 : centeredRowY(itemY, currentRowHeight, static_cast<int>(iconSize));
         if (invertSelectedRows && selectedRow) {
-          renderer.drawIconInverted(iconBitmap, iconX, itemY + iconY, iconSize, iconSize);
+          renderer.drawIconInverted(iconBitmap, iconX, iconY, iconSize, iconSize);
         } else {
-          renderer.drawIcon(iconBitmap, iconX, itemY + iconY, iconSize, iconSize);
+          renderer.drawIcon(iconBitmap, iconX, iconY, iconSize, iconSize);
         }
       }
     }
@@ -362,10 +367,7 @@ void LyraTheme::drawListWithMetrics(const GfxRenderer& renderer, Rect rect, int 
                                  itemY, valueWidth + hPaddingInSelection, rowHeight, cornerRadius, Color::Black);
       }
 
-      int valueY = itemY + 6;
-      if (rowSubtitle != nullptr) {
-        valueY = itemY + 16;
-      }
+      const int valueY = rowSubtitle != nullptr ? itemY + 16 : centeredRowY(itemY, currentRowHeight, titleLineHeight);
       const bool valueForeground = invertSelectedRows ? !selectedRow : !(selectedRow && highlightValue);
       renderer.drawText(UI_10_FONT_ID, rect.x + contentWidth - metrics.contentSidePadding - valueWidth, valueY,
                         valueText.c_str(), valueForeground);
@@ -676,48 +678,4 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
 
     renderer.drawText(UI_12_FONT_ID, textX, textY, label, true);
   }
-}
-
-Rect LyraTheme::drawPopup(const GfxRenderer& renderer, const char* message, int minTextWidth,
-                          bool leftAlignText) const {
-  // Scale y position proportionally to screen height (16.5% from top)
-  const int y = static_cast<int>(renderer.getScreenHeight() * 0.165f);
-  constexpr int outline = 2;
-  const int actualTextWidth = renderer.getTextWidth(UI_12_FONT_ID, message, EpdFontFamily::REGULAR);
-  // minTextWidth floors the box width for stable animated popups (see
-  // BaseTheme::drawPopup for the rationale).
-  const int textWidth = std::max(actualTextWidth, minTextWidth);
-  const int textHeight = renderer.getLineHeight(UI_12_FONT_ID);
-  const int w = textWidth + popupMarginX * 2;
-  const int h = textHeight + popupMarginY * 2;
-  const int x = (renderer.getScreenWidth() - w) / 2;
-
-  renderer.fillRoundedRect(x - outline, y - outline, w + outline * 2, h + outline * 2, cornerRadius + outline,
-                           Color::White);
-  renderer.fillRoundedRect(x, y, w, h, cornerRadius, Color::Black);
-
-  // Center-align in the (possibly wider) box, OR left-anchor at the
-  // margin for dots-style animations that want the leading word pinned.
-  const int textX = leftAlignText ? (x + popupMarginX) : (x + (w - actualTextWidth) / 2);
-  const int textY = y + popupMarginY - 2;
-  renderer.drawText(UI_12_FONT_ID, textX, textY, message, false, EpdFontFamily::REGULAR);
-  renderer.displayBuffer();
-
-  return Rect{x, y, w, h};
-}
-
-void LyraTheme::fillPopupProgress(const GfxRenderer& renderer, const Rect& layout, const int progress) const {
-  constexpr int barHeight = 4;
-
-  // Twice the margin in drawPopup to match text width
-  const int barWidth = layout.width - popupMarginX * 2;
-  const int barX = layout.x + (layout.width - barWidth) / 2;
-  // Center inside the margin of drawPopup. The - 1 is added to account for the - 2 in drawPopup.
-  const int barY = layout.y + layout.height - popupMarginY / 2 - barHeight / 2 - 1;
-
-  int fillWidth = barWidth * progress / 100;
-
-  renderer.fillRect(barX, barY, fillWidth, barHeight, false);
-
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }

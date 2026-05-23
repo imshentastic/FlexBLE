@@ -72,6 +72,19 @@ class EpubReaderActivity final : public Activity {
   // Reader Menu -> Bluetooth to re-enable manually — checkAutoReconnect()
   // refuses to do anything while _enabled is false.
   bool bleAutoReEnableAfterReindex = false;
+  // CrumBLE: set once per book open when a page can't render with a BLE remote
+  // connected (image decode or glyphs starved by NimBLE's ~58 KB). We drop
+  // Bluetooth so the full heap renders the page (images AND text), and show the
+  // explanatory alert only once. Image-heavy books are simply unreadable with a
+  // remote attached on this chip; the user reads with device buttons.
+  bool btDisabledForMemoryThisBook = false;
+  // Post-connect grace tracking for the auto-drop above. NimBLE's connect
+  // handshake briefly spikes heap pressure; a single render in that window can
+  // starve even on books that read fine with BLE. We ignore starvation until
+  // kBtConnectGraceMs after the remote came up, so the auto-drop only fires on
+  // books that stay unrenderable past the transient.
+  unsigned long btEnabledAtMs = 0UL;
+  bool btWasEnabled = false;
   enum class BookmarkFeedbackType : uint8_t {
     Added,
     Removed,
@@ -83,21 +96,22 @@ class EpubReaderActivity final : public Activity {
   bool pendingCompletedFeedback = false;
   bool completedFeedbackIsFinished = false;
   unsigned long completedFeedbackShowTime = 0UL;
+  bool pendingTiltPageTurnFeedback = false;
+  bool tiltPageTurnFeedbackEnabled = false;
+  unsigned long tiltPageTurnFeedbackShowTime = 0UL;
   int completionTriggerSpineIndex = -1;
   float completionTriggerSpineProgress = 1.0f;
   bool completionPromptQueued = false;
   bool completionPromptShown = false;
   bool completionTriggerSeenBelow = false;
   bool lastAtOrPastCompletionTrigger = false;
-  bool pendingReadFolderMove = false;
 
-  struct ReadFolderMoveParams {
-    std::string epubPath;
-    std::string dstEpubPath;
-    std::string cachePath;
-    std::string title;
-  };
-  static void readFolderMoveTask(void* arg);
+  // Tracks whether this book is currently removed from Recent Books by the
+  // removeReadBooksFromRecents feature (set at End-of-Book, cleared if paged back in).
+  bool recentsEntryRemoved = false;
+  // Set when the reader is left at end-of-book and SETTINGS.moveFinishedToReadFolder is on.
+  // Consumed in onExit() to relocate the finished book into /Read/.
+  bool pendingReadFolderMove = false;
 
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
@@ -140,6 +154,7 @@ class EpubReaderActivity final : public Activity {
   void queueCompletionPromptIfNeeded();
   void setBookCompleted(bool isCompleted);
   void showCompletedFeedback(bool isCompleted);
+  void showTiltPageTurnFeedback(bool enabled);
 
   // Footnote navigation
   void navigateToHref(const std::string& href, bool savePosition = false);
@@ -160,6 +175,7 @@ class EpubReaderActivity final : public Activity {
   bool preventAutoSleep() override { return automaticPageTurnActive; }
   bool isReaderActivity() const override { return true; }
   bool canSnapshotForSleepOverlay() const override { return true; }
+  std::string getCurrentBookPath() const override { return epub ? epub->getPath() : std::string{}; }
   void setAutoPageTurnIntervalSeconds(uint16_t seconds);
   uint16_t getAutoPageTurnIntervalSeconds() const;
 

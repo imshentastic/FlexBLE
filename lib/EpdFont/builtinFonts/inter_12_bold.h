@@ -4996,7 +4996,7 @@ static const int8_t inter_12_boldKernMatrix[] = {
        0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,  -27,    0,  -27,  -16,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,  -20,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,  -27,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
 };
 
-static const EpdFontData inter_12_bold = {
+static constexpr EpdFontData inter_12_bold = {
     inter_12_boldBitmaps,
     inter_12_boldGlyphs,
     inter_12_boldIntervals,

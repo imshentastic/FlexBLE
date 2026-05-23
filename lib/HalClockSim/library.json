@@ -1,0 +1,11 @@
+{
+  "name": "HalClockSim",
+  "version": "1.0.0",
+  "description": "Native simulator stub for the X3 RTC clock HAL",
+  "frameworks": "*",
+  "platforms": "native",
+  "build": {
+    "srcDir": "src",
+    "includeDir": "include"
+  }
+}

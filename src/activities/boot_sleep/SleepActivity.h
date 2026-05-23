@@ -1,12 +1,19 @@
 #pragma once
+#include <string>
+#include <utility>
+
 #include "activities/Activity.h"
 
 class Bitmap;
 
 class SleepActivity final : public Activity {
  public:
-  explicit SleepActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool canSnapshotOverlayBackground)
-      : Activity("Sleep", renderer, mappedInput), canSnapshotOverlayBackground(canSnapshotOverlayBackground) {}
+  explicit SleepActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool canSnapshotOverlayBackground,
+                         std::string currentBookPath = {}, bool fromTimeout = false)
+      : Activity("Sleep", renderer, mappedInput),
+        canSnapshotOverlayBackground(canSnapshotOverlayBackground),
+        currentBookPath(std::move(currentBookPath)),
+        fromTimeout(fromTimeout) {}
   void onEnter() override;
 
   // Pick a fresh random image from /.sleep (or /sleep) and draw it without any popup or text.
@@ -26,7 +33,9 @@ class SleepActivity final : public Activity {
   void renderCustomSleepScreen() const;
   void renderCoverSleepScreen() const;
   void renderReadingStatsSleepScreen() const;
+  void renderMinimalSleepScreen() const;
   void renderBitmapSleepScreen(const Bitmap& bitmap) const;
+  void renderLastScreenSleepScreen() const;
   void renderBlankSleepScreen() const;
   void renderOverlaySleepScreen() const;
   // Compose a (possibly transparent) PNG over the last reader page, with the
@@ -37,4 +46,6 @@ class SleepActivity final : public Activity {
   bool canSnapshotOverlayBackground = false;
   bool overlayPageBufferStored = false;
   bool overlayPageBufferTrusted = false;
+  std::string currentBookPath;
+  bool fromTimeout = false;
 };

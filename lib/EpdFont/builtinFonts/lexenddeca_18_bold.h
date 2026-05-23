@@ -3855,7 +3855,7 @@ static const EpdLigaturePair lexenddeca_18_boldLigaturePairs[] = {
     { 0x0066006C, 0xFB02 }, // f l -> U+FB02
 };
 
-static const EpdFontData lexenddeca_18_bold = {
+static constexpr EpdFontData lexenddeca_18_bold = {
     lexenddeca_18_boldBitmaps,
     lexenddeca_18_boldGlyphs,
     lexenddeca_18_boldIntervals,

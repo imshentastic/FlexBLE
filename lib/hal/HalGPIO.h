@@ -81,6 +81,7 @@ class HalGPIO {
   bool wasAnyReleased() const;
   unsigned long getHeldTime() const;
   unsigned long getHeldTime(uint8_t buttonIndex) const;
+  unsigned long getPowerButtonHeldTime() const;  // CrossInk 1.3
 
   // Virtual button injection (for Bluetooth HID).
   void setVirtualButtonState(uint8_t buttonIndex, bool pressed);

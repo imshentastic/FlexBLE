@@ -183,6 +183,9 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   bool success = decoder->decodeToFramebuffer(imagePath, renderer, config);
   if (!success) {
     LOG_ERR("IMG", "Failed to decode image: %s", imagePath.c_str());
+    // Signal render starvation so the reader can drop Bluetooth for this book
+    // (image decode needs a large contiguous block NimBLE's ~58 KB denies).
+    renderer.markRenderStarved();
     return;
   }
 

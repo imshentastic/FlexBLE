@@ -62,6 +62,9 @@ enum class FileBrowserAction : int {
   // books to the active collection in one pass instead of long-
   // pressing each book individually.
   AddBooksToActiveCollection = 15,
+  // CrossInk 1.3 recent-books long-press action (List/Grid views). Distinct
+  // from our home RemoveFromRecentBooks=7; assigned a non-colliding value.
+  RemoveFromRecents = 16,
 };
 
 class FileBrowserActionActivity final : public Activity {

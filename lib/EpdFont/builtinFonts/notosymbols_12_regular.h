@@ -1252,7 +1252,7 @@ static const int8_t notosymbols_12_regularKernMatrix[] = {
        0,    0,    0,    0,    0,    0,    0,    0,   20,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
 };
 
-static const EpdFontData notosymbols_12_regular = {
+static constexpr EpdFontData notosymbols_12_regular = {
     notosymbols_12_regularBitmaps,
     notosymbols_12_regularGlyphs,
     notosymbols_12_regularIntervals,

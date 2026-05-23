@@ -70,7 +70,7 @@ void applyLegacyStatusBarSettings(CrossPointSettings& settings) {
 
 bool isEnumRawValueAllowed(const SettingInfo& info, uint8_t value) {
   if (info.enumRawValues.empty()) {
-    return value < info.enumValues.size();
+    return value < settingEnumOptionCount(info);
   }
   return std::find(info.enumRawValues.begin(), info.enumRawValues.end(), value) != info.enumRawValues.end();
 }
@@ -84,6 +84,8 @@ uint8_t defaultEnumRawValue(const SettingInfo& info, uint8_t fieldDefault) {
   }
   return 0;
 }
+
+bool isSleepScreenSetting(const SettingInfo& info) { return info.key && strcmp(info.key, "sleepScreen") == 0; }
 
 // ---- CrossPointState ----
 
@@ -99,6 +101,7 @@ bool JsonSettingsIO::saveState(const CrossPointState& s, const char* path) {
   doc["lastSleepFromReader"] = s.lastSleepFromReader;
   doc["pendingBookmarkSpine"] = s.pendingBookmarkSpine;
   doc["pendingBookmarkProgress"] = s.pendingBookmarkProgress;
+  doc["showBootScreen"] = s.showBootScreen;
 
   String json;
   serializeJson(doc, json);
@@ -136,6 +139,7 @@ bool JsonSettingsIO::loadState(CrossPointState& s, const char* json) {
   s.lastSleepFromReader = doc["lastSleepFromReader"] | false;
   s.pendingBookmarkSpine = doc["pendingBookmarkSpine"] | static_cast<uint16_t>(UINT16_MAX);
   s.pendingBookmarkProgress = doc["pendingBookmarkProgress"] | static_cast<float>(-1.0f);
+  s.showBootScreen = doc["showBootScreen"] | true;
   return true;
 }
 
@@ -157,7 +161,11 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
         doc[info.key] = strPtr;
       }
     } else {
-      doc[info.key] = s.*(info.valuePtr);
+      uint8_t value = s.*(info.valuePtr);
+      if (isSleepScreenSetting(info)) {
+        value = CrossPointSettings::sleepScreenModeToStorage(value);
+      }
+      doc[info.key] = value;
     }
   }
 
@@ -210,7 +218,6 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
   if (doc["statusBarChapterPageCount"].isNull()) {
     applyLegacyStatusBarSettings(s);
   }
-
   for (const auto& info : getSettingsList()) {
     if (!info.key) continue;
     // Dynamic entries (KOReader etc.) are stored in their own files — skip.
@@ -221,9 +228,12 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
       const std::string fieldDefault = strPtr;  // current buffer = struct-initializer default
       std::string val;
       if (info.obfuscated) {
-        bool ok = false;
-        val = obfuscation::deobfuscateFromBase64(doc[std::string(info.key) + "_obf"] | "", &ok);
-        if (!ok || val.empty()) {
+        obfuscation::DecodeStatus status = obfuscation::DecodeStatus::INVALID;
+        val = obfuscation::deobfuscateFromBase64(doc[std::string(info.key) + "_obf"] | "", &status);
+        if (status == obfuscation::DecodeStatus::LEGACY && !val.empty() && needsResave) {
+          *needsResave = true;
+        }
+        if (status == obfuscation::DecodeStatus::INVALID || status == obfuscation::DecodeStatus::EMPTY || val.empty()) {
           val = doc[info.key] | fieldDefault;
           if (val != fieldDefault && needsResave) *needsResave = true;
         }
@@ -242,8 +252,23 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
     } else {
       const uint8_t fieldDefault = s.*(info.valuePtr);  // struct-initializer default, read before we overwrite it
       uint8_t v = doc[info.key] | fieldDefault;
+      if (isSleepScreenSetting(info)) {
+        const uint8_t storedDefault = CrossPointSettings::sleepScreenModeToStorage(fieldDefault);
+        const uint8_t storedValue = doc[info.key] | storedDefault;
+        v = CrossPointSettings::sleepScreenStorageToMode(storedValue);
+        if (CrossPointSettings::sleepScreenModeToStorage(v) != storedValue && needsResave) *needsResave = true;
+        s.*(info.valuePtr) = v;
+        continue;
+      }
       if (info.type == SettingType::ENUM) {
-        if (!isEnumRawValueAllowed(info, v)) {
+        const bool isSdFontSize = info.key && strcmp(info.key, "fontSize") == 0 &&
+                                  doc["sdFontFamilyName"].is<const char*>() &&
+                                  doc["sdFontFamilyName"].as<const char*>()[0] != '\0';
+        if (isSdFontSize && v < CrossPointSettings::SD_FONT_MAX_SIZE_STEPS) {
+          // Keep a saved SD-family size index even when this build's built-in
+          // font list has fewer choices; the registry-aware settings list will
+          // clamp it to the selected family once SD fonts are discovered.
+        } else if (!isEnumRawValueAllowed(info, v)) {
           v = defaultEnumRawValue(info, fieldDefault);
           if (needsResave) *needsResave = true;
         }
@@ -352,11 +377,24 @@ bool JsonSettingsIO::loadWifi(WifiCredentialStore& store, const char* json, bool
     if (store.credentials.size() >= store.MAX_NETWORKS) break;
     WifiCredential cred;
     cred.ssid = obj["ssid"] | std::string("");
-    bool ok = false;
-    cred.password = obfuscation::deobfuscateFromBase64(obj["password_obf"] | "", &ok);
-    if (!ok || cred.password.empty()) {
+    if (cred.ssid.empty()) {
+      LOG_ERR("WCS", "Skipping WiFi credential with empty SSID");
+      continue;
+    }
+
+    obfuscation::DecodeStatus status = obfuscation::DecodeStatus::INVALID;
+    cred.password = obfuscation::deobfuscateFromBase64(obj["password_obf"] | "", &status);
+    if (status == obfuscation::DecodeStatus::LEGACY && !cred.password.empty() && needsResave) {
+      *needsResave = true;
+    }
+    if (status == obfuscation::DecodeStatus::INVALID || status == obfuscation::DecodeStatus::EMPTY ||
+        cred.password.empty()) {
       cred.password = obj["password"] | std::string("");
       if (!cred.password.empty() && needsResave) *needsResave = true;
+    }
+    if (status == obfuscation::DecodeStatus::INVALID && cred.password.empty()) {
+      LOG_ERR("WCS", "Skipping WiFi credential with unreadable password: %s", cred.ssid.c_str());
+      continue;
     }
     store.credentials.push_back(cred);
   }
@@ -447,11 +485,18 @@ bool JsonSettingsIO::loadOpds(OpdsServerStore& store, const char* json, bool* ne
     server.username = obj["username"] | std::string("");
     // Try the obfuscated key first; fall back to plaintext "password" for
     // files written before obfuscation was added (or hand-edited JSON).
-    bool ok = false;
-    server.password = obfuscation::deobfuscateFromBase64(obj["password_obf"] | "", &ok);
-    if (!ok || server.password.empty()) {
+    obfuscation::DecodeStatus status = obfuscation::DecodeStatus::INVALID;
+    server.password = obfuscation::deobfuscateFromBase64(obj["password_obf"] | "", &status);
+    if (status == obfuscation::DecodeStatus::LEGACY && !server.password.empty() && needsResave) {
+      *needsResave = true;
+    }
+    if (status == obfuscation::DecodeStatus::INVALID || status == obfuscation::DecodeStatus::EMPTY ||
+        server.password.empty()) {
       server.password = obj["password"] | std::string("");
       if (!server.password.empty() && needsResave) *needsResave = true;
+    }
+    if (status == obfuscation::DecodeStatus::INVALID && server.password.empty()) {
+      LOG_ERR("OPS", "Ignoring unreadable password for OPDS server: %s", server.name.c_str());
     }
     store.servers.push_back(std::move(server));
   }

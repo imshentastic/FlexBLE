@@ -13,7 +13,7 @@ void Activity::requestUpdate(bool immediate) { activityManager.requestUpdate(imm
 
 RequestUpdateResult Activity::requestUpdateAndWait() { return activityManager.requestUpdateAndWait(); }
 
-void Activity::onGoHome() { activityManager.goHome(); }
+void Activity::onGoHome(HomeMenuItem item) { activityManager.goHome(item); }
 
 void Activity::exitToHomeWithPopup() {
   // FAST_REFRESH (drawPopup's default mode) gives the user instant
