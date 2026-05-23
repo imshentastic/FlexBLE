@@ -19,17 +19,14 @@ Pre-v1.3 baseline for comparison: `fix/large-library-indexing` (= "v2.1.3", loca
 ## Key finding (answering "compare to pre-v1.3")
 The reader render path is byte-identical to v2.1.2; `MemoryBudget.h` identical. The v2.1.2 **Images setting (Display/Placeholder/Suppress)** + build-time auto-suppress survived the rebase intact. The earlier regressions were caused by a redundant render-time suppression layer I added that fought the native mechanism — now removed.
 
-## KNOWN BUG to investigate next
-**Book 1 false-positive.** The "Bluetooth turned off" alert fired **right after BT connected** on book 1, which renders fine and should be unaffected. Book 2 behaved correctly (worked a few pages, then alert + BT off on the genuinely-too-heavy page).
-
-Hypothesis: right after NimBLE init grabs ~58 KB, the heap is momentarily at its tightest; the first page render can trip the FontDecompressor OOM guard on a single borderline font-group alloc → `markRenderStarved()` → false trigger. We treat a **single** transient glyph skip as "starved."
-
-Fix ideas (next session):
-- Debounce: require a *meaningful* failure, not one glyph — e.g. count OOM glyph-skips per render and only drop BLE above a threshold, and/or count image-decode failures separately (an image failure is unambiguous; a single glyph skip is not).
-- Grace period: ignore starvation on the first render(s) immediately after BLE connect, or retry the render once before deciding.
-- Re-check `maxAlloc` right before deciding, to confirm it's a sustained shortage not a transient spike.
+## Recently fixed
+- **Book-1 false-positive (FIXED, `2ee659dc`).** The "Bluetooth turned off" alert fired right after BT connected on book 1 (which reads fine). Cause: NimBLE's connect handshake briefly spikes heap pressure, starving a single render. Fix: a 4 s post-connect grace window (`btEnabledAtMs`) — starvation is ignored until the transient passes; past the window, persistent starvation still drops BT, so book 2 is unaffected.
+- **First-index cover cap (`9f730af1`).** On `wasFreshFirstBoot()`, cover generation is capped at 24 so a large library can't OOM during first-time setup (SD walk + fragmented heap). Capped books render blank and generate on the next boot. Small libraries unaffected.
 
 ## Remaining R9 validation
-- Fix the book-1 false positive (above).
+- Confirm on device: book 1 no longer false-triggers; book 2 still auto-drops on its genuinely-heavy pages; first boot on a large library stays stable.
 - **SD font selection** — still untested.
 - Then consider cutting v3.0.0.
+
+## First-use crash reports — analysis
+Series detection is OFF by default and gated; `LibraryIndex::rescan` stores file paths only and saves via the streaming writer (the 2.1.3 fix, already on this branch). There is no automatic Series/metadata scan on first use — the known boot-loop was the LibraryIndex OOM, already fixed. The cover cap above is the added belt-and-suspenders for first-time setup.
