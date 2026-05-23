@@ -2,10 +2,12 @@
 
 #include "SimulatorSmokeTest.h"
 
+#include <HalDisplay.h>
 #include <HalStorage.h>
 #include <Logging.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <memory>
@@ -35,6 +37,7 @@ enum class SmokeStep : uint8_t {
   Sleep,
   Reader,
   ReaderInput,
+  HomePopulated,
   Done,
 };
 
@@ -106,11 +109,68 @@ class SimulatorSmokeTest {
     std::_Exit(2);
   }
 
+  // Dump the current (BW) framebuffer to a 24-bit BMP when CROSSINK_SIMULATOR_DUMP_DIR
+  // is set. Panel-native orientation (e.g. 792x528 on X3); rotate to portrait
+  // for viewing. Used to eyeball theme layout on different panels (X3 vs X4)
+  // without hardware.
+  static void dumpFramebufferBmp(const char* name) {
+    const char* dir = std::getenv("CROSSINK_SIMULATOR_DUMP_DIR");
+    if (dir == nullptr || dir[0] == '\0') return;
+    const uint8_t* fb = renderer.getFrameBuffer();
+    if (fb == nullptr) return;
+    const int W = HalDisplay::DISPLAY_WIDTH;
+    const int H = HalDisplay::DISPLAY_HEIGHT;
+    const int widthBytes = (W + 7) / 8;
+    const int rowSize = ((W * 3 + 3) / 4) * 4;
+    const uint32_t dataSize = static_cast<uint32_t>(rowSize) * static_cast<uint32_t>(H);
+    char path[512];
+    std::snprintf(path, sizeof(path), "%s/%s.bmp", dir, name);
+    FILE* f = std::fopen(path, "wb");
+    if (f == nullptr) return;
+    auto w16 = [&](uint16_t v) { std::fputc(v & 0xFF, f); std::fputc((v >> 8) & 0xFF, f); };
+    auto w32 = [&](uint32_t v) {
+      std::fputc(v & 0xFF, f);
+      std::fputc((v >> 8) & 0xFF, f);
+      std::fputc((v >> 16) & 0xFF, f);
+      std::fputc((v >> 24) & 0xFF, f);
+    };
+    std::fputc('B', f);
+    std::fputc('M', f);
+    w32(54 + dataSize);
+    w32(0);
+    w32(54);
+    w32(40);
+    w32(static_cast<uint32_t>(W));
+    w32(static_cast<uint32_t>(-H));  // negative height = top-down rows
+    w16(1);
+    w16(24);
+    w32(0);
+    w32(dataSize);
+    w32(2835);
+    w32(2835);
+    w32(0);
+    w32(0);
+    std::vector<uint8_t> row(static_cast<size_t>(rowSize), 0);
+    for (int y = 0; y < H; ++y) {
+      for (int x = 0; x < W; ++x) {
+        const uint8_t byte = fb[y * widthBytes + (x >> 3)];
+        const uint8_t v = ((byte >> (7 - (x & 7))) & 1) ? 0xFF : 0x00;  // bit set = white
+        row[static_cast<size_t>(x) * 3 + 0] = v;
+        row[static_cast<size_t>(x) * 3 + 1] = v;
+        row[static_cast<size_t>(x) * 3 + 2] = v;
+      }
+      std::fwrite(row.data(), 1, static_cast<size_t>(rowSize), f);
+    }
+    std::fclose(f);
+    LOG_INF("SMOKE", "Dumped framebuffer: %s (%dx%d panel-native)", path, W, H);
+  }
+
   static void renderCurrentStep(const char* name) {
     LOG_INF("SMOKE", "Rendering %s", name);
     if (activityManager.requestUpdateAndWait() != RequestUpdateResult::Rendered) {
       fail("Render was rejected for %s", name);
     }
+    dumpFramebufferBmp(name);
   }
 
   void queueStep(const char* name, SmokeStep nextStep, int framesToSettle = 3) {
@@ -200,6 +260,13 @@ class SimulatorSmokeTest {
         runReaderInputScript();
         break;
 
+      case SmokeStep::HomePopulated:
+        // Return Home after the reader has opened a book so the Flow carousel
+        // and shelf render with an actual cover (densest layout to eyeball on X3).
+        activityManager.goHome();
+        queueStep("Home Populated", SmokeStep::Done, 6);
+        break;
+
       case SmokeStep::Done:
         LOG_INF("SMOKE", "Simulator smoke test passed");
         std::_Exit(0);
@@ -257,7 +324,7 @@ class SimulatorSmokeTest {
 
   void runReaderInputScript() {
     if (scriptIndex >= inputScript.size()) {
-      step = SmokeStep::Done;
+      step = SmokeStep::HomePopulated;
       return;
     }
 
