@@ -184,52 +184,53 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   const int idx4 = (curIdx + 1) % count;          // right-near
   const int idx5 = (curIdx + 2) % count;          // right-far
 
-  // Variables that the footer (drawn unconditionally below) depends on.
-  // Initialize to the default centerCoverWidth/Height; the cover-loading
-  // block below may revise them based on the parsed BMP's true aspect.
-  // When skipCarouselCoverLoads is set we keep the defaults — for books
-  // with unusual aspect ratios this can shift the footer position by a
-  // few pixels relative to the customized cover, but the visual jitter
-  // is subtle and only happens when transitioning into the skip path.
+  // Variables the footer (progress bar) and cover chrome depend on. We
+  // peek the CENTER cover's true dimensions on EVERY render — even in the
+  // skipCarouselCoverLoads fast path — so the footer width stays stable.
+  // If we left these at the default 220 while skipping but recomputed them
+  // narrower on the next full render, the progress bar would visibly start
+  // wider then shrink when navigating (it tracks actualCoverWidth below).
+  // parseHeaders() only reads the small BMP header; the expensive work
+  // (scaling + drawing all 5 covers) stays gated behind the skip flag.
   int actualCoverWidth = centerCoverWidth;
   int actualCoverHeight = centerCoverHeight;
+
+  // --- Center cover. Peek the bitmap dimensions first so the slot, outline,
+  //     selection border, AND footer/progress-bar width match the cover's
+  //     true aspect ratio (otherwise drawBitmap aspect-fits but our 220×320
+  //     chrome leaves a white sliver for narrower covers, e.g. 1720×2600
+  //     which is taller than 220:320). ---
+  const std::string cp = UITheme::getCoverThumbPath(recentBooks[curIdx].coverBmpPath, centerCoverHeight);
+  FsFile cf;
+  const bool centerOpened = !cp.empty() && Storage.openFileForRead("HOME", cp, cf);
+  Bitmap centerBitmap(cf);
+  bool centerParsed = false;
+  if (centerOpened) {
+    if (centerBitmap.parseHeaders() == BmpReaderError::Ok && centerBitmap.getWidth() > 0 &&
+        centerBitmap.getHeight() > 0) {
+      const int srcW = centerBitmap.getWidth();
+      const int srcH = centerBitmap.getHeight();
+      const float fitScale = std::min(static_cast<float>(centerCoverWidth) / static_cast<float>(srcW),
+                                      static_cast<float>(centerCoverHeight) / static_cast<float>(srcH));
+      actualCoverWidth = std::min(centerCoverWidth, static_cast<int>(std::round(srcW * fitScale)));
+      actualCoverHeight = std::min(centerCoverHeight, static_cast<int>(std::round(srcH * fitScale)));
+      centerParsed = true;
+    }
+  }
+
   int cX = centerX - actualCoverWidth / 2;
   int actualY = centerY + (centerCoverHeight - actualCoverHeight) / 2;
 
-  // Skip the entire 5-BMP cover paint block when HomeActivity tells us
-  // the framebuffer was just restored with these same covers. Saves
-  // ~80% of drawRecentBookCover's cost on every "L/R on shelf/menu"
-  // type input where the carousel doesn't visually change.
+  // Skip the expensive 5-BMP cover paint when HomeActivity tells us the
+  // framebuffer was just restored with these same covers. Saves ~80% of
+  // drawRecentBookCover's cost on every "L/R on shelf/menu" type input
+  // where the carousel doesn't visually change. The center-cover header
+  // peek above still runs so the footer geometry stays consistent.
   if (!skipCarouselCoverLoads) {
     if (count >= 5) drawStackedCover(idx3, true, true);
     if (count >= 4) drawStackedCover(idx5, false, true);
     if (count >= 2) drawStackedCover(idx2, true, false);
     if (count >= 3) drawStackedCover(idx4, false, false);
-
-    // --- Center cover. Peek the bitmap dimensions first so the slot, outline,
-    //     and selection border match the cover's true aspect ratio (otherwise
-    //     drawBitmap aspect-fits but our 220×320 chrome leaves a white sliver
-    //     for narrower covers, e.g. 1720×2600 which is taller than 220:320). ---
-    const std::string cp = UITheme::getCoverThumbPath(recentBooks[curIdx].coverBmpPath, centerCoverHeight);
-    FsFile cf;
-    const bool centerOpened = !cp.empty() && Storage.openFileForRead("HOME", cp, cf);
-    Bitmap centerBitmap(cf);
-    bool centerParsed = false;
-    if (centerOpened) {
-      if (centerBitmap.parseHeaders() == BmpReaderError::Ok && centerBitmap.getWidth() > 0 &&
-          centerBitmap.getHeight() > 0) {
-        const int srcW = centerBitmap.getWidth();
-        const int srcH = centerBitmap.getHeight();
-        const float fitScale = std::min(static_cast<float>(centerCoverWidth) / static_cast<float>(srcW),
-                                        static_cast<float>(centerCoverHeight) / static_cast<float>(srcH));
-        actualCoverWidth = std::min(centerCoverWidth, static_cast<int>(std::round(srcW * fitScale)));
-        actualCoverHeight = std::min(centerCoverHeight, static_cast<int>(std::round(srcH * fitScale)));
-        centerParsed = true;
-      }
-    }
-
-    cX = centerX - actualCoverWidth / 2;
-    actualY = centerY + (centerCoverHeight - actualCoverHeight) / 2;
 
     // Clear the MAX possible center-cover slot, not just the current
     // cover's bbox. When the previous render was a wider book, its
@@ -308,8 +309,11 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
                                bookCornerRadius + 1, true);
     }
 
-    if (centerOpened) cf.close();
   }  // end of if (!skipCarouselCoverLoads)
+
+  // Close the center-cover file opened above (outside the skip block now,
+  // since the header peek runs on every render).
+  if (centerOpened) cf.close();
 
   // One-shot reset so the next render starts from a known default.
   skipCarouselCoverLoads = false;

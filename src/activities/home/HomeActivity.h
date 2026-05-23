@@ -2,6 +2,8 @@
 #include <array>
 #include <functional>
 #include <optional>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "./FileBrowserActivity.h"
@@ -102,6 +104,27 @@ class HomeActivity final : public Activity {
   // of retrying. Cleared on onEnter so a transient failure gets one retry
   // per home visit. std::vector (not set) — these lists are tiny.
   std::vector<std::string> failedShelfCovers;
+  // Per-collection shelf position (scroll offset + focused book index),
+  // keyed by collection id. When the user cycles the active collection on
+  // the shelf header and later switches back, we restore where they were —
+  // both the visible scroll window and the index they land on when pressing
+  // Down into the books — so the two stay consistent (previously every
+  // switch reset to book 0 while the restored framebuffer still showed the
+  // old scroll position). Cleared on onEnter so each home visit starts fresh.
+  struct ShelfPos {
+    int scrollOffset = 0;
+    int bookIndex = 0;
+  };
+  std::unordered_map<std::string, ShelfPos> shelfPosByCollection;
+  // Set true during a Flow render whenever a progress popup (shelf cover
+  // loading or "Detecting series...") was drawn over the framebuffer before
+  // the end-of-render snapshot. The popup sits over the carousel, which the
+  // carousel/shelf fast-paths don't repaint — so if we snapshotted it, every
+  // subsequent restore would keep the stale popup on screen until the user
+  // navigated to the carousel (forcing a repaint). When set, we skip the
+  // snapshot and drop the cached render state so the follow-up render does a
+  // full clean repaint that erases the popup. Reset at the start of each render.
+  bool homeRenderPopupShown = false;
   // Suppresses the short-press Confirm handler when the user just held Confirm
   // long enough to trigger the book action menu — otherwise the matching
   // release would immediately open the book they were just acting on. Same

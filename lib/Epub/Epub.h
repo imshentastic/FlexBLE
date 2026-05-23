@@ -91,6 +91,16 @@ class Epub {
   // thumbnail height.
   // Returns false on missing cache/cover, unsupported image format, or conversion failure.
   bool generateThumbBmp(int width, int height) const;
+  // Like generateThumbBmp, but does NOT build the full spine/TOC index
+  // (book.bin) when the book hasn't been opened yet. Instead it parses only
+  // content.opf to locate the cover image. Used by home/shelf cover loading
+  // where scrolling past many never-opened books (e.g. the Recently Added
+  // collection) would otherwise freeze the UI on full EPUB indexing — most
+  // of which is wasted when the book turns out to have no extractable cover.
+  // Returns false (in OPF-parse time) when there is no usable cover so the
+  // caller can render a placeholder cheaply. Non-const because it (re)sets
+  // the metadata cache and may run the OPF parse.
+  bool generateThumbBmpNoIndex(int width, int height);
   uint8_t* readItemContentsToBytes(const std::string& itemHref, size_t* size = nullptr,
                                    bool trailingNullByte = false) const;
   bool readItemContentsToStream(const std::string& itemHref, Print& out, size_t chunkSize) const;
@@ -111,4 +121,10 @@ class Epub {
 
  private:
   bool generateThumbBmpInternal(int width, int height) const;
+  // Shared cover-image -> 1-bit BMP conversion used by both the cached
+  // (generateThumbBmpInternal) and no-index (generateThumbBmpNoIndex)
+  // thumbnail paths. coverImageHref must already be resolved against the
+  // EPUB's content base path. Returns false for empty/unsupported covers.
+  bool convertCoverToThumbBmp(const std::string& coverImageHref, const std::string& thumbPath, int width,
+                              int height) const;
 };
