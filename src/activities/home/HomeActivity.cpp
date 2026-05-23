@@ -162,6 +162,30 @@ bool hasThumbnailPlaceholder(const std::string& coverBmpPath) {
   return coverBmpPath.find("[WIDTH]") != std::string::npos || coverBmpPath.find("[HEIGHT]") != std::string::npos;
 }
 
+// A cover thumbnail counts as present only if it exists AND parses as a valid
+// BMP with non-zero dimensions — the exact test the Lyra Carousel renderer
+// applies before drawing it (LyraCarouselTheme::drawRecentBookCover). A file
+// that exists but won't parse (e.g. a truncated/corrupt thumb left by an older
+// build, or a partial write) is otherwise trusted by Storage.exists(), so
+// generation is skipped and the carousel falls back to the placeholder forever
+// — even though the same book's cover renders fine in every other theme, which
+// use different-dimension thumbs. Deleting the bad file here forces a one-shot
+// regeneration. Using the renderer's own criteria means we never reject a thumb
+// the renderer would have accepted (no needless regen churn).
+bool carouselThumbMissingOrInvalid(const std::string& thumbPath) {
+  if (thumbPath.empty()) return true;
+  FsFile file;
+  if (!Storage.openFileForRead("HOME", thumbPath, file)) return true;  // genuinely missing
+  Bitmap bitmap(file);
+  const bool valid = bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0;
+  file.close();
+  if (!valid) {
+    LOG_INF("HOME", "carousel: invalid cover thumb, deleting to regenerate: %s", thumbPath.c_str());
+    Storage.remove(thumbPath.c_str());
+  }
+  return !valid;
+}
+
 std::string getReusableCoverPath(const RecentBook& book) {
   if (FsHelpers::hasEpubExtension(book.path)) {
     return Epub(book.path, "/.crosspoint").getThumbBmpPath();
@@ -519,6 +543,19 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   // re-snapshots. Without this, a freshly-opened book stays a placeholder.
   freeCoverBuffer();
 
+  // Also reclaim the carousel frame cache (~52 KB) before decoding covers.
+  // Cover generation needs a large contiguous block — a ~32 KB zip-inflate
+  // window plus the image decoder (PNG ~42 KB, JPEG ~17 KB). With the frame
+  // cache resident, the single largest cover (often a PNG) OOMs every pass and
+  // is stranded on a placeholder forever, while smaller covers succeed. The
+  // repeated failure popups also drop the Flow home fast-path cache, which
+  // makes navigation feel sluggish. The next render re-warms the frame from the
+  // freshly generated BMP thumbnails (cheap — no re-decode). Mirrors the
+  // free order used in onExit().
+  gCarouselCache.invalidate();
+  freeCarouselFrames();
+  carouselFramesReady = false;
+
   const bool isCarouselTheme =
       static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_CAROUSEL;
   const bool isMinimal = isMinimalTheme();
@@ -542,8 +579,11 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
                                                                   LyraCarouselTheme::kCenterThumbH);
         const std::string sidePath = UITheme::getCoverThumbPath(book.coverBmpPath, LyraCarouselTheme::kSideCoverW,
                                                                 LyraCarouselTheme::kSideCoverH);
-        const bool centerMissing = !Storage.exists(centerPath.c_str());
-        const bool sideMissing = !Storage.exists(sidePath.c_str());
+        // Validate (not just exists): a corrupt/truncated thumb must be treated
+        // as missing so it regenerates, else the carousel is stuck on a
+        // placeholder while other themes (different thumb sizes) show the cover.
+        const bool centerMissing = carouselThumbMissingOrInvalid(centerPath);
+        const bool sideMissing = carouselThumbMissingOrInvalid(sidePath);
 
         if (centerMissing || sideMissing) {
           if (FsHelpers::hasEpubExtension(book.path)) {
@@ -567,6 +607,11 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
                                                      LyraCarouselTheme::kSideCoverH) &&
                         success;
             if (!success) {
+              // Log heap at the point of failure so a serial capture can tell
+              // OOM (low free/maxAlloc -> headroom problem) from a genuinely
+              // undecodable cover (ample heap -> format issue).
+              LOG_ERR("HOME", "carousel cover gen failed: %s (free=%u maxAlloc=%u)", book.path.c_str(),
+                      ESP.getFreeHeap(), ESP.getMaxAllocHeap());
               updateRecentBookCoverPath(book, "");
               book.coverBmpPath = "";
             } else {
@@ -639,6 +684,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               success = epub.generateThumbBmpNoIndex(0, coverHeight);
             }
             if (!success) {
+              LOG_ERR("HOME", "recent cover gen failed: %s (free=%u maxAlloc=%u)", book.path.c_str(),
+                      ESP.getFreeHeap(), ESP.getMaxAllocHeap());
               updateRecentBookCoverPath(book, "");
               book.coverBmpPath = "";
             } else {
@@ -1511,6 +1558,19 @@ void HomeActivity::showShelfHeaderActionMenu() {
 void HomeActivity::onEnter() {
   Activity::onEnter();
 
+  // ActivityManager::loop() releases the render lock *before* calling onEnter
+  // (so each activity decides whether it needs it). HomeActivity::onEnter
+  // rebuilds recentBooks and — on the Lyra Carousel theme — pre-renders
+  // carousel frames, which writes the framebuffer, mutates the shared global
+  // gCarouselCache, and runs the JPEG cover decoder. The render task touches
+  // all of that under the lock, so without holding it here a concurrently
+  // notified render() races us. That race corrupted the heap and tripped
+  // `xTaskPriorityDisinherit` (mutex released by a non-owner) during carousel
+  // cover decode. Hold the lock across the whole setup to serialize with
+  // render(). Safe from deadlock: onEnter is always called with the lock
+  // released, and nothing below re-takes it or blocks on the render task.
+  RenderLock lock;
+
   hasOpdsServers = OPDS_STORE.hasServers();
   const bool isCarouselTheme =
       static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_CAROUSEL;
@@ -1831,6 +1891,13 @@ bool HomeActivity::buildCarouselCacheFile(const std::string& cacheKey, uint64_t 
     if (!progressFrameBuffer) {
       LOG_ERR("HOME", "carousel: failed to allocate progress overlay buffer");
       showProgressPopup = false;
+      // Heap is too tight for the animated progress bar (it needs a full-frame
+      // backup to repaint between frames). Still show a static "Loading…" so
+      // the warmup doesn't look like a hang. The build below renders frames to
+      // SD without calling displayBuffer(), so this popup stays on the panel
+      // until warmup finishes and the next render paints the carousel.
+      GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+      renderer.displayBuffer();
     } else {
       popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
       GUI.fillPopupProgress(renderer, popupRect, 0);
