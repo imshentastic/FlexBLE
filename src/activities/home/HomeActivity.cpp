@@ -173,10 +173,19 @@ std::string getReusableCoverPath(const RecentBook& book) {
 }
 
 bool ensureReusableCoverPath(RecentBook& book) {
-  if (book.coverBmpPath.empty() || hasThumbnailPlaceholder(book.coverBmpPath)) {
+  // Already the reusable template ([WIDTH]x[HEIGHT] placeholder) — leave it.
+  if (hasThumbnailPlaceholder(book.coverBmpPath)) {
     return false;
   }
 
+  // Intentionally fall through when coverBmpPath is EMPTY. A book whose cover
+  // generation transiently failed (e.g. cover inflate OOM'd under heap
+  // pressure) had its stored path cleared to "" — and loadRecentCovers skips
+  // books with an empty path, so it could never recover and stayed a
+  // placeholder forever. Recomputing the deterministic template path here lets
+  // the (self-healing) generation run again. For EPUB/XTC getReusableCoverPath
+  // returns the template from the book path; for anything else it returns the
+  // stored (empty) value, so the guard below still no-ops those.
   const std::string reusablePath = getReusableCoverPath(book);
   if (reusablePath.empty() || reusablePath == book.coverBmpPath) {
     return false;
@@ -500,6 +509,16 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   bool showingLoading = false;
   Rect popupRect;
 
+  // Free the ~48KB cover-buffer snapshot before generating any covers. This
+  // pass runs at end-of-render, AFTER storeCoverBuffer() has allocated that
+  // snapshot — which leaves too little CONTIGUOUS heap for the ~32KB zlib
+  // inflate window that extracting a cover image from the EPUB zip needs. (The
+  // shelf/Collections loader succeeds only because it runs earlier, before the
+  // snapshot exists — which is why covers show there but not on the carousel.)
+  // Releasing it here lets recent-book covers regenerate; the next render
+  // re-snapshots. Without this, a freshly-opened book stays a placeholder.
+  freeCoverBuffer();
+
   const bool isCarouselTheme =
       static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_CAROUSEL;
   const bool isMinimal = isMinimalTheme();
@@ -534,22 +553,19 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + progress * progressIncrement);
-            if (!epub.load(false, true)) {
-              LOG_ERR("HOME", "carousel: failed to load EPUB cache for thumb generation: %s", book.path.c_str());
-              updateRecentBookCoverPath(book, "");
-              book.coverBmpPath = "";
-              coverRendered = false;
-              requestUpdate();
-              progress++;
-              continue;
-            }
+            // Self-healing: generateThumbBmpNoIndex extracts the cover via an
+            // OPF-only parse, regenerating even if the cache folder is missing
+            // — instead of bailing on load(false) and clearing the cover path
+            // (which left the carousel stuck on a placeholder forever).
             bool success = true;
             if (centerMissing)
-              success =
-                  epub.generateThumbBmp(LyraCarouselTheme::kCenterThumbW, LyraCarouselTheme::kCenterThumbH) && success;
+              success = epub.generateThumbBmpNoIndex(LyraCarouselTheme::kCenterThumbW,
+                                                     LyraCarouselTheme::kCenterThumbH) &&
+                        success;
             if (sideMissing)
-              success =
-                  epub.generateThumbBmp(LyraCarouselTheme::kSideCoverW, LyraCarouselTheme::kSideCoverH) && success;
+              success = epub.generateThumbBmpNoIndex(LyraCarouselTheme::kSideCoverW,
+                                                     LyraCarouselTheme::kSideCoverH) &&
+                        success;
             if (!success) {
               updateRecentBookCoverPath(book, "");
               book.coverBmpPath = "";
@@ -598,18 +614,30 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + progress * progressIncrement);
-            if (!epub.load(false, true)) {
-              LOG_ERR("HOME", "failed to load EPUB cache for thumb generation: %s", book.path.c_str());
-              updateRecentBookCoverPath(book, "");
-              book.coverBmpPath = "";
-              coverRendered = false;
-              requestUpdate();
-              progress++;
-              continue;
+            bool success;
+            if (useMinimalThumb) {
+              // Minimal uses an ADAPTIVE thumbnail (contain unusual ratios),
+              // written to a distinct *_fit.bmp path and requiring the book's
+              // metadata cache — so we load it first. Not OPF-only self-healing,
+              // but minimal recent covers are a niche path.
+              if (!epub.load(false, true)) {
+                LOG_ERR("HOME", "failed to load EPUB cache for thumb generation: %s", book.path.c_str());
+                updateRecentBookCoverPath(book, "");
+                book.coverBmpPath = "";
+                coverRendered = false;
+                requestUpdate();
+                progress++;
+                continue;
+              }
+              success = epub.generateAdaptiveThumbBmp(minimalHomeCoverWidth(coverHeight),
+                                                      minimalHomeCoverHeight(coverHeight));
+            } else {
+              // Flow / standard: self-healing OPF-only generation (see carousel
+              // branch) — regenerates even if the cache folder is missing,
+              // which is the fix for recent-book covers stuck on placeholders
+              // while the shelf (already on this path) showed them fine.
+              success = epub.generateThumbBmpNoIndex(0, coverHeight);
             }
-            const bool success = useMinimalThumb ? epub.generateAdaptiveThumbBmp(minimalHomeCoverWidth(coverHeight),
-                                                                                 minimalHomeCoverHeight(coverHeight))
-                                                 : epub.generateThumbBmp(0, coverHeight);
             if (!success) {
               updateRecentBookCoverPath(book, "");
               book.coverBmpPath = "";
