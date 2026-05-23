@@ -13,8 +13,24 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PROGRAM = ROOT / ".pio" / "build" / "simulator" / "program"
+DEVICE_ENVS = {"x4": "simulator", "x3": "simulator_x3"}
 DEFAULT_BOOK = ROOT / "test" / "epubs" / "test_reader_rendering_matrix.epub"
+JPEG_FIXTURE = ROOT / "test" / "epubs" / "test_jpeg_images.epub"
+# Distinct cover sources (extracted from the JPEG fixture) paired with book
+# titles. Used by --shelf to synthesize a populated Favorites collection so the
+# multi-cover shelf grid can be eyeballed (X4 vs X3).
+SHELF_COVERS = [
+    ("Aurora Drift", "OEBPS/images/gradient_test.jpg"),
+    ("Bramble Hollow", "OEBPS/images/centering_test.jpg"),
+    ("Cobalt Reverie", "OEBPS/images/grayscale_test.jpg"),
+    ("Dune Cipher", "OEBPS/images/cache_test_1.jpg"),
+    ("Ember Atlas", "OEBPS/images/cache_test_2.jpg"),
+    ("Frost Lantern", "OEBPS/images/jpeg_format.jpg"),
+]
+
+
+def program_path(pio_env: str) -> Path:
+    return ROOT / ".pio" / "build" / pio_env / "program"
 CRASH_PATTERNS = (
     "std::bad_alloc",
     "terminating due to uncaught exception",
@@ -38,39 +54,139 @@ THEMES = {
 }
 
 
-def build_simulator() -> None:
-    print("Building simulator...", flush=True)
-    proc = subprocess.run(["pio", "run", "-e", "simulator"], cwd=ROOT)
+def build_simulator(pio_env: str) -> None:
+    print(f"Building simulator ({pio_env})...", flush=True)
+    proc = subprocess.run(["pio", "run", "-e", pio_env], cwd=ROOT)
     if proc.returncode != 0:
         raise SystemExit(proc.returncode)
 
 
-def prepare_fs(temp_root: Path, book: Path) -> str:
-    books_dir = temp_root / "fs_" / "books"
+def _slug(title: str) -> str:
+    return "".join(ch.lower() if ch.isalnum() else "_" for ch in title).strip("_")
+
+
+def make_cover_epub(dest_path: Path, title: str, cover_jpg: bytes) -> None:
+    """Write a minimal EPUB that declares `cover.jpg` as its cover (both the
+    EPUB2 <meta name="cover"> and EPUB3 properties="cover-image" forms, so the
+    ContentOpfParser finds it either way)."""
+    import zipfile
+
+    slug = _slug(title)
+    container = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n'
+        '  <rootfiles><rootfile full-path="OEBPS/content.opf" '
+        'media-type="application/oebps-package+xml"/></rootfiles>\n'
+        '</container>\n'
+    )
+    opf = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">\n'
+        '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n'
+        f'    <dc:identifier id="uid">cover-fixture-{slug}</dc:identifier>\n'
+        f'    <dc:title>{title}</dc:title>\n'
+        '    <dc:language>en</dc:language>\n'
+        '    <meta name="cover" content="cover-img"/>\n'
+        '  </metadata>\n'
+        '  <manifest>\n'
+        '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>\n'
+        '    <item id="cover-img" href="cover.jpg" media-type="image/jpeg" properties="cover-image"/>\n'
+        '    <item id="chap1" href="chap1.xhtml" media-type="application/xhtml+xml"/>\n'
+        '  </manifest>\n'
+        '  <spine><itemref idref="chap1"/></spine>\n'
+        '</package>\n'
+    )
+    nav = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">\n'
+        '<head><title>nav</title></head><body>\n'
+        '<nav epub:type="toc"><ol><li><a href="chap1.xhtml">Chapter 1</a></li></ol></nav>\n'
+        '</body></html>\n'
+    )
+    chap = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<html xmlns="http://www.w3.org/1999/xhtml"><head><title>{title}</title></head><body>\n'
+        f'<h1>{title}</h1>\n<p>Synthetic shelf fixture for the cover grid layout check.</p>\n'
+        '</body></html>\n'
+    )
+    with zipfile.ZipFile(dest_path, "w", zipfile.ZIP_DEFLATED) as z:
+        # mimetype must be the first entry and stored uncompressed.
+        z.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+        z.writestr("META-INF/container.xml", container)
+        z.writestr("OEBPS/content.opf", opf)
+        z.writestr("OEBPS/nav.xhtml", nav)
+        z.writestr("OEBPS/chap1.xhtml", chap)
+        z.writestr("OEBPS/cover.jpg", cover_jpg)
+
+
+def build_cover_fixtures(books_dir: Path) -> list[str]:
+    import zipfile
+
+    sim_paths: list[str] = []
+    with zipfile.ZipFile(JPEG_FIXTURE) as src:
+        for title, member in SHELF_COVERS:
+            cover = src.read(member)
+            name = f"{_slug(title)}.epub"
+            make_cover_epub(books_dir / name, title, cover)
+            sim_paths.append(f"/books/{name}")
+    return sim_paths
+
+
+def write_collections(crosspoint_dir: Path, book_paths: list[str]) -> None:
+    import json
+
+    crosspoint_dir.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "version": 1,
+        "active": "favorites",
+        "collections": [
+            {
+                "id": "favorites",
+                "name": "Favorites",
+                "sort": 0,
+                "collapseSeries": True,
+                "books": book_paths,
+            }
+        ],
+    }
+    (crosspoint_dir / "collections.json").write_text(json.dumps(doc))
+
+
+def prepare_fs(temp_root: Path, book: Path, shelf: bool) -> str:
+    fs_root = temp_root / "fs_"
+    books_dir = fs_root / "books"
     books_dir.mkdir(parents=True, exist_ok=True)
 
-    target = books_dir / book.name
-    shutil.copy2(book, target)
-    return f"/books/{book.name}"
+    shutil.copy2(book, books_dir / book.name)
+    opened = f"/books/{book.name}"
+    if shelf:
+        cover_paths = build_cover_fixtures(books_dir)
+        # Lead the shelf with real-cover fixtures, then the opened reader book
+        # (a title-fallback card) so the grid shows both kinds of cell.
+        write_collections(fs_root / ".crosspoint", [*cover_paths, opened])
+    return opened
 
 
 def run_smoke(args: argparse.Namespace) -> int:
+    pio_env = DEVICE_ENVS[args.device]
+    program = program_path(pio_env)
+
     book = Path(args.book).resolve()
     if not book.exists():
         print(f"Smoke test book not found: {book}", file=sys.stderr)
         return 2
 
     if args.build:
-        build_simulator()
+        build_simulator(pio_env)
 
-    if not PROGRAM.exists():
-        print(f"Simulator binary not found: {PROGRAM}", file=sys.stderr)
-        print("Run: pio run -e simulator", file=sys.stderr)
+    if not program.exists():
+        print(f"Simulator binary not found: {program}", file=sys.stderr)
+        print(f"Run: pio run -e {pio_env}", file=sys.stderr)
         return 2
 
     with tempfile.TemporaryDirectory(prefix="crossink-sim-smoke-") as temp_dir_name:
         temp_root = Path(temp_dir_name)
-        simulator_book_path = prepare_fs(temp_root, book)
+        simulator_book_path = prepare_fs(temp_root, book, args.shelf)
 
         env = os.environ.copy()
         env["CROSSINK_SIMULATOR_SMOKE_TEST"] = "1"
@@ -81,9 +197,13 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.headless:
             env.setdefault("SDL_VIDEODRIVER", "dummy")
 
-        print(f"Running simulator smoke test with isolated fs_: {temp_root / 'fs_'}", flush=True)
+        print(
+            f"Running simulator smoke test ({args.device}/{pio_env}) "
+            f"with isolated fs_: {temp_root / 'fs_'}",
+            flush=True,
+        )
         proc = subprocess.run(
-            [str(PROGRAM)],
+            [str(program)],
             cwd=temp_root,
             env=env,
             text=True,
@@ -112,6 +232,8 @@ def run_smoke(args: argparse.Namespace) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--device", choices=sorted(DEVICE_ENVS), default="x4", help="Panel to simulate: x4 (800x480) or x3 (792x528)")
+    parser.add_argument("--shelf", action="store_true", help="Seed a Favorites collection of cover-bearing fixtures to exercise the multi-cover shelf grid")
     parser.add_argument("--book", default=str(DEFAULT_BOOK), help="EPUB fixture to copy into the isolated simulator fs_")
     parser.add_argument("--timeout", type=int, default=45, help="Seconds before the simulator run is treated as hung")
     parser.add_argument("--page-turns", type=int, default=2, help="Number of EPUB page-forward taps to run")
