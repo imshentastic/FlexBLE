@@ -1223,6 +1223,7 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
                                // (user had no bonded remote), do it now via the same mechanism the
                                // reader menu's BLUETOOTH action uses — exit-on-success so the user
                                // lands back in the book after pairing.
+#ifndef SIMULATOR
                                if (menu && menu->requestBluetoothFlow) {
                                  startActivityForResult(
                                      std::make_unique<BluetoothSettingsActivity>(
@@ -1231,6 +1232,7 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
                                      [this](const ActivityResult&) { requestUpdate(); });
                                  return;
                                }
+#endif  // SIMULATOR: BLE pairing UI needs NimBLE; no-op in the native simulator.
                                // No explicit requestUpdate() — ActivityManager's Pop path will
                                // automatically requestUpdateAndWait(), and adding our own here
                                // would cause the reader page to render twice (the dark→light

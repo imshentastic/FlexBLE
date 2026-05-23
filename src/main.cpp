@@ -610,6 +610,7 @@ void putTiltSensorToSleepForDeepSleep() {
 // ~500ms to register a press; any tap shorter than that would be invisible. The deep-sleep
 // wake itself already proved the button went LOW, so we only need to determine "still held?"
 // vs "already released?" right now.
+#ifndef SIMULATOR
 bool detectScreensaverCycleTap() {
   const unsigned long start = millis();
   while (digitalRead(InputManager::POWER_BUTTON_PIN) == LOW && (millis() - start) < SCREENSAVER_TAP_MAX_MS) {
@@ -670,6 +671,16 @@ bool consumeCompletedSleepEntryTap() {
   sleepEntryTapPending = false;
   return true;
 }
+#else
+// Simulator: no power-button GPIO or ISRs — cycle-screensaver is on-device
+// only. No-op stubs so callers compile (SETTINGS.cycleScreensaverOnTap stays
+// off in the sim, so these are never actually reached).
+bool detectScreensaverCycleTap() { return false; }
+bool pollForCycleTapDuringSleepEntry() { return false; }
+void armSleepEntryTapIsr() {}
+void disarmSleepEntryTapIsr() {}
+bool consumeCompletedSleepEntryTap() { return false; }
+#endif
 
 constexpr char SLEEP_FRAME_FILE[] = "/.crosspoint/sleep_frame.bin";
 
@@ -952,6 +963,7 @@ void setup() {
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
 
+#ifndef SIMULATOR
   {
     auto& btMgr = BluetoothHIDManager::getInstance();
     btMgr.setButtonInjector(
@@ -960,6 +972,7 @@ void setup() {
     btMgr.setReaderContextCallback([]() { return gBluetoothReaderContext; });
     btMgr.setBondedDevice(SETTINGS.bleBondedDeviceAddr, SETTINGS.bleBondedDeviceName);
   }
+#endif  // SIMULATOR: BLE injection uses ESP32 GPIO virtual buttons; no-op in sim.
 
   const auto wakeupReason = gpio.getWakeupReason();
   LOG_INF("BOOT", "Wake route: %s", wakeupRouteName(wakeupReason));
