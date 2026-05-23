@@ -1931,6 +1931,14 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   if (needsAnyGrayscale && !storedBwBuffer) {
     LOG_ERR("ERS", "Skipping grayscale enhancement: failed to store BW backup");
   }
+  // Explicit per-page anti-aliasing status for diagnosing AA issues. DBG
+  // level so it's compiled out of the production build (no serial spam) but
+  // available in a LOG_LEVEL=2 debug build: textAA reflects the setting,
+  // applied=YES means the grayscale pass actually ran this page, bwStore
+  // shows whether the 32 KB compressed-backup allocation succeeded.
+  LOG_DBG("ERS", "AA: textAA=%s images=%s applied=%s bwStore=%s freeHeap=%u",
+          needsTextGrayscale ? "on" : "off", needsImageGrayscale ? "yes" : "no",
+          canApplyGrayscale ? "YES" : "no", storedBwBuffer ? "ok" : "FAILED", esp_get_free_heap_size());
 
   // grayscale rendering
   if (canApplyGrayscale) {

@@ -43,6 +43,14 @@ class GfxRenderer {
   // showed dense pages compress to ~25-26 KB. If even 32 KB isn't enough we
   // gracefully skip grayscale for that page (same UX as the old chunked
   // alloc-failure path).
+  //
+  // A 16 KB cap was tried (CrumBLE) to make the per-page allocation more
+  // likely to succeed when NimBLE has fragmented the heap, but it backfired:
+  // pages that compress to 16-26 KB then overflow the buffer and lose AA
+  // *unconditionally*, even on a clean heap with no Bluetooth — a worse
+  // regression than 32 KB's "occasionally skips under BLE memory pressure".
+  // So 32 KB stays. The AA-under-BLE inconsistency is accepted as graceful
+  // degradation (see CHANGELOG known limitation).
   static constexpr size_t MAX_BW_COMPRESSED_SIZE = 32U * 1024U;
 
   HalDisplay& display;
