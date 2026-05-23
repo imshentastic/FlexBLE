@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [crumble-v2.1.1] - 2026-05-22
+Patch release. No upstream version sync (still CrossInk 1.2.11.1).
+
 ### Fixed
 - Home screen no longer flashes/loops when a book in the active collection has
   an unreadable cover. A thumbnail that fails to generate is now recorded and
