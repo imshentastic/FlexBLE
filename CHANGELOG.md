@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Fixed
+- Home screen no longer flashes/loops when a book in the active collection has
+  an unreadable cover. A thumbnail that fails to generate is now recorded and
+  rendered as a blank cover instead of being retried (and re-popping the
+  "Loading" overlay) on every render.
+
+### Known limitations
+- **Anti-aliasing is unavailable while a Bluetooth remote is connected.** It's
+  a hard RAM ceiling, not a tuning issue: the grayscale AA pass needs a ~32 KB
+  contiguous buffer, and NimBLE holds ~58 KB once a remote is paired, leaving
+  only ~25 KB free — not enough for the AA buffer. So with the remote
+  connected, pages render crisp B&W (no AA); disconnect the remote and AA
+  returns. No buffer size threads the needle: small enough to fit alongside
+  BLE (≤~20 KB) overflows on real text pages, and large enough to hold pages
+  (32 KB) can't be allocated with BLE active (and reserving it permanently
+  starved BLE pairing and froze the device). In short: anti-aliased text OR a
+  Bluetooth page-turner, not both at once.
+
 ## [crumble-v2.1.0] - 2026-05-22
 Bug-fix bundle from device testing, plus two default changes. Minor bump
 for the new defaults; everything else is fixes. No upstream version sync
