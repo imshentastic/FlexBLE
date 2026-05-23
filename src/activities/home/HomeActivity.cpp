@@ -825,6 +825,18 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffs
       continue;
     }
 
+    // First-index safety cap: on the very first boot (fresh library index just
+    // built), stop generating new covers past the cap so a large library can't
+    // OOM mid first-time setup (the SD walk just ran; heap is fragmented).
+    // Capped books are recorded like a failed cover (blank, no retry this
+    // session) and generate normally on the next boot, when wasFreshFirstBoot()
+    // is false and there's no walk competing for heap.
+    if (LibraryIndex::getInstance().wasFreshFirstBoot() && firstIndexCoversGenerated >= kFirstIndexCoverCap) {
+      failedShelfCovers.push_back(bookPath);
+      processed++;
+      continue;
+    }
+
     // Need to generate. Show a loading popup if this is the first book in
     // this pass that's missing — matches the loadRecentCovers UX.
     if (!showingLoading) {
@@ -863,6 +875,9 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffs
       LOG_ERR("HOME", "shelf: thumb generation failed for %s; rendering blank (won't retry this session)",
               bookPath.c_str());
     }
+    // Count this generation attempt toward the first-index cap (only enforced
+    // while wasFreshFirstBoot(); harmless to increment otherwise).
+    firstIndexCoversGenerated++;
     processed++;
   }
 
