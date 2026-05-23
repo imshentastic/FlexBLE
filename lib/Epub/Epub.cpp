@@ -875,7 +875,51 @@ bool Epub::generateThumbBmpInternal(int width, int height) const {
     return false;
   }
 
-  const auto coverImageHref = bookMetadataCache->coreMetadata.coverItemHref;
+  return convertCoverToThumbBmp(bookMetadataCache->coreMetadata.coverItemHref, thumbPath, width, height);
+}
+
+bool Epub::generateThumbBmpNoIndex(int width, int height) {
+  if (height <= 0) {
+    height = kDefaultThumbHeight;
+  }
+  if (width <= 0) {
+    width = static_cast<int>((static_cast<int64_t>(height) * 3 + 2) / 5);
+  }
+  const std::string thumbPath = getThumbBmpPathForDimensions(cachePath, width, height);
+
+  // Already generated, return true.
+  if (nonEmptyFileExists(thumbPath)) {
+    return true;
+  }
+
+  // Fast path A: a full spine/TOC cache already exists (the book was opened
+  // before) — reuse its already-parsed coverItemHref via a cheap cached load.
+  bookMetadataCache.reset(new BookMetadataCache(cachePath));
+  if (bookMetadataCache->load()) {
+    return convertCoverToThumbBmp(bookMetadataCache->coreMetadata.coverItemHref, thumbPath, width, height);
+  }
+
+  // Fast path B: no cache yet. Parse ONLY content.opf to locate the cover
+  // image, skipping the expensive spine resolution + TOC pass + book.bin
+  // build that load(buildIfMissing=true) would do. Passing a null
+  // BookMetadataCache to parseContentOpf makes ContentOpfParser skip the
+  // spine pass entirely (it's guarded by `if (cache)`), leaving just the
+  // OPF parse. This is what keeps scrolling a collection of never-opened
+  // books (e.g. Recently Added) from freezing on the "Loading" popup: a
+  // book with no extractable cover now returns false in OPF-parse time
+  // instead of after a full index build.
+  bookMetadataCache.reset();  // null -> ContentOpfParser uses no cache
+  setupCacheDir();            // ensure the cache dir exists for the temp + thumb files
+  BookMetadataCache::BookMetadata meta;
+  if (!parseContentOpf(meta)) {
+    LOG_DBG("EBP", "generateThumbBmpNoIndex: could not parse content.opf for %s", filepath.c_str());
+    return false;
+  }
+  return convertCoverToThumbBmp(meta.coverItemHref, thumbPath, width, height);
+}
+
+bool Epub::convertCoverToThumbBmp(const std::string& coverImageHref, const std::string& thumbPath, int width,
+                                  int height) const {
   if (coverImageHref.empty()) {
     LOG_DBG("EBP", "No known cover image for thumbnail");
   } else if (FsHelpers::hasJpgExtension(coverImageHref)) {

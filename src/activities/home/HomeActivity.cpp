@@ -672,6 +672,11 @@ void HomeActivity::enrichActiveCollectionForSeries() {
   }
 
   const Rect popupRect = GUI.drawPopup(renderer, "Detecting series...");
+  // Popup drawn over the framebuffer; flag the frame so the end-of-render
+  // snapshot is skipped and the follow-up render erases it (see
+  // homeRenderPopupShown). Otherwise the "Detecting series..." popup can get
+  // stuck over the carousel the same way the shelf Loading popup did.
+  homeRenderPopupShown = true;
   const int total = static_cast<int>(toCheck.size());
   int processed = 0;
   for (const auto& p : toCheck) {
@@ -774,15 +779,15 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffs
 
     if (FsHelpers::hasEpubExtension(bookPath)) {
       Epub epub(bookPath, "/.crosspoint");
-      // buildIfMissing=true so books the user toggled into Favorites without
-      // ever having opened them still get their thumbnail extracted (same
-      // reasoning as RecentBooksGridActivity::loadPageCovers).
-      if (epub.load(/*buildIfMissing=*/true, /*skipLoadingCss=*/true)) {
-        if (!epub.generateThumbBmp(cellWidth, cellHeight)) {
-          LOG_ERR("HOME", "shelf: failed to generate thumb for %s", bookPath.c_str());
-        }
-      } else {
-        LOG_ERR("HOME", "shelf: failed to load EPUB for thumb gen: %s", bookPath.c_str());
+      // generateThumbBmpNoIndex extracts the cover WITHOUT building the full
+      // spine/TOC index (book.bin). That index build is what froze the UI on
+      // the "Loading" popup while scrolling collections of never-opened books
+      // (e.g. Recently Added): we'd index the whole EPUB only to find it has
+      // no extractable cover. The no-index path parses just content.opf, so a
+      // coverless book falls back to the placeholder in OPF-parse time. The
+      // full index is built later, when the book is actually opened.
+      if (!epub.generateThumbBmpNoIndex(cellWidth, cellHeight)) {
+        LOG_ERR("HOME", "shelf: failed to generate thumb for %s", bookPath.c_str());
       }
     } else if (FsHelpers::hasXtcExtension(bookPath)) {
       Xtc xtc(bookPath, "/.crosspoint");
@@ -814,6 +819,9 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffs
   // ends. Keeping the requestUpdate here is still correct for the success
   // case (covers that DID generate need one repaint to appear).
   if (showingLoading) {
+    // The Loading popup was drawn over the framebuffer; flag the frame so the
+    // end-of-render snapshot is skipped and the follow-up render erases it.
+    homeRenderPopupShown = true;
     requestUpdate();
   }
 }
@@ -1403,6 +1411,7 @@ void HomeActivity::onEnter() {
   failedShelfCovers.clear();
   shelfHeaderFocused = false;
   lastShelfBookIndex = 0;  // every onEnter starts the row at book 0.
+  shelfPosByCollection.clear();  // per-collection shelf positions reset each home visit.
   lastMenuIndex = 0;       // and the menu at icon 0.
   seriesEnrichmentNeededForActive = true;
   // Drop any stale cached path list — the active collection's
@@ -2054,7 +2063,10 @@ void HomeActivity::loop() {
     // instead of an unexplained pause.
     auto cycleActiveCollection = [this, &collections](int direction) {
       if (collections.size() <= 1) return;
-      const std::string& currentActive = CollectionsStore::getInstance().getActiveId();
+      // Copy (not ref): getActiveId() returns a reference into the store that
+      // setActiveId() below mutates — we need the leaving-collection id intact
+      // to key its saved position.
+      const std::string currentActive = CollectionsStore::getInstance().getActiveId();
       int idx = 0;
       for (size_t i = 0; i < collections.size(); ++i) {
         if (collections[i].id == currentActive) {
@@ -2062,18 +2074,33 @@ void HomeActivity::loop() {
           break;
         }
       }
+      // Remember where we were in the collection we're leaving so a later
+      // switch back restores the same scroll window + focused book.
+      shelfPosByCollection[currentActive] = ShelfPos{shelfScrollOffset, lastShelfBookIndex};
+
       const int n = static_cast<int>(collections.size());
       idx = (idx + direction + n) % n;
-      CollectionsStore::getInstance().setActiveId(collections[idx].id);
-      shelfScrollOffset = 0;
+      const std::string newActive = collections[idx].id;
+      CollectionsStore::getInstance().setActiveId(newActive);
+      // Restore the entering collection's saved position (default top-of-list
+      // the first time it's visited this session). Both values get re-clamped
+      // against the live collection size during render and on Down-into-books,
+      // so a shrunk collection can't strand the cursor.
+      const auto savedPos = shelfPosByCollection.find(newActive);
+      if (savedPos != shelfPosByCollection.end()) {
+        shelfScrollOffset = savedPos->second.scrollOffset;
+        lastShelfBookIndex = savedPos->second.bookIndex;
+      } else {
+        shelfScrollOffset = 0;
+        lastShelfBookIndex = 0;
+      }
       shelfCoversLoaded = false;  // new collection probably has missing thumbs.
-      lastShelfBookIndex = 0;  // the index belonged to the previous collection; reset.
       seriesEnrichmentNeededForActive = true;  // new collection may have un-checked books.
       // The cache key check inside cachedShelfPaths() will detect the
       // new activeId automatically — no explicit invalidate needed.
 
-      const Collection* newActive = CollectionsStore::getInstance().getActiveCollection();
-      if (newActive != nullptr && newActive->isVirtual) {
+      const Collection* newActiveCollection = CollectionsStore::getInstance().getActiveCollection();
+      if (newActiveCollection != nullptr && newActiveCollection->isVirtual) {
         // Pre-warm the SD walk if it hasn't happened yet. ensureWalked
         // self-skips after the first walk this session so this is free
         // on subsequent cycles between virtuals.
@@ -2460,6 +2487,10 @@ void HomeActivity::render(RenderLock&&) {
 
   renderer.clearScreen();
   bool bufferRestored = coverBufferStored && restoreCoverBuffer();
+  // Reset per-render: set true if any progress popup gets drawn over the
+  // framebuffer below (see homeRenderPopupShown doc). Drives the snapshot
+  // skip + clean-repaint at end of render so popups don't get stuck.
+  homeRenderPopupShown = false;
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding},
                  metrics.homeContinueReadingInMenu && !recentBooks.empty() ? recentBooks[0].title.c_str() : nullptr);
@@ -2728,7 +2759,20 @@ void HomeActivity::render(RenderLock&&) {
   // I/O isn't blocked waiting for the memcpy, and `coverBufferStored`
   // flag drives the restore on the next render.
   if (isLyraFlowForRender) {
-    if (storeCoverBuffer()) {
+    if (homeRenderPopupShown) {
+      // A progress popup (shelf cover load / series detection) was drawn over
+      // the framebuffer this frame. Snapshotting it would bake the popup into
+      // the cached buffer, and the carousel/shelf fast-paths (which don't
+      // repaint the carousel area the popup sits over) would keep restoring
+      // it — leaving the popup stuck on screen until the user navigated to
+      // the carousel. Instead, drop all cached render state so the follow-up
+      // requestUpdate() does a full clean repaint that erases the popup.
+      coverBufferStored = false;
+      shelfSnapshotValid = false;
+      lastRenderedCoverSelectorValid = false;
+      coverRendered = false;
+      requestUpdate();
+    } else if (storeCoverBuffer()) {
       coverBufferStored = true;
     }
   }

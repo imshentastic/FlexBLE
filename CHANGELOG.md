@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [crumble-v2.1.2] - 2026-05-22
+Patch release. No upstream version sync (still CrossInk 1.2.11.1).
+
 ### Fixed
 - **Anti-aliasing now works with a Bluetooth remote connected** (resolves the
   v2.1.1 known limitation). Two changes:
@@ -15,6 +18,32 @@
     needed at all. (Includes the display-controller grayscale cleanup, so no
     ghosting.) Costs one extra render pass, and only while the remote is
     connected. Net: AA stays on for all pages, with or without the remote.
+- **Long "Loading" freeze when scrolling a collection of never-opened books**
+  (e.g. Recently Added). Generating a shelf cover thumbnail used to build the
+  book's *entire* spine/TOC index (`book.bin`) just to locate the cover image —
+  and the spine pass alone can run hundreds of ms per manifest item — only to
+  discover many books have no extractable cover. Thumbnail generation now
+  parses just `content.opf` (no spine resolution, no TOC, no `book.bin`), so a
+  coverless book falls back to the placeholder in OPF-parse time instead of
+  freezing the UI. The full index is still built later, when the book is
+  actually opened.
+- **Stuck "Loading" / "Detecting series…" popup over the carousel.** The popup
+  was drawn during a render and then captured into the cached framebuffer
+  snapshot; the carousel/shelf fast-paths restored that snapshot without
+  repainting the carousel, so the popup stayed on screen until you navigated to
+  the carousel. The frame is now flagged when a popup is drawn so the snapshot
+  is skipped and the next render does a clean repaint that erases it.
+- **Carousel reading-progress bar started slightly too wide, then shrank.** The
+  bar tracks the cover width, but on the fast-path render that width was left at
+  the default until the cover bitmap reloaded. The center cover's true
+  dimensions are now read on every render, so the bar is the correct width from
+  the first paint.
+- **Collections now recall their shelf position.** Switching the active
+  collection on the shelf header and switching back used to jump to book 0
+  (while the restored framebuffer still showed your old scroll spot). Each
+  collection's scroll offset + focused book are now remembered and restored, so
+  the visible shelf and the book you land on stay consistent. Resets each home
+  visit.
 
 ## [crumble-v2.1.1] - 2026-05-22
 Patch release. No upstream version sync (still CrossInk 1.2.11.1).
