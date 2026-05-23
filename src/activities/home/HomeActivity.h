@@ -104,6 +104,14 @@ class HomeActivity final : public Activity {
   // of retrying. Cleared on onEnter so a transient failure gets one retry
   // per home visit. std::vector (not set) — these lists are tiny.
   std::vector<std::string> failedShelfCovers;
+  // First-index cover safety cap. On the very first boot (fresh library index
+  // just built), generating covers for a large library — on top of the SD walk
+  // that just ran and a fragmented heap — has OOM-crashed devices. We cap how
+  // many covers we generate during that one boot; capped books render blank and
+  // get their cover on the next boot (index cached, no walk, no cap). Counter
+  // is session-scoped and only enforced while LibraryIndex::wasFreshFirstBoot().
+  static constexpr int kFirstIndexCoverCap = 24;
+  int firstIndexCoversGenerated = 0;
   // Per-collection shelf position (scroll offset + focused book index),
   // keyed by collection id. When the user cycles the active collection on
   // the shelf header and later switches back, we restore where they were —
