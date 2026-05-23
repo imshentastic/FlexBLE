@@ -93,7 +93,8 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
                                                                                      bool isCurrentPageBookmarked,
                                                                                      bool isBookCompleted) {
   std::vector<MenuItem> items;
-  constexpr size_t baseItemCount = 14;
+  // 14 upstream items + 1 (CrumBLE Bluetooth entry).
+  constexpr size_t baseItemCount = 15;
   const size_t totalItemCount = baseItemCount + (hasFootnotes ? 1u : 0u) + (hasBookmarks ? 2u : 0u);
   items.reserve(totalItemCount);
   if (hasFootnotes) {
@@ -117,7 +118,7 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
   items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
   items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS});
   items.push_back({MenuAction::READING_STATS, StrId::STR_READING_STATS});
-  items.push_back({MenuAction::BLUETOOTH, StrId::STR_BLUETOOTH});
+  items.push_back({MenuAction::BLUETOOTH, StrId::STR_BLUETOOTH});  // CrumBLE
   items.push_back(
       {MenuAction::TOGGLE_COMPLETED, isBookCompleted ? StrId::STR_MARK_UNFINISHED : StrId::STR_MARK_FINISHED});
   return items;
@@ -151,6 +152,29 @@ void EpubReaderMenuActivity::loop() {
       return;
     }
 
+    if (selectedAction == MenuAction::READER_OPTIONS) {
+      const auto before = captureReaderLayoutSettings();
+      startActivityForResult(std::make_unique<ReaderOptionsActivity>(renderer, mappedInput),
+                             [this, before](const ActivityResult&) {
+                               settingsChanged = settingsChanged || haveReaderLayoutSettingsChanged(before);
+                               pendingOrientation = SETTINGS.orientation;  // sync in case orientation changed
+                               requestUpdate();
+                             });
+      return;
+    }
+
+    if (selectedAction == MenuAction::CONTROLS_OPTIONS) {
+      startActivityForResult(std::make_unique<ControlsOptionsActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) {
+                               ActivityResult result;
+                               result.isCancelled = true;
+                               result.data = MenuResult{-1, pendingOrientation, settingsChanged};
+                               setResult(std::move(result));
+                               finish();
+                             });
+      return;
+    }
+
     if (selectedAction == MenuAction::BLUETOOTH) {
       // exitOnSuccessfulConnect=true: when the user pairs a new remote or
       // reconnects to a bonded one from inside the book, BluetoothSettings
@@ -173,29 +197,6 @@ void EpubReaderMenuActivity::loop() {
             }
             requestUpdate();
           });
-      return;
-    }
-
-    if (selectedAction == MenuAction::READER_OPTIONS) {
-      const auto before = captureReaderLayoutSettings();
-      startActivityForResult(std::make_unique<ReaderOptionsActivity>(renderer, mappedInput),
-                             [this, before](const ActivityResult&) {
-                               settingsChanged = settingsChanged || haveReaderLayoutSettingsChanged(before);
-                               pendingOrientation = SETTINGS.orientation;  // sync in case orientation changed
-                               requestUpdate();
-                             });
-      return;
-    }
-
-    if (selectedAction == MenuAction::CONTROLS_OPTIONS) {
-      startActivityForResult(std::make_unique<ControlsOptionsActivity>(renderer, mappedInput),
-                             [this](const ActivityResult&) {
-                               ActivityResult result;
-                               result.isCancelled = true;
-                               result.data = MenuResult{-1, pendingOrientation, settingsChanged};
-                               setResult(std::move(result));
-                               finish();
-                             });
       return;
     }
 

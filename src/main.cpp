@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <BluetoothHIDManager.h>
 #include <Epub.h>
 #include <FontCacheManager.h>
 #include <FontDecompressor.h>
@@ -69,10 +70,14 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
+#include "CollectionsStore.h"
+#include "LibraryIndex.h"
 #include "RecentBooksStore.h"
+#include "SeriesIndex.h"
 #include "SdCardFontSystem.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/boot_sleep/SleepActivity.h"
 #include "activities/reader/KOReaderSyncActivity.h"
 #include "activities/settings/KOReaderSettingsActivity.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
@@ -92,6 +97,10 @@ FontDecompressor fontDecompressor;
 SdCardFontSystem sdFontSystem;
 FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts());
 static unsigned long allowSleepAt = 0;
+
+// Updated each main-loop iteration; read by the BLE HID manager via a
+// callback so it can decide whether to inject reader-only buttons.
+static bool gBluetoothReaderContext = false;
 
 // Fonts
 #ifndef OMIT_MEDIUM_FONT
@@ -570,6 +579,11 @@ bool handleGlobalPowerButtonAction(const CrossPointSettings::SHORT_PWRBTN action
 
 namespace {
 constexpr uint16_t POST_SLEEP_SCREEN_SETTLE_MS = 500;
+// In cycle mode, a press shorter than this is a tap (cycle); longer is a wake.
+// Set equal to the wake-duration threshold so there is no dead zone between
+// "tap" and "wake" — anything below cycles, anything above wakes.
+constexpr unsigned long SCREENSAVER_TAP_MAX_MS = CrossPointSettings::POWER_BUTTON_LONG_PRESS_MS;
+
 constexpr uint8_t TILT_SLEEP_MAX_ATTEMPTS = 3;
 constexpr uint16_t TILT_SLEEP_RETRY_DELAY_MS = 10;
 
@@ -587,6 +601,75 @@ void putTiltSensorToSleepForDeepSleep() {
   LOG_ERR("MAIN", "Tilt sensor did not confirm sleep before deep sleep");
 }
 }  // namespace
+
+// Returns true if the wake-up press was a brief tap (released before SCREENSAVER_TAP_MAX_MS).
+// Returns false if the button is still held past the tap window — in that case the caller
+// should fall through to the existing wake-verification flow.
+//
+// We read GPIO directly rather than going through InputManager because its debounce can take
+// ~500ms to register a press; any tap shorter than that would be invisible. The deep-sleep
+// wake itself already proved the button went LOW, so we only need to determine "still held?"
+// vs "already released?" right now.
+bool detectScreensaverCycleTap() {
+  const unsigned long start = millis();
+  while (digitalRead(InputManager::POWER_BUTTON_PIN) == LOW && (millis() - start) < SCREENSAVER_TAP_MAX_MS) {
+    delay(5);
+  }
+  const bool released = digitalRead(InputManager::POWER_BUTTON_PIN) == HIGH;
+  LOG_INF("MAIN", "Cycle tap detect: %s (took %lu ms)", released ? "TAP" : "HELD", millis() - start);
+  return released;
+}
+
+// Wait POST_SLEEP_SCREEN_SETTLE_MS for the e-ink panel to finish settling. While waiting,
+// also poll the power-button GPIO so taps that land during this awake window cycle the
+// screensaver instead of being lost (the chip has not entered deep sleep yet, so InputManager
+// is dormant and GPIO wake is not armed). Returns true if a tap was observed; false on timeout.
+bool pollForCycleTapDuringSleepEntry() {
+  const auto start = millis();
+  while (millis() - start < POST_SLEEP_SCREEN_SETTLE_MS) {
+    if (digitalRead(InputManager::POWER_BUTTON_PIN) == LOW) {
+      const auto pressStart = millis();
+      while (digitalRead(InputManager::POWER_BUTTON_PIN) == LOW &&
+             (millis() - pressStart) < SCREENSAVER_TAP_MAX_MS) {
+        delay(5);
+      }
+      // Released within tap window = tap. Held past it = let the user wake (we will exit
+      // to deep sleep with the button still LOW; GPIO wake will fire immediately on arm).
+      return digitalRead(InputManager::POWER_BUTTON_PIN) == HIGH;
+    }
+    delay(10);
+  }
+  return false;
+}
+
+// Set by an ISR while a sleep-screen render is in progress. Lets us detect taps that land
+// during the (uninterruptible) e-ink refresh + greyscale pass — the chip is awake the whole
+// time, but no main-loop polling runs, so a flag-on-falling-edge ISR is the only way to
+// notice them. Volatile because shared with the ISR; only set/cleared with interrupts off.
+volatile bool sleepEntryTapPending = false;
+
+void IRAM_ATTR onSleepEntryPowerEdge() { sleepEntryTapPending = true; }
+
+void armSleepEntryTapIsr() {
+  sleepEntryTapPending = false;
+  attachInterrupt(InputManager::POWER_BUTTON_PIN, onSleepEntryPowerEdge, FALLING);
+}
+
+void disarmSleepEntryTapIsr() {
+  detachInterrupt(InputManager::POWER_BUTTON_PIN);
+  sleepEntryTapPending = false;
+}
+
+// Returns true if the ISR captured a press whose release has already happened
+// (button currently HIGH) — that is, a complete tap during the render. If the button
+// is still LOW, the press is unresolved (user might be tapping or holding); leave the
+// flag set and let the poll-for-release path decide.
+bool consumeCompletedSleepEntryTap() {
+  if (!sleepEntryTapPending) return false;
+  if (digitalRead(InputManager::POWER_BUTTON_PIN) != HIGH) return false;
+  sleepEntryTapPending = false;
+  return true;
+}
 
 constexpr char SLEEP_FRAME_FILE[] = "/.crosspoint/sleep_frame.bin";
 
@@ -611,6 +694,35 @@ static bool loadSleepFrameBuffer() {
   return true;
 }
 
+[[noreturn]] void cycleScreensaverThenDeepSleep() {
+  APP_STATE.loadFromFile();
+
+  // Display + renderer init only — fonts are not needed because the cycle path
+  // only ever draws a BMP via SleepActivity::cycleScreensaverFromDeepSleep().
+  display.begin();
+  renderer.begin();
+
+  armSleepEntryTapIsr();
+  while (true) {
+    SleepActivity::cycleScreensaverFromDeepSleep(renderer);
+    if (consumeCompletedSleepEntryTap()) continue;
+    if (pollForCycleTapDuringSleepEntry()) continue;
+    break;
+  }
+  disarmSleepEntryTapIsr();
+
+  halTiltSensor.deepSleep();
+  display.deepSleep();
+  LOG_DBG("MAIN", "Screensaver cycled — re-entering deep sleep");
+  powerManager.startDeepSleep(gpio);
+
+  // startDeepSleep does not return on hardware. The simulator stubs it as a
+  // no-op; spin so [[noreturn]] holds and the simulator does not fall through.
+  while (true) {
+    delay(1000);
+  }
+}
+
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout) {
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
@@ -624,15 +736,50 @@ void enterDeepSleep(bool fromTimeout) {
 
   APP_STATE.saveToFile();
 
+  // CrumBLE: give the current activity a chance to flush in-flight
+  // state (most importantly: the reader's accumulated session time)
+  // before the chip powers off. Without this hook, every minute spent
+  // reading since the last natural activity-exit was lost on each
+  // deep-sleep cycle. Ported in spirit from dawsonfi/aalu's
+  // ReadingStatsManager::endSession deep-sleep wiring.
+  activityManager.notifyBeforeDeepSleep();
+
+  // Disable BLE before deep sleep so the NimBLE host shuts down cleanly and
+  // the radio is released before the chip powers off. Idempotent if BLE was
+  // already off (reader exit path) — defensive against the auto-sleep timer
+  // firing while the user is still in a book with BLE on.
+  auto& btMgr = BluetoothHIDManager::getInstance();
+  if (btMgr.isEnabled()) {
+    LOG_INF("SLP", "Disabling Bluetooth before deep sleep");
+    btMgr.disable();
+  }
+
   // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
   // a WiFi activity would otherwise silentRestart() here and reboot instead.
   deepSleepInProgress = true;
-  activityManager.goToSleep(fromTimeout);
 
-  if (isQuickResumeSleep) {
-    saveSleepFrameBuffer();
+  if (SETTINGS.cycleScreensaverOnTap) {
+    armSleepEntryTapIsr();
+    activityManager.goToSleep(fromTimeout);
+    while (true) {
+      if (consumeCompletedSleepEntryTap()) {
+        SleepActivity::cycleScreensaverFromDeepSleep(renderer);
+        continue;
+      }
+      if (pollForCycleTapDuringSleepEntry()) {
+        SleepActivity::cycleScreensaverFromDeepSleep(renderer);
+        continue;
+      }
+      break;
+    }
+    disarmSleepEntryTapIsr();
   } else {
-    delay(POST_SLEEP_SCREEN_SETTLE_MS);
+    activityManager.goToSleep(fromTimeout);
+    if (isQuickResumeSleep) {
+      saveSleepFrameBuffer();
+    } else {
+      delay(POST_SLEEP_SCREEN_SETTLE_MS);
+    }
   }
 
   putTiltSensorToSleepForDeepSleep();
@@ -805,14 +952,33 @@ void setup() {
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
 
+  {
+    auto& btMgr = BluetoothHIDManager::getInstance();
+    btMgr.setButtonInjector(
+        [](uint8_t buttonIndex, bool pressed) { gpio.setVirtualButtonState(buttonIndex, pressed); });
+    btMgr.setButtonActivityNotifier([](uint8_t buttonIndex) { gpio.updateVirtualButtonActivity(buttonIndex); });
+    btMgr.setReaderContextCallback([]() { return gBluetoothReaderContext; });
+    btMgr.setBondedDevice(SETTINGS.bleBondedDeviceAddr, SETTINGS.bleBondedDeviceName);
+  }
+
   const auto wakeupReason = gpio.getWakeupReason();
   LOG_INF("BOOT", "Wake route: %s", wakeupRouteName(wakeupReason));
   switch (wakeupReason) {
     case HalGPIO::WakeupReason::PowerButton:
-      LOG_INF("BOOT", "Power-button wake: verifying duration required=%u shortAllowed=%d",
-              SETTINGS.getPowerButtonWakeDuration(), SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
-      gpio.verifyPowerButtonWakeup(SETTINGS.getPowerButtonWakeDuration(),
-                                   SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
+      if (SETTINGS.cycleScreensaverOnTap) {
+        if (detectScreensaverCycleTap()) {
+          cycleScreensaverThenDeepSleep();
+        }
+        // Held past the tap window — proceed to wake. Our raw-GPIO detect already
+        // confirmed the hold duration, so skip the InputManager-based verify which
+        // would otherwise miss presses that release just after its debounce wakes up.
+      } else {
+        LOG_INF("BOOT", "Power-button wake: verifying duration required=%u shortAllowed=%d",
+                SETTINGS.getPowerButtonWakeDuration(),
+                SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
+        gpio.verifyPowerButtonWakeup(SETTINGS.getPowerButtonWakeDuration(),
+                                     SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
+      }
       break;
     case HalGPIO::WakeupReason::AfterUSBPower:
       // TEMP: continue booting while diagnosing post-flash/reset behavior.
@@ -849,7 +1015,7 @@ void setup() {
   }
 
   // First serial output only here to avoid timing inconsistencies for power button press duration verification
-  LOG_DBG("MAIN", "Starting CrossPoint version " CROSSPOINT_VERSION);
+  LOG_DBG("MAIN", "Starting CrumBLE " CRUMBLE_VERSION " (CrossInk " CROSSINK_VERSION ")");
 
   // Resolve the single boot-presentation decision. Skipping the splash also
   // skips the panel-clearing pass and the X3 initial-full-sync arming (see
@@ -860,6 +1026,69 @@ void setup() {
                                                         : BootResume::Splash;
 
   setupDisplayAndFonts(resume != BootResume::Splash);
+
+  // LibraryIndex loads its cached JSON now (cheap); the heavy SD walk is
+  // deferred until the user first accesses Recently Added / All Books on
+  // the shelf so boot stays fast.
+  LibraryIndex::getInstance().begin();
+  SeriesIndex::getInstance().begin();
+  CollectionsStore::getInstance().begin();
+
+  // First-boot library indexing: if no library_index.json existed on SD,
+  // this is either a fresh install or the user wiped their cache. Frame
+  // the unavoidable SD walk as a welcome experience rather than letting
+  // it pop up unexplained the first time they cycle to Recently Added /
+  // All Books on the shelf. The walk is one-time per cache-clear; the
+  // resulting JSON persists across reboots.
+  if (LibraryIndex::getInstance().wasFreshFirstBoot()) {
+    renderer.clearScreen();
+    const int pageW = renderer.getScreenWidth();
+    const int pageH = renderer.getScreenHeight();
+
+    // Title (largest UI font we have on the tiny build = UI_12_FONT_ID).
+    // Centered ~third of the way down so the eye lands on it naturally.
+    const char* title = tr(STR_WELCOME_TITLE);
+    const int titleW = renderer.getTextWidth(UI_12_FONT_ID, title, EpdFontFamily::BOLD);
+    const int titleY = pageH / 3;
+    renderer.drawText(UI_12_FONT_ID, (pageW - titleW) / 2, titleY, title, true, EpdFontFamily::BOLD);
+
+    // Subtitle: what's happening right now.
+    const char* sub = tr(STR_WELCOME_INDEXING);
+    const int subW = renderer.getTextWidth(UI_12_FONT_ID, sub, EpdFontFamily::REGULAR);
+    const int subY = titleY + renderer.getLineHeight(UI_12_FONT_ID) + 16;
+    renderer.drawText(UI_12_FONT_ID, (pageW - subW) / 2, subY, sub, true, EpdFontFamily::REGULAR);
+
+    // Tertiary: reassurance that this is one-time.
+    const char* once = tr(STR_WELCOME_ONCE);
+    const int onceW = renderer.getTextWidth(UI_10_FONT_ID, once, EpdFontFamily::REGULAR);
+    const int onceY = subY + renderer.getLineHeight(UI_12_FONT_ID) + 6;
+    renderer.drawText(UI_10_FONT_ID, (pageW - onceW) / 2, onceY, once, true, EpdFontFamily::REGULAR);
+
+    // Progress bar frame ~halfway down the bottom half. Bar fills as the
+    // walk reports progress 0..100.
+    constexpr int barH = 8;
+    const int barW = static_cast<int>(pageW * 0.6f);
+    const int barX = (pageW - barW) / 2;
+    const int barY = onceY + renderer.getLineHeight(UI_10_FONT_ID) + 30;
+    renderer.fillRect(barX - 2, barY - 2, barW + 4, barH + 4, true);
+    renderer.fillRect(barX, barY, barW, barH, false);
+    renderer.displayBuffer();
+
+    // Run the walk synchronously; the lambda paints the bar fill as
+    // progress accumulates. Refresh is FAST so the bar grows smoothly
+    // without flashing the whole screen.
+    LibraryIndex::getInstance().rescan([&](int pct) {
+      const int fillW = (barW * std::clamp(pct, 0, 100)) / 100;
+      renderer.fillRect(barX, barY, fillW, barH, true);
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    });
+
+    // Settle for a beat so users see the bar hit 100% before the screen
+    // moves on — abrupt transitions feel like the device skipped a step.
+    delay(400);
+    renderer.clearScreen();
+    renderer.displayBuffer();
+  }
 
   switch (resume) {
     case BootResume::Silent:
@@ -945,6 +1174,33 @@ void loop() {
   gpio.update();
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 
+  gBluetoothReaderContext = activityManager.isReaderActivity();
+  auto& btMgr = BluetoothHIDManager::getInstance();
+  const bool userInputDetectedForBt = gpio.wasAnyPressed() || gpio.wasAnyReleased();
+  btMgr.updateActivity();
+  // checkAutoReconnect can block for 2-3 s calling connectToDevice() when a
+  // reconnect to the bonded remote is in flight. If the user impatiently
+  // taps Back during that freeze, the release lands on the next iteration
+  // and would kick them out of the book (and BLE auto-disables on book
+  // exit). Time the call and swallow one Back release when it actually
+  // blocked, so the hasty tap is treated as the no-op the user intended.
+  const unsigned long btReconnectStart = millis();
+  btMgr.checkAutoReconnect(userInputDetectedForBt);
+  if (millis() - btReconnectStart > 500) {
+    mappedInputManager.suppressNextBackRelease();
+  }
+  // Drain deferred disable from EpubReaderActivity::onExit. We can't call
+  // disable() inline from onExit because the activity manager still holds
+  // the render lock during the transition; doing it here, after loop()
+  // returns, is safe.
+  btMgr.tryDisableIfRequested();
+  // Companion drain: when the reader proactively drops BLE around a heavy
+  // re-layout (e.g. font change from the Book Settings drawer), it asks
+  // for BLE to come back up once the indexer finishes. checkAutoReconnect
+  // then resumes the bonded-device link on the user's next button press.
+  btMgr.tryEnableIfRequested();
+  const bool bleRecentActivity = btMgr.hasRecentActivity();
+
   renderer.setFadingFix(SETTINGS.fadingFix);
 
   if (Serial && millis() - lastMemPrint >= 10000) {
@@ -973,7 +1229,7 @@ void loop() {
   // Check for any user activity (button press or release) or active background work
   static unsigned long lastActivityTime = millis();
   if (gpio.wasAnyPressed() || gpio.wasAnyReleased() || halTiltSensor.hadActivity() ||
-      activityManager.preventAutoSleep()) {
+      activityManager.preventAutoSleep() || bleRecentActivity) {
     lastActivityTime = millis();         // Reset inactivity timer
     powerManager.setPowerSaving(false);  // Restore normal CPU frequency on user activity
   }

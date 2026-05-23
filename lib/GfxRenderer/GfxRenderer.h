@@ -33,7 +33,25 @@ class GfxRenderer {
   };
 
  private:
-  static constexpr size_t BW_BUFFER_CHUNK_SIZE = 8000;  // 8KB chunks to allow for non-contiguous memory
+  // BW backup for the grayscale anti-aliasing pass uses PackBits-style RLE
+  // compression. Reader pages are >95% same-byte runs, so a 48 KB framebuffer
+  // typically encodes to 2-5 KB. We allocate a single bounded buffer instead
+  // of 12 × 4 KB chunks, which dramatically reduces fragmentation pressure
+  // when NimBLE + EPUB allocations have split the heap.
+  // Cap at 32 KB so image-heavy pages (which compress poorly because their
+  // dithered patterns have few same-byte runs) still fit. Field measurements
+  // showed dense pages compress to ~25-26 KB. If even 32 KB isn't enough we
+  // gracefully skip grayscale for that page (same UX as the old chunked
+  // alloc-failure path).
+  //
+  // A 16 KB cap was tried (CrumBLE) to make the per-page allocation more
+  // likely to succeed when NimBLE has fragmented the heap, but it backfired:
+  // pages that compress to 16-26 KB then overflow the buffer and lose AA
+  // *unconditionally*, even on a clean heap with no Bluetooth — a worse
+  // regression than 32 KB's "occasionally skips under BLE memory pressure".
+  // So 32 KB stays. The AA-under-BLE inconsistency is accepted as graceful
+  // degradation (see CHANGELOG known limitation).
+  static constexpr size_t MAX_BW_COMPRESSED_SIZE = 32U * 1024U;
 
   HalDisplay& display;
   RenderMode renderMode;
@@ -44,7 +62,8 @@ class GfxRenderer {
   uint16_t panelHeight = HalDisplay::DISPLAY_HEIGHT;
   uint16_t panelWidthBytes = HalDisplay::DISPLAY_WIDTH_BYTES;
   uint32_t frameBufferSize = HalDisplay::BUFFER_SIZE;
-  std::vector<uint8_t*> bwBufferChunks;
+  uint8_t* bwCompressedBackup = nullptr;
+  size_t bwCompressedBackupSize = 0;
   std::map<int, EpdFontFamily> fontMap;
   // Shared bitmap row buffers. Every read/write must be inside BitmapScratchLock;
   // ensureBitmapScratchBuffers() asserts that contract before exposing them.
@@ -80,7 +99,7 @@ class GfxRenderer {
 
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, int* y, bool pixelState,
                   EpdFontFamily::Style style) const;
-  void freeBwBufferChunks();
+  void freeBwCompressedBackup();
   void freeBitmapScratchBuffers();
   bool ensureBitmapScratchBuffers(size_t outputRowSize, size_t rowBytesSize) const;
   bool bitmapScratchLockHeldByCurrentTask() const;
@@ -103,7 +122,7 @@ class GfxRenderer {
   GfxRenderer(GfxRenderer&&) = delete;
   GfxRenderer& operator=(GfxRenderer&&) = delete;
   ~GfxRenderer() {
-    freeBwBufferChunks();
+    freeBwCompressedBackup();
     freeBitmapScratchBuffers();
   }
 
@@ -182,8 +201,10 @@ class GfxRenderer {
   void drawBitmap(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight, float cropX = 0,
                   float cropY = 0) const;
   void drawBitmap1Bit(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight) const;
-  // Trapezoidal blit used by Flow/iPod-style carousels. Fits the bitmap into a
-  // bounding box of width `w` and height `max(hL, hR)` whose top-left is (x, y).
+  // Trapezoidal blit used by Flow/iPod-style carousel. Fits the bitmap into a
+  // bounding box of width `w` and height `max(hL, hR)` whose top-left is (x, y);
+  // each output column has its own height linearly interpolated from hL on the
+  // left edge to hR on the right edge, vertically centered in the bbox.
   void drawPerspectiveBitmap(const Bitmap& bitmap, int x, int y, int w, int hL, int hR) const;
   void fillPolygon(const int* xPoints, const int* yPoints, int numPoints, bool state = true) const;
 
@@ -223,7 +244,12 @@ class GfxRenderer {
   void copyGrayscaleMsbBuffers() const;
   void displayGrayBuffer(bool turnOffScreen = false) const;
   bool storeBwBuffer();    // Returns true if buffer was stored successfully
-  void restoreBwBuffer();  // Restore and free the stored buffer
+  void restoreBwBuffer();  // Restore the stored buffer (does NOT free it)
+  // True if a compressed BW backup is currently held (either from a prior
+  // storeBwBuffer() that hasn't been freed yet, or from another caller's
+  // store path leaving its backup around). Callers can use this to decide
+  // whether restoreBwBuffer() will produce useful framebuffer content.
+  bool hasStoredBwBuffer() const { return bwCompressedBackup != nullptr; }
   void cleanupGrayscaleWithFrameBuffer() const;
 
   // Font helpers

@@ -92,7 +92,7 @@ void XtcReaderActivity::loop() {
   // Short press BACK goes directly to home
   if (mappedInput.wasReleased(MappedInputManager::Button::Back) &&
       mappedInput.getHeldTime() < ReaderUtils::GO_HOME_MS) {
-    onGoHome();
+    exitToHomeWithPopup();
     return;
   }
 
@@ -141,7 +141,7 @@ void XtcReaderActivity::loop() {
       frontButtonLongPressHandled = true;
       if (currentPage >= xtc->getPageCount()) {
         if (nextLongPressed) {
-          onGoHome();
+          exitToHomeWithPopup();
         } else {
           currentPage = xtc->getPageCount() - 1;
           requestUpdate();
@@ -182,7 +182,7 @@ void XtcReaderActivity::loop() {
   // At end of the book, forward button goes home and back button returns to last page
   if (currentPage >= xtc->getPageCount()) {
     if (nextTriggered) {
-      onGoHome();
+      exitToHomeWithPopup();
     } else {
       currentPage = xtc->getPageCount() - 1;
       requestUpdate();
@@ -204,10 +204,16 @@ void XtcReaderActivity::loop() {
     }
     requestUpdate();
   } else if (nextTriggered) {
-    currentPage += skipAmount;
-    if (currentPage >= xtc->getPageCount()) {
-      currentPage = xtc->getPageCount();  // Allow showing "End of book"
+    // If this advance would put us at or past the last page, treat it
+    // as finishing the book — go home directly instead of dumping the
+    // user on the "End of book" stub which they then had to back-
+    // button out of. Matches the EPUB and TXT readers' behavior and
+    // upstream PR #1425.
+    if (currentPage + skipAmount >= xtc->getPageCount()) {
+      exitToHomeWithPopup();
+      return;
     }
+    currentPage += skipAmount;
     requestUpdate();
   }
 }

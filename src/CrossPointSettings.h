@@ -202,15 +202,18 @@ class CrossPointSettings {
     LONG_PRESS_BUTTON_BEHAVIOR_COUNT
   };
 
-  // UI Theme. Raw values are persisted in settings; keep existing values stable.
+  // UI Theme. CrumBLE keeps LYRA_FLOW (the Flow carousel) at slot 3 so saved
+  // user settings stay valid; ROUNDEDRAFF/LYRA_CAROUSEL/MINIMAL are shifted up
+  // by one. Raw values are persisted in settings, so keep these stable.
   enum UI_THEME {
     CLASSIC = 0,
     LYRA = 1,
     LYRA_3_COVERS = 2,
-    ROUNDEDRAFF = 3,
-    LYRA_CAROUSEL = 4,
-    MINIMAL = 5,
-    UI_THEME_COUNT = 6
+    LYRA_FLOW = 3,
+    ROUNDEDRAFF = 4,
+    LYRA_CAROUSEL = 5,
+    MINIMAL = 6,
+    UI_THEME_COUNT = 7
   };
   enum RECENT_BOOKS_VIEW { RECENT_BOOKS_LIST = 0, RECENT_BOOKS_GRID = 1, RECENT_BOOKS_VIEW_COUNT };
 
@@ -234,7 +237,8 @@ class CrossPointSettings {
     LONG_MENU_SCREENSHOT = 10,
     LONG_MENU_CYCLE_PAGE_TURN = 11,
     LONG_MENU_FILE_TRANSFER = 12,
-    LONG_MENU_TOGGLE_TILT_PAGE_TURN = 13,
+    LONG_MENU_BOOK_SETTINGS = 13,
+    LONG_MENU_TOGGLE_TILT_PAGE_TURN = 14,
     LONG_PRESS_MENU_ACTION_COUNT
   };
 
@@ -257,6 +261,12 @@ class CrossPointSettings {
   uint8_t sleepScreenCoverMode = FIT;
   // Sleep screen cover filter
   uint8_t sleepScreenCoverFilter = NO_FILTER;
+  // While asleep, a brief tap on the power button cycles to a new random
+  // image from /.sleep instead of waking the device. On by default in
+  // CrumBLE — the cycling sleep screen is one of our headline features
+  // and the battery cost (one boot + e-ink half-refresh per cycle) is
+  // small enough that opt-out is the right default for new users.
+  uint8_t cycleScreensaverOnTap = 1;
   // Status bar settings (statusBar retained for migration only)
   uint8_t statusBar = FULL;
   uint8_t statusBarChapterPageCount = 1;
@@ -338,8 +348,11 @@ class CrossPointSettings {
   uint8_t hideBatteryPercentage = HIDE_NEVER;
   // Long-press page turn button behavior
   uint8_t longPressButtonBehavior = OFF;
-  // UI Theme
-  uint8_t uiTheme = LYRA;
+  // UI Theme. CrumBLE defaults to LYRA_FLOW (3D-perspective book carousel
+  // from CrossInk Carousel) — it's the visual centerpiece of the fork
+  // and what most users will want first. Anyone preferring the simpler
+  // Lyra list can switch in Settings -> Display -> UI Theme.
+  uint8_t uiTheme = LYRA_FLOW;
   // Recent Books screen layout
   uint8_t recentBooksView = RECENT_BOOKS_LIST;
   // Sunlight fading compensation
@@ -354,14 +367,6 @@ class CrossPointSettings {
   char sdFontFamilyName[64] = "";
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
   uint8_t showHiddenFiles = 0;
-  // CrumBLE: Bluetooth HID page-turner support. When on, the device scans,
-  // pairs, and reconnects to a bonded HID remote while reading.
-  uint8_t bluetoothEnabled = 0;
-  // Address (e.g. "AA:BB:CC:DD:EE:FF"), name, and address type of the last
-  // successfully bonded BLE HID remote, for one-tap reconnect.
-  char bleBondedDeviceAddr[18] = "";
-  char bleBondedDeviceName[32] = "";
-  uint8_t bleBondedDeviceAddrType = 0;
   // Remove a book from the Recent Books list when its End-of-Book screen is reached (0 = off, 1 = on)
   uint8_t removeReadBooksFromRecents = 0;
   // Move epub to /Read/ folder on SD card when marked as finished (0 = disabled, 1 = enabled)
@@ -369,13 +374,33 @@ class CrossPointSettings {
   // Image rendering mode in EPUB reader
   uint8_t imageRendering = IMAGES_DISPLAY;
   // Long-press Confirm (menu button) quick action in reader (0 = off)
-  uint8_t longPressMenuAction = LONG_MENU_OFF;
+  uint8_t longPressMenuAction = LONG_MENU_BOOK_SETTINGS;
   // Tilt-based page turning (X3 only — requires QMI8658 IMU)
   uint8_t tiltPageTurn = TILT_OFF;
   // Language setting (Language enum index, default 0 = EN)
   uint8_t language = 0;
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
   uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
+
+  // CrumBLE Collections — global gate for series detection. When 0
+  // (default), the OPF-parse pass and the shelf series-collapse
+  // rendering are both skipped entirely. Off by default because most
+  // EPUBs from non-Calibre sources lack series metadata, so the
+  // expensive first-time scan would yield little value for those
+  // users. Setting → on triggers the lazy scan on next collection
+  // visit.
+  uint8_t seriesDetectionEnabled = 0;
+
+  // Bluetooth HID page-turner support. When on, the device scans, pairs, and
+  // listens to a BLE HID remote and translates its keys into virtual button
+  // presses (front buttons, side buttons) via HalGPIO::setVirtualButtonState.
+  uint8_t bluetoothEnabled = 0;
+  // Address (e.g. "AA:BB:CC:DD:EE:FF") and name of the last successfully bonded
+  // BLE HID device. Used for auto-reconnect on next boot.
+  char bleBondedDeviceAddr[18] = "";
+  char bleBondedDeviceName[32] = "";
+  // BLE address type (0 = public, 1 = random). Required by NimBLE on reconnect.
+  uint8_t bleBondedDeviceAddrType = 0;
 
   ~CrossPointSettings() = default;
 

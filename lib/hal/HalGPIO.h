@@ -43,6 +43,16 @@ class HalGPIO {
   InputManager inputMgr;
 #endif
 
+  // Virtual button state (Bluetooth HID injection). Mirrors a press onto the
+  // existing button-event flow so reader/menu activities don't need to know
+  // whether input came from physical buttons or a remote.
+  uint8_t virtualButtonState = 0;
+  uint8_t desiredVirtualButtonState = 0;
+  uint8_t previousVirtualButtonState = 0;
+  unsigned long virtualPressStart[7] = {0};
+  unsigned long virtualPressFinish[7] = {0};
+  unsigned long virtualLastActivityTime[7] = {0};
+
   bool lastUsbConnected = false;
   bool usbStateChanged = false;
 
@@ -70,7 +80,14 @@ class HalGPIO {
   bool wasReleased(uint8_t buttonIndex) const;
   bool wasAnyReleased() const;
   unsigned long getHeldTime() const;
-  unsigned long getPowerButtonHeldTime() const;
+  unsigned long getHeldTime(uint8_t buttonIndex) const;
+  unsigned long getPowerButtonHeldTime() const;  // CrossInk 1.3
+
+  // Virtual button injection (for Bluetooth HID).
+  void setVirtualButtonState(uint8_t buttonIndex, bool pressed);
+  void injectButtonPress(uint8_t buttonIndex);
+  void clearVirtualButtons();
+  void updateVirtualButtonActivity(uint8_t buttonIndex);
 
   // Setup wake up GPIO and enter deep sleep
   void startDeepSleep();

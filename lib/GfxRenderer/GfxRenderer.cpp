@@ -116,7 +116,6 @@ void GfxRenderer::begin() {
   panelHeight = display.getDisplayHeight();
   panelWidthBytes = display.getDisplayWidthBytes();
   frameBufferSize = display.getBufferSize();
-  bwBufferChunks.assign((frameBufferSize + BW_BUFFER_CHUNK_SIZE - 1) / BW_BUFFER_CHUNK_SIZE, nullptr);
 }
 
 void GfxRenderer::freeBitmapScratchBuffers() {
@@ -1987,79 +1986,183 @@ void GfxRenderer::displayGrayBuffer(const bool turnOffScreen) const {
   display.displayGrayBuffer(fadingFix || turnOffScreen);
 }
 
-void GfxRenderer::freeBwBufferChunks() {
-  for (auto& bwBufferChunk : bwBufferChunks) {
-    if (bwBufferChunk) {
-      free(bwBufferChunk);
-      bwBufferChunk = nullptr;
-    }
+void GfxRenderer::freeBwCompressedBackup() {
+  if (bwCompressedBackup) {
+    free(bwCompressedBackup);
+    bwCompressedBackup = nullptr;
   }
+  bwCompressedBackupSize = 0;
 }
 
 /**
- * This should be called before grayscale buffers are populated.
- * A `restoreBwBuffer` call should always follow the grayscale render if this method was called.
- * Uses chunked allocation to avoid needing 48KB of contiguous memory.
- * Returns true if buffer was stored successfully, false if allocation failed.
+ * Encode the framebuffer into a PackBits-style RLE backup.
+ *
+ * The output stream is a sequence of (header, payload) packets:
+ *   - header [0x00, 0x7F]: literal run; copy the next (header + 1) bytes
+ *     verbatim from the input. The header itself is stored as count-1, so a
+ *     header byte of 0x00 means "copy 1 byte".
+ *   - header [0x80, 0xFF]: byte run; repeat the next byte ((header & 0x7F) + 1)
+ *     times. A header byte of 0x80 means "repeat the next byte once" — i.e.
+ *     a run of 1 — which is wasteful, so the encoder never emits runs <3 here
+ *     and prefers literal runs for short sequences.
+ *
+ * Worst-case expansion (purely random input) is +1 byte per 128 literals,
+ * but reader pages are >95% 0xFF runs and typically encode to <5 KB. If we
+ * exceed MAX_BW_COMPRESSED_SIZE the call fails and the caller falls back
+ * to skipping the grayscale pass — same UX as the old chunked alloc failure.
+ *
+ * A `restoreBwBuffer` call should always follow the grayscale render if this
+ * method was called.
+ *
+ * Returns true if the framebuffer was successfully stored, false if the
+ * compressed buffer couldn't be allocated or the data overflowed.
  */
+// PackBits-style RLE compression of the framebuffer. When `dst` is non-null
+// the compressed bytes are written to it (the caller must have allocated at
+// least the size returned by a prior count pass); when `dst` is null nothing
+// is written and the function only computes the output size. The byte counts
+// are a pure function of the source contents and identical in both modes, so
+// a count pass and a write pass always agree.
+//
+// Encoding: a control byte then payload.
+//   0x80 | (n-1)  -> run: the next single byte repeated n times (3..128)
+//   (n-1)         -> literal: the next n bytes copied verbatim (1..128)
+static size_t packbitsCompressBw(const uint8_t* src, size_t srcSize, uint8_t* dst) {
+  const uint8_t* const srcEnd = src + srcSize;
+  size_t outSize = 0;
+  while (src < srcEnd) {
+    // Look ahead for a run of >=3 identical bytes — the break-even point
+    // versus encoding them as a literal sequence.
+    size_t runLen = 1;
+    const size_t maxRun = std::min<size_t>(128, srcEnd - src);
+    while (runLen < maxRun && src[runLen] == src[0]) {
+      runLen++;
+    }
+
+    if (runLen >= 3) {
+      if (dst) {
+        *dst++ = 0x80 | static_cast<uint8_t>(runLen - 1);
+        *dst++ = *src;
+      }
+      outSize += 2;
+      src += runLen;
+    } else {
+      // Literal run — read up to 128 bytes, stopping early if we spot a
+      // worthwhile (>=3 byte) run upcoming so we don't bury it inside a
+      // literal packet.
+      size_t litLen = 1;
+      const size_t maxLit = std::min<size_t>(128, srcEnd - src);
+      while (litLen < maxLit) {
+        if (litLen + 2 < static_cast<size_t>(srcEnd - src) && src[litLen] == src[litLen + 1] &&
+            src[litLen + 1] == src[litLen + 2]) {
+          break;
+        }
+        litLen++;
+      }
+      if (dst) {
+        *dst++ = static_cast<uint8_t>(litLen - 1);
+        memcpy(dst, src, litLen);
+        dst += litLen;
+      }
+      outSize += 1 + litLen;
+      src += litLen;
+    }
+  }
+  return outSize;
+}
+
 bool GfxRenderer::storeBwBuffer() {
-  // Allocate and copy each chunk
-  for (size_t i = 0; i < bwBufferChunks.size(); i++) {
-    // Check if any chunks are already allocated
-    if (bwBufferChunks[i]) {
-      LOG_ERR("GFX", "!! BW buffer chunk %zu already stored - this is likely a bug, freeing chunk", i);
-      free(bwBufferChunks[i]);
-      bwBufferChunks[i] = nullptr;
-    }
-
-    const size_t offset = i * BW_BUFFER_CHUNK_SIZE;
-    const size_t chunkSize = std::min(BW_BUFFER_CHUNK_SIZE, static_cast<size_t>(frameBufferSize - offset));
-    bwBufferChunks[i] = static_cast<uint8_t*>(malloc(chunkSize));
-
-    if (!bwBufferChunks[i]) {
-      LOG_ERR("GFX", "!! Failed to allocate BW buffer chunk %zu (%zu bytes)", i, chunkSize);
-      // Free previously allocated chunks
-      freeBwBufferChunks();
-      return false;
-    }
-
-    memcpy(bwBufferChunks[i], frameBuffer + offset, chunkSize);
+  if (!frameBuffer) {
+    LOG_ERR("GFX", "!! storeBwBuffer: no framebuffer");
+    return false;
   }
 
-  LOG_DBG("GFX", "Stored BW buffer in %zu chunks (%zu bytes each)", bwBufferChunks.size(), BW_BUFFER_CHUNK_SIZE);
+  // Two-pass exact-size allocation. Pass 1 measures the compressed size
+  // without writing or allocating; we then allocate exactly that many bytes
+  // and pass 2 fills it. This is the key to reliable grayscale AA while a
+  // Bluetooth remote is connected: a normal text page compresses to only
+  // 2-5 KB, and allocating *that* (rather than the worst-case 32 KB block
+  // the old single-buffer path grabbed up front) succeeds even when NimBLE
+  // (~58 KB) has fragmented the heap and there's no large contiguous span
+  // free. Dense/image pages that exceed the cap still gracefully skip AA.
+  const size_t compressedSize = packbitsCompressBw(frameBuffer, frameBufferSize, nullptr);
+  if (compressedSize == 0 || compressedSize > MAX_BW_COMPRESSED_SIZE) {
+    // Out of bounds (empty, or a page too complex to compress within the
+    // cap). Leave any existing backup intact so the BookSettings drawer's
+    // fallback (restore the reader's previous snapshot) still works.
+    LOG_ERR("GFX", "!! BW backup compressed size %zu out of bounds (cap %zu); skipping grayscale", compressedSize,
+            MAX_BW_COMPRESSED_SIZE);
+    return false;
+  }
+
+  // Allocate the exact-size buffer BEFORE freeing the existing backup, so a
+  // malloc failure preserves the old snapshot for the drawer fallback rather
+  // than clobbering it (which used to leave the drawer painting on white).
+  uint8_t* const newBackup = static_cast<uint8_t*>(malloc(compressedSize));
+  if (!newBackup) {
+    LOG_ERR("GFX", "!! Failed to allocate %zu-byte BW backup; skipping grayscale (existing backup preserved)",
+            compressedSize);
+    return false;
+  }
+
+  // Pass 2: compress for real into the right-sized buffer.
+  packbitsCompressBw(frameBuffer, frameBufferSize, newBackup);
+
+  if (bwCompressedBackup) {
+    freeBwCompressedBackup();
+  }
+  bwCompressedBackup = newBackup;
+  bwCompressedBackupSize = compressedSize;
+  LOG_DBG("GFX", "Stored BW buffer compressed: %lu -> %zu bytes (%.1f%%)", static_cast<unsigned long>(frameBufferSize),
+          bwCompressedBackupSize, (100.0f * bwCompressedBackupSize) / frameBufferSize);
   return true;
 }
 
 /**
- * This can only be called if `storeBwBuffer` was called prior to the grayscale render.
- * It should be called to restore the BW buffer state after grayscale rendering is complete.
- * Uses chunked restoration to match chunked storage.
+ * Decompress the backup back into the framebuffer. Pairs with storeBwBuffer.
+ * If the backup is missing or malformed, the framebuffer is left as-is and
+ * the call is a no-op — the grayscale layer is already on the e-ink, so
+ * leaving the framebuffer mid-grayscale only matters for subsequent partial
+ * refreshes (status bar etc.), which will re-render their region anyway.
  */
 void GfxRenderer::restoreBwBuffer() {
-  // Check if all chunks are allocated
-  bool missingChunks = false;
-  for (const auto& bwBufferChunk : bwBufferChunks) {
-    if (!bwBufferChunk) {
-      missingChunks = true;
-      break;
-    }
-  }
-
-  if (missingChunks) {
-    freeBwBufferChunks();
+  if (!bwCompressedBackup || bwCompressedBackupSize == 0) {
     return;
   }
 
-  for (size_t i = 0; i < bwBufferChunks.size(); i++) {
-    const size_t offset = i * BW_BUFFER_CHUNK_SIZE;
-    const size_t chunkSize = std::min(BW_BUFFER_CHUNK_SIZE, static_cast<size_t>(frameBufferSize - offset));
-    memcpy(frameBuffer + offset, bwBufferChunks[i], chunkSize);
+  const uint8_t* src = bwCompressedBackup;
+  const uint8_t* srcEnd = bwCompressedBackup + bwCompressedBackupSize;
+  uint8_t* dst = frameBuffer;
+  uint8_t* dstEnd = frameBuffer + frameBufferSize;
+
+  while (src < srcEnd && dst < dstEnd) {
+    const uint8_t hdr = *src++;
+    if (hdr & 0x80) {
+      // Byte-run packet: (header & 0x7F) + 1 copies of the next byte.
+      const size_t runLen = (hdr & 0x7F) + 1u;
+      if (src >= srcEnd || dst + runLen > dstEnd) {
+        LOG_ERR("GFX", "!! BW restore truncated at run (decoded=%zu)", static_cast<size_t>(dst - frameBuffer));
+        break;
+      }
+      memset(dst, *src++, runLen);
+      dst += runLen;
+    } else {
+      // Literal packet: header + 1 verbatim bytes.
+      const size_t litLen = static_cast<size_t>(hdr) + 1u;
+      if (src + litLen > srcEnd || dst + litLen > dstEnd) {
+        LOG_ERR("GFX", "!! BW restore truncated at literal (decoded=%zu)", static_cast<size_t>(dst - frameBuffer));
+        break;
+      }
+      memcpy(dst, src, litLen);
+      dst += litLen;
+      src += litLen;
+    }
   }
 
   display.cleanupGrayscaleBuffers(frameBuffer);
 
-  freeBwBufferChunks();
-  LOG_DBG("GFX", "Restored and freed BW buffer chunks");
+  freeBwCompressedBackup();
+  LOG_DBG("GFX", "Restored BW buffer from compressed backup");
 }
 
 /**

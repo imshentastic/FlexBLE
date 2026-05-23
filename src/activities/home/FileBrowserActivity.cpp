@@ -9,8 +9,12 @@
 #include <algorithm>
 
 #include "BookActions.h"
+#include "BookMetadataViewerActivity.h"
+#include "BookmarkStore.h"
+#include "CollectionPickerActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "CollectionsStore.h"
 #include "FileBrowserActionActivity.h"
 #include "MappedInputManager.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -265,6 +269,20 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
   const std::string fullPath = buildFullPath(basepath, entry);
   std::vector<FileBrowserActionActivity::MenuItem> items = BookActions::buildBookActionItems(fullPath, false);
 
+  // CrumBLE Collections (phase 2): single picker entry that drills into a
+  // checklist of every collection. The picker handles the per-membership
+  // toggle and the "+ New collection..." flow itself, so the action menu
+  // doesn't need separate add/remove items per collection anymore.
+  const bool isBookFile = FsHelpers::hasEpubExtension(fullPath) || FsHelpers::hasXtcExtension(fullPath) ||
+                          FsHelpers::hasTxtExtension(fullPath) || FsHelpers::hasMarkdownExtension(fullPath);
+  if (isBookFile) {
+    items.push_back({FileBrowserAction::AddToCollection, StrId::STR_ADD_TO_COLLECTION});
+    // Show-metadata debug inspector — same on both home and file-
+    // browser long-press paths so the user can verify metadata from
+    // either context.
+    items.push_back({FileBrowserAction::ShowMetadata, StrId::STR_SHOW_METADATA});
+  }
+
   const bool canPinFavorite = isSleepFolderPath(basepath) && isSleepImageFile(entry);
   if (canPinFavorite) {
     items.push_back(
@@ -320,7 +338,32 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
           case FileBrowserAction::UnpinFavorite:
             unpinSleepFavorite();
             return;
-          case FileBrowserAction::RemoveFromRecents:
+          case FileBrowserAction::AddToCollection: {
+            // Open the dedicated picker. Membership changes are persisted
+            // by the picker itself; we only need to redraw on return.
+            const std::string filename = getFileName(entry);
+            startActivityForResult(
+                std::make_unique<CollectionPickerActivity>(renderer, mappedInput, fullPath, filename),
+                [this](const ActivityResult&) { requestUpdate(); });
+            return;
+          }
+          case FileBrowserAction::ShowMetadata: {
+            startActivityForResult(
+                std::make_unique<BookMetadataViewerActivity>(renderer, mappedInput, fullPath),
+                [this](const ActivityResult&) { requestUpdate(); });
+            return;
+          }
+          case FileBrowserAction::RemoveFromRecentBooks:
+          case FileBrowserAction::RescanLibrary:
+          case FileBrowserAction::SortBy:
+          case FileBrowserAction::ToggleCollapseSeries:
+          case FileBrowserAction::RenameCollection:
+          case FileBrowserAction::DeleteCollection:
+          case FileBrowserAction::CreateNewCollectionFromHeader:
+          case FileBrowserAction::AddBooksToActiveCollection:
+          case FileBrowserAction::RemoveFromRecents:  // CrossInk 1.3 (recent-books views only)
+            // Not exposed in the file browser's action menu — only the
+            // home shelf / recent-books paths add these items.
             return;
         }
       });

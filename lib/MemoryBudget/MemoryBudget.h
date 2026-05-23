@@ -18,9 +18,17 @@ struct HeapRequirement {
   uint32_t minMaxAlloc;
 };
 
-constexpr uint32_t EPUB_INLINE_IMAGE_MIN_FREE = 72U * 1024U;
-constexpr uint32_t EPUB_INLINE_IMAGE_MIN_MAX_ALLOC = 48U * 1024U;
-constexpr uint32_t EPUB_INLINE_JPEG_MIN_MAX_ALLOC = 36U * 1024U;
+// CrumBLE: upstream's defaults of 72 KB free / 48 KB max alloc are tuned for
+// the BLE-off case. With NimBLE eating ~58 KB of heap once a remote is
+// paired, those floors are unreachable, so even text-heavy chapters tripped
+// the "Cannot Load chapter" abort whenever they contained any image. The
+// relaxed floors mirror our parser layout threshold (32/16 KB) — image
+// decode falls back gracefully to "page rendered without images" if a
+// specific allocation does fail mid-decode, which is the same UX as
+// upstream's pre-check skip.
+constexpr uint32_t EPUB_INLINE_IMAGE_MIN_FREE = 56U * 1024U;
+constexpr uint32_t EPUB_INLINE_IMAGE_MIN_MAX_ALLOC = 32U * 1024U;
+constexpr uint32_t EPUB_INLINE_JPEG_MIN_MAX_ALLOC = 28U * 1024U;
 constexpr uint32_t EPUB_INLINE_IMAGE_SD_FONT_RELEASE_MIN_FREE = 120U * 1024U;
 constexpr uint32_t EPUB_INLINE_IMAGE_SD_FONT_RELEASE_MIN_MAX_ALLOC = 80U * 1024U;
 constexpr uint32_t OPTIONAL_EPUB_REBUILD_MIN_FREE = 96U * 1024U;
