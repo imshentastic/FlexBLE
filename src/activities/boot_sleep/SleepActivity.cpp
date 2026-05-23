@@ -830,7 +830,12 @@ void SleepActivity::composePngOverReaderPage(const std::string& pngPath) const {
 
   if (overlayPageBufferTrusted) {
     renderer.restoreBwBuffer();
-  } else if (!path.empty()) {
+  } else if (canSnapshotOverlayBackground && !path.empty()) {
+    // Only use a reader page as the background when we actually slept from a
+    // book. Sleeping from elsewhere (e.g. the home carousel) must NOT pull the
+    // last-opened book's page in as a backdrop — that surfaces a stale cover
+    // that reads as a "zoomed-in home screen". In that case fall through to a
+    // clean white background below.
     backgroundWasRebuilt = renderSavedReaderPage();
     if (!backgroundWasRebuilt) {
       if (overlayPageBufferStored) {
@@ -842,6 +847,7 @@ void SleepActivity::composePngOverReaderPage(const std::string& pngPath) const {
       }
     }
   } else {
+    // Not sleeping from a book: blank background behind the (transparent) PNG.
     renderer.clearScreen();
   }
 
@@ -922,7 +928,11 @@ void SleepActivity::renderOverlaySleepScreen() const {
   // popup was drawn. Otherwise, rebuild from the saved position.
   if (overlayPageBufferTrusted) {
     renderer.restoreBwBuffer();
-  } else if (!path.empty()) {
+  } else if (canSnapshotOverlayBackground && !path.empty()) {
+    // Only rebuild the reader page as the overlay background when we slept from
+    // a book. From the home carousel (or anywhere else) the last-opened book's
+    // page must not be pulled in — it reads as a "zoomed-in home screen". Fall
+    // through to a clean white background below instead.
     backgroundWasRebuilt = renderSavedReaderPage();
 
     if (!backgroundWasRebuilt) {
@@ -935,6 +945,7 @@ void SleepActivity::renderOverlaySleepScreen() const {
       }
     }
   } else {
+    // Not sleeping from a book: blank background behind the overlay image.
     renderer.clearScreen();
   }
 
