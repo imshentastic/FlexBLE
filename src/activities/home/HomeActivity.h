@@ -92,6 +92,16 @@ class HomeActivity final : public Activity {
   // the current home session. Reset on onEnter so a freshly added book picks
   // up its thumbnail on the next return-to-Home.
   bool shelfCoversLoaded = false;
+  // Book paths whose shelf thumbnail generation failed this session (corrupt
+  // or unsupported cover image, etc.). loadShelfCovers runs on every shelf
+  // render and skips books whose thumb already exists on SD — but a book
+  // that *fails* generation never produces a file, so without this guard it
+  // would be retried every single render, re-showing the Loading popup and
+  // calling requestUpdate() each time → an endless flashing loop. We record
+  // the failure once and thereafter render the book as a blank cover instead
+  // of retrying. Cleared on onEnter so a transient failure gets one retry
+  // per home visit. std::vector (not set) — these lists are tiny.
+  std::vector<std::string> failedShelfCovers;
   // Suppresses the short-press Confirm handler when the user just held Confirm
   // long enough to trigger the book action menu — otherwise the matching
   // release would immediately open the book they were just acting on. Same

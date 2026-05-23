@@ -739,6 +739,14 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffs
       processed++;
       continue;
     }
+    // A book whose thumb generation already failed this session: render it
+    // blank, never retry. Retrying every render is what produced the
+    // flashing loop (failed gen -> no file -> "missing" again next render
+    // -> popup + requestUpdate -> repeat).
+    if (std::find(failedShelfCovers.begin(), failedShelfCovers.end(), bookPath) != failedShelfCovers.end()) {
+      processed++;
+      continue;
+    }
     // Build the dimension-specific resolved thumb path. If it already exists
     // on SD, this book is done — skip the expensive EPUB/XTC load.
     std::string templatePath;
@@ -784,10 +792,27 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffs
         }
       }
     }
+    // If the thumb still isn't on SD after our attempt, generation failed
+    // (corrupt/unsupported cover image, load error, etc.). Record it so the
+    // book is skipped on subsequent renders — otherwise it stays "missing"
+    // forever and we'd re-show the popup + requestUpdate() every frame,
+    // which is the flashing loop. The book just renders as a blank cover.
+    if (resolved.empty() || !Storage.exists(resolved.c_str())) {
+      failedShelfCovers.push_back(bookPath);
+      LOG_ERR("HOME", "shelf: thumb generation failed for %s; rendering blank (won't retry this session)",
+              bookPath.c_str());
+    }
     processed++;
   }
 
   shelfCoversLoaded = true;
+  // Only request a follow-up redraw if we actually produced new thumbs this
+  // pass. If the only "work" was failed generations (now recorded in
+  // failedShelfCovers and skipped next time), requesting another update
+  // would just re-render with the same blanks — and on the very next render
+  // those books are skipped, so showingLoading stays false and the loop
+  // ends. Keeping the requestUpdate here is still correct for the success
+  // case (covers that DID generate need one repaint to appear).
   if (showingLoading) {
     requestUpdate();
   }
@@ -1373,6 +1398,9 @@ void HomeActivity::onEnter() {
   // were just toggled into a collection (e.g. via the file browser long-
   // press) get their cover generated on the next return to Home.
   shelfCoversLoaded = false;
+  // Give covers that failed last session one fresh retry per home visit
+  // (the failure may have been transient — low heap, etc.).
+  failedShelfCovers.clear();
   shelfHeaderFocused = false;
   lastShelfBookIndex = 0;  // every onEnter starts the row at book 0.
   lastMenuIndex = 0;       // and the menu at icon 0.
