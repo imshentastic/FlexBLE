@@ -312,14 +312,14 @@ bool LibraryIndex::saveToFile() const {
   // build a JsonDocument + serialized String copy of the whole index in RAM
   // (the OOM-on-save that boot-looped large libraries).
   file.print(LIBRARY_INDEX_HEADER);
-  file.print('\n');
+  file.print("\n");
   char numbuf[24];
   for (const auto& e : entries) {
     snprintf(numbuf, sizeof(numbuf), "%llu", static_cast<unsigned long long>(e.firstSeenMillis));
     file.print(numbuf);
-    file.print('\t');
+    file.print("\t");
     file.print(e.path.c_str());
-    file.print('\n');
+    file.print("\n");
   }
   file.close();
   return true;
