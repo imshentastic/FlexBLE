@@ -31,7 +31,7 @@ class EpubReaderMenuActivity final : public Activity {
     BOOKMARK_TOGGLE,
     VIEW_BOOKMARKS,
     DELETE_BOOKMARKS,
-    BLUETOOTH  // CrumBLE: in-reader Bluetooth page-turner settings
+    BLUETOOTH
   };
 
   explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,

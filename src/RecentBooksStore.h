@@ -25,6 +25,10 @@ class RecentBooksStore {
   friend bool JsonSettingsIO::loadRecentBooks(RecentBooksStore&, const char*);
 
  public:
+  // Cap on stored recents. 18 = two full pages of the 3x3 RecentBooksGridActivity,
+  // which is the only consumer that paginates. addBook() trims to this on insert.
+  static constexpr int MAX_RECENT_BOOKS = 18;
+
   ~RecentBooksStore() = default;
 
   // Get singleton instance
@@ -56,6 +60,12 @@ class RecentBooksStore {
   // Persists on success. Keeps the entry's list position (does not reorder).
   void updatePath(const std::string& oldPath, const std::string& newPath, const std::string& oldCachePath,
                   const std::string& newCachePath);
+
+  // Remove a book from the recents list. Returns true if a matching entry
+  // existed and was removed (and the store was saved). False if no match.
+  // Used by the home long-press action menu's "Remove from Recent Books"
+  // item — does NOT delete the underlying file or its cache.
+  bool removeBook(const std::string& path);
 
   // True if the book's backing file is no longer present on the SD card.
   static bool isMissing(const RecentBook& book);

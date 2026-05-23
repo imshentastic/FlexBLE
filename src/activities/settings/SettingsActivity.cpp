@@ -517,9 +517,16 @@ void SettingsActivity::render(RenderLock&&) {
       },
       true, nullptr, [&settings](int i) { return settings[i].type == SettingType::SECTION_HEADER; });
 
-  // Draw CrossInk version label at the bottom of the System tab
+  // Draw CrumBLE + upstream CrossInk version labels at the bottom of the
+  // System tab. CrumBLE's own semver is the primary identity; CrossInk's
+  // version reads as the upstream sync point in smaller secondary text.
   if (selectedCategoryIndex == 3) {
-    drawSystemVersionFooter(renderer, pageWidth, pageHeight, metrics);
+    static constexpr const char* versionLabel = "CrumBLE " CRUMBLE_VERSION " (CrossInk " CROSSINK_VERSION ")";
+    const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, versionLabel);
+    const int labelX = (pageWidth - labelWidth) / 2;
+    const int labelY =
+        pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing - 15;  // 15px above the button hints
+    renderer.drawText(SMALL_FONT_ID, labelX, labelY, versionLabel);
   }
 
   // Draw help text

@@ -311,6 +311,16 @@ ScreenshotInfo ActivityManager::getScreenshotInfo() const {
   return {};
 }
 
+void ActivityManager::notifyBeforeDeepSleep() {
+  // Forward to the current activity AND anything stacked underneath.
+  // The reader might not be the top of the stack (e.g. an action menu
+  // is open on top of it) but still wants its session committed.
+  if (currentActivity) currentActivity->onBeforeDeepSleep();
+  for (auto& stacked : stackActivities) {
+    if (stacked) stacked->onBeforeDeepSleep();
+  }
+}
+
 void ActivityManager::requestUpdate(bool immediate) {
   if (immediate) {
     if (renderTaskHandle) {

@@ -9,6 +9,7 @@
 
 #include <cstddef>
 
+#include "LibraryIndex.h"
 #include "MappedInputManager.h"
 #include "NetworkModeSelectionActivity.h"
 #include "SilentRestart.h"
@@ -73,6 +74,12 @@ void CrossPointWebServerActivity::onExit() {
   Activity::onExit();
 
   LOG_DBG("WEBACT", "Free heap at onExit start: %d bytes", ESP.getFreeHeap());
+
+  // CrumBLE: books may have just been uploaded over the file-transfer
+  // web UI (USB or hotspot). Mark the LibraryIndex stale so the next
+  // visit to Recently Added / All Books re-walks SD and discovers them.
+  // The walk itself is lazy — onExit stays snappy.
+  LibraryIndex::getInstance().markStale();
 
   state = WebServerActivityState::SHUTTING_DOWN;
 

@@ -19,17 +19,17 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback, void*, s
 
 namespace {
 #ifndef CROSSINK_OTA_RELEASE_URL
-#define CROSSINK_OTA_RELEASE_URL "https://api.github.com/repos/uxjulia/CrossInk/releases/latest"
+#define CROSSINK_OTA_RELEASE_URL "https://api.github.com/repos/chintanvajariya/CrossInk-Carousel/releases/latest"
 #endif
 
 constexpr char latestReleaseUrl[] = CROSSINK_OTA_RELEASE_URL;
 
 #ifdef CROSSPOINT_FIRMWARE_VARIANT
-constexpr char firmwareAssetStem[] = "firmware-" CROSSPOINT_FIRMWARE_VARIANT;
-constexpr char firmwareAssetName[] = "firmware-" CROSSPOINT_FIRMWARE_VARIANT ".bin";
+constexpr char firmwareAssetStem[] = "carousel-firmware-" CROSSPOINT_FIRMWARE_VARIANT;
+constexpr char firmwareAssetName[] = "carousel-firmware-" CROSSPOINT_FIRMWARE_VARIANT ".bin";
 #else
-constexpr char firmwareAssetStem[] = "firmware";
-constexpr char firmwareAssetName[] = "firmware.bin";
+constexpr char firmwareAssetStem[] = "carousel-firmware";
+constexpr char firmwareAssetName[] = "carousel-firmware.bin";
 #endif
 
 constexpr char binSuffix[] = ".bin";

@@ -1,6 +1,9 @@
 #include "EpubReaderActivity.h"
 
 #include <Arduino.h>
+#include <BluetoothHIDManager.h>
+
+#include "../boot_sleep/SleepActivity.h"
 #include <Epub/Page.h>
 #include <Epub/blocks/TextBlock.h>
 #include <FontCacheManager.h>
@@ -17,7 +20,9 @@
 #include <limits>
 #include <memory>
 
+#include "../settings/BluetoothSettingsActivity.h"
 #include "../settings/KOReaderSettingsActivity.h"
+#include "BookSettingsDrawerActivity.h"
 #include "BookStatsActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -307,6 +312,10 @@ void EpubReaderActivity::onEnter() {
   // Session count and reading time are committed on exit once thresholds are met.
   stats = BookReadingStats::load(epub->getCachePath());
   sessionStartMs = millis();
+  sessionSegmentStartMs = sessionStartMs;
+  totalSessionMsThisOpen = 0UL;
+  sessionCountedThisOpen = false;
+  lastIncrementalSaveMs = sessionStartMs;
 
   globalStats = GlobalReadingStats::load();
 
@@ -325,6 +334,17 @@ void EpubReaderActivity::onEnter() {
 void EpubReaderActivity::onExit() {
   Activity::onExit();
 
+  // Snapshot the framebuffer (still holding the last rendered reader page at
+  // this point) to SD so the deep-sleep cycle path can use it as the background
+  // behind transparent sleep PNGs without needing fonts or the EPUB parser.
+  SleepActivity::snapshotFramebufferForCycle();
+
+  // BLE is a reader-session-only feature: turn it off whenever the user leaves
+  // a book. The actual disable() is deferred to the next main-loop tick because
+  // we're holding the render lock here and NimBLE teardown can call back into
+  // the activity manager.
+  BluetoothHIDManager::getInstance().requestDisableLater();
+
   // Deactivate reader-specific front button mapping.
   mappedInput.setReaderMode(false);
 
@@ -334,23 +354,11 @@ void EpubReaderActivity::onExit() {
   APP_STATE.readerActivityLoadCount = 0;
   APP_STATE.saveToFile();
 
-  // Commit session stats based on how long the session lasted.
-  // Sessions under 1 minute don't count toward session count or reading time.
-  // Sessions under 10 seconds don't add to reading time.
-  const unsigned long elapsedMs = millis() - sessionStartMs;
-  if (elapsedMs >= 60000UL) {
-    stats.sessionCount++;
-    globalStats.totalSessions++;
-  }
-  if (elapsedMs >= 10000UL) {
-    const uint32_t elapsedSecs = static_cast<uint32_t>(elapsedMs / 1000UL);
-    stats.totalReadingSeconds += elapsedSecs;
-    globalStats.totalReadingSeconds += elapsedSecs;
-  }
-  if (epub) {
-    stats.save(epub->getCachePath());
-  }
-  globalStats.save();
+  // Commit any remaining session time. Idempotent — if a deep-sleep
+  // commit or incremental save already banked the current segment,
+  // commitReadingSession returns without double-counting. (It also
+  // guards `if (!epub) return;`, subsuming 1.3's null-check on save.)
+  commitReadingSession();
 
   BOOKMARKS.unload();
   section.reset();
@@ -367,11 +375,64 @@ void EpubReaderActivity::onExit() {
   }
 }
 
+void EpubReaderActivity::commitReadingSession() {
+  if (!epub) return;
+  // Bank elapsed time from the current segment. sessionSegmentStartMs
+  // is reset every time we commit so successive commits (incremental
+  // save, deep-sleep, onExit) don't double-add the same milliseconds.
+  const unsigned long now = millis();
+  const unsigned long segmentMs = now - sessionSegmentStartMs;
+  if (segmentMs == 0UL) return;
+  sessionSegmentStartMs = now;
+  totalSessionMsThisOpen += segmentMs;
+
+  // Session count: incremented at most once per open (when cumulative
+  // time crosses the 60s threshold). A book briefly tapped open
+  // doesn't bump the count; a long read commits exactly one +1 even
+  // if it spans multiple deep-sleep commits.
+  if (!sessionCountedThisOpen && totalSessionMsThisOpen >= 60000UL) {
+    stats.sessionCount++;
+    globalStats.totalSessions++;
+    sessionCountedThisOpen = true;
+  }
+
+  // Reading time: no longer floor-gated. Every banked ms adds to the
+  // lifetime totals (was previously gated at 10 s, which silently
+  // discarded short reads — particularly bad for users who do
+  // many <10s sessions, e.g. mid-session deep-sleep cycles).
+  const uint32_t elapsedSecs = static_cast<uint32_t>(segmentMs / 1000UL);
+  if (elapsedSecs > 0) {
+    stats.totalReadingSeconds += elapsedSecs;
+    globalStats.totalReadingSeconds += elapsedSecs;
+  }
+
+  stats.save(epub->getCachePath());
+  globalStats.save();
+}
+
+void EpubReaderActivity::onBeforeDeepSleep() {
+  // Same commit path as onExit, but the activity STAYS alive (just
+  // gets put to sleep alongside the chip). When the device wakes,
+  // session-resume continues from the saved progress.bin position
+  // and a fresh session segment begins.
+  commitReadingSession();
+}
+
 void EpubReaderActivity::loop() {
   if (!epub) {
     // Should never happen
     finish();
     return;
+  }
+
+  // Incremental session save. Without this, a brown-out / hard crash
+  // mid-reading loses ALL accumulated time since onEnter (or the last
+  // commit). With it, worst-case loss is kIncrementalSaveMs. The cost
+  // is small: one SD write per minute of reading.
+  constexpr unsigned long kIncrementalSaveMs = 60000UL;  // 1 min
+  if (millis() - lastIncrementalSaveMs >= kIncrementalSaveMs) {
+    commitReadingSession();
+    lastIncrementalSaveMs = millis();
   }
 
   if (completionPromptQueued) {
@@ -559,7 +620,7 @@ void EpubReaderActivity::loop() {
       restoreSavedPosition();
       return;
     }
-    onGoHome();
+    exitToHomeWithPopup();
     return;
   }
 
@@ -637,7 +698,7 @@ void EpubReaderActivity::loop() {
       if (SETTINGS.longPressButtonBehavior == CrossPointSettings::CHAPTER_SKIP) {
         if (currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount()) {
           if (nextLongPressed) {
-            onGoHome();
+            exitToHomeWithPopup();
           } else {
             currentSpineIndex = epub->getSpineItemsCount() - 1;
             nextPageNumber = 0;
@@ -679,7 +740,7 @@ void EpubReaderActivity::loop() {
   // At end of the book, forward button goes home and back button returns to last page
   if (currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount()) {
     if (nextTriggered) {
-      onGoHome();
+      exitToHomeWithPopup();
     } else {
       currentSpineIndex = epub->getSpineItemsCount() - 1;
       nextPageNumber = 0;
@@ -874,7 +935,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::GO_HOME: {
-      onGoHome();
+      exitToHomeWithPopup();
       return;
     }
     case EpubReaderMenuActivity::MenuAction::DELETE_CACHE: {
@@ -899,7 +960,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       if (cacheDeleted) {
         delay(1000);
       }
-      onGoHome();
+      exitToHomeWithPopup();
       return;
     }
     case EpubReaderMenuActivity::MenuAction::SCREENSHOT: {
@@ -911,11 +972,16 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::READING_STATS: {
-      // Include elapsed time from the current session in the display stats.
+      // Include elapsed time from the CURRENT (uncommitted) session
+      // segment on top of what's been banked into stats. Previously
+      // banked segments are already in `stats.totalReadingSeconds`
+      // because commitReadingSession persists them incrementally —
+      // adding `millis() - sessionStartMs` would double-count.
       BookReadingStats displayStats = stats;
-      displayStats.totalReadingSeconds += static_cast<uint32_t>((millis() - sessionStartMs) / 1000UL);
+      displayStats.totalReadingSeconds += static_cast<uint32_t>((millis() - sessionSegmentStartMs) / 1000UL);
       startActivityForResult(
-          std::make_unique<BookStatsActivity>(renderer, mappedInput, epub->getTitle(), displayStats, globalStats),
+          std::make_unique<BookStatsActivity>(renderer, mappedInput, epub->getPath(), epub->getTitle(),
+                                              epub->getThumbBmpPath(), displayStats, globalStats),
           [this](const ActivityResult&) { requestUpdate(); });
       break;
     }
@@ -1122,6 +1188,54 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
       break;
     case CrossPointSettings::LONG_MENU_FILE_TRANSFER:
       openFileTransfer();
+      break;
+    case CrossPointSettings::LONG_MENU_BOOK_SETTINGS:
+      startActivityForResult(std::make_unique<BookSettingsDrawerActivity>(renderer, mappedInput),
+                             [this](const ActivityResult& result) {
+                               // Drawer consumed the Confirm release that closed it, so the reader's
+                               // own long-press-handled cleanup (line ~391) never fired. Clear the
+                               // flag here so the user's next short-press Confirm opens the regular
+                               // menu instead of being silently swallowed.
+                               longPressMenuHandled = false;
+
+                               // Only re-layout if the user actually changed something. The drawer
+                               // reports this via MenuResult.settingsChanged so a no-op visit
+                               // doesn't trigger a wasteful section rebuild.
+                               const auto* menu = std::get_if<MenuResult>(&result.data);
+                               if (menu && menu->settingsChanged) {
+                                 // BLE handling for the re-layout is centralized in render()'s
+                                 // cache-miss path (search for "Cache miss with BLE up"). We
+                                 // don't drop BLE here because (a) inline disable() can
+                                 // deadlock against NimBLE's host task if the remote is
+                                 // actively sending events, and (b) the drawer is just one of
+                                 // many section.reset() call sites — chapter boundaries hit
+                                 // the same problem. Centralizing in render() handles all of
+                                 // them uniformly.
+                                 RenderLock lock(*this);
+                                 if (section) {
+                                   cachedSpineIndex = currentSpineIndex;
+                                   cachedChapterTotalPageCount = section->pageCount;
+                                   nextPageNumber = section->currentPage;
+                                 }
+                                 section.reset();
+                               }
+                               // If the drawer's Bluetooth entry asked us to launch BT settings
+                               // (user had no bonded remote), do it now via the same mechanism the
+                               // reader menu's BLUETOOTH action uses — exit-on-success so the user
+                               // lands back in the book after pairing.
+                               if (menu && menu->requestBluetoothFlow) {
+                                 startActivityForResult(
+                                     std::make_unique<BluetoothSettingsActivity>(
+                                         renderer, mappedInput, [] { activityManager.popActivity(); },
+                                         /*exitOnSuccessfulConnect=*/true),
+                                     [this](const ActivityResult&) { requestUpdate(); });
+                                 return;
+                               }
+                               // No explicit requestUpdate() — ActivityManager's Pop path will
+                               // automatically requestUpdateAndWait(), and adding our own here
+                               // would cause the reader page to render twice (the dark→light
+                               // greyscale pass would fire twice in succession).
+                             });
       break;
     case CrossPointSettings::LONG_MENU_TOGGLE_TILT_PAGE_TURN:
       if (halTiltSensor.isAvailable()) {
@@ -1362,6 +1476,15 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
     if (section->currentPage < section->pageCount - 1) {
       section->currentPage++;
     } else {
+      // End-of-book detection: forward press on the last page of the
+      // last spine. Used to advance into a stub "End of book" screen
+      // that the user then had to back-button out of. Per upstream
+      // PR #1425 / aalu d29b8ee2: just go home so finishing a book
+      // closes it cleanly.
+      if (currentSpineIndex >= epub->getSpineItemsCount() - 1) {
+        exitToHomeWithPopup();
+        return;
+      }
       // We don't want to delete the section mid-render, so grab the semaphore
       {
         RenderLock lock(*this);
@@ -1468,11 +1591,69 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                                   SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
                                   SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
                                   SETTINGS.bionicReadingEnabled, SETTINGS.guideReadingEnabled)) {
+      // Cache miss with BLE up: NimBLE's ~58 KB share has historically
+      // made the parser either return layoutAbortedForLowMemory (good —
+      // the reactive retry path below handles it) or simply hang
+      // mid-page when the malloc pattern fragments badly (bad — watchdog
+      // territory). Drop BLE proactively and defer this build to the next
+      // render pass after the main loop's tryDisableIfRequested() drain
+      // runs. Cheaper than relying on the reactive retry, and works for
+      // *every* cache-miss trigger: font/margin/etc. changes from the
+      // drawer, chapter boundary advances, percent jumps, anything.
+      //
+      // We can't disable() inline here — we hold the RenderLock and
+      // NimBLE teardown can fire callbacks that call requestUpdateAndWait,
+      // which trips the lock-held assertion. Deferred + return is the
+      // safe pattern; the next render iteration finds BLE off and builds
+      // with full heap headroom. bleAutoReEnableAfterReindex brings it
+      // back online + reconnects to the bonded remote after the build.
+      auto& btMgr = BluetoothHIDManager::getInstance();
+      if (btMgr.isEnabled()) {
+        LOG_INF("ERS", "Cache miss with BLE up; dropping BLE and deferring build to next render");
+        btMgr.requestDisableLater();
+        bleAutoReEnableAfterReindex = true;
+        // Reset section back to null. We constructed it above (line ~1495)
+        // and loadSectionFile failed, so it's holding an empty Section
+        // shell. If we don't drop it, the next render iteration's
+        // `if (!section)` short-circuits and the render proceeds with a
+        // zero-page Section — user sees "empty chapter". Resetting ensures
+        // we re-enter the construct+build path next time around.
+        section.reset();
+        requestUpdate();
+        return;
+      }
+
       LOG_DBG("ERS", "Cache not found, building... (free=%u, maxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
-      GUI.drawPopup(renderer, tr(STR_INDEXING));
+      // Animated indexing popup. The parser ticks the callback every
+      // ~250 ms; we cycle the trailing dots so the user sees the system
+      // is alive during the multi-second chapter build instead of
+      // staring at a frozen popup.
+      //
+      // Pre-measure the widest frame ("Indexing...") and pass that as
+      // minTextWidth to every drawPopup call. The box sizes itself once
+      // off the widest frame and stays anchored on the same pixels for
+      // every subsequent tick — without this floor, period vs space
+      // glyph widths differ enough in Inter that the box visibly pulses
+      // wider on the 3-dot frame.
+      char widestBuf[40];
+      snprintf(widestBuf, sizeof(widestBuf), "%s...", tr(STR_INDEXING));
+      const int popupMinTextWidth =
+          renderer.getTextWidth(UI_12_FONT_ID, widestBuf, EpdFontFamily::BOLD);
 
-      const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
+      // Left-anchor the text so "Indexing" stays pinned at a fixed
+      // position and the trailing dots cycle to its right without
+      // visibly shifting the word.
+      GUI.drawPopup(renderer, tr(STR_INDEXING), popupMinTextWidth, /*leftAlignText=*/true);
+
+      const auto popupFn = [this, popupMinTextWidth]() {
+        static uint8_t dotPhase = 0;
+        static constexpr const char* kDots[4] = {"", ".", "..", "..."};
+        dotPhase = (dotPhase + 1) % 4;
+        char buf[40];
+        snprintf(buf, sizeof(buf), "%s%s", tr(STR_INDEXING), kDots[dotPhase]);
+        GUI.drawPopup(renderer, buf, popupMinTextWidth, /*leftAlignText=*/true);
+      };
 
       bool imagesWereSuppressed = false;
       bool layoutAbortedForLowMemory = false;
@@ -1489,6 +1670,35 @@ void EpubReaderActivity::render(RenderLock&& lock) {
           LOG_ERR("ERS", "Failed to persist page data to SD");
         }
         section.reset();
+        // CrumBLE: if the layout aborted on heap pressure and BLE is still
+        // hogging ~58 KB, drop BLE and retry once. requestDisableLater()
+        // sets a flag that the next main-loop tick drains via
+        // tryDisableIfRequested(), which runs BEFORE the next render() —
+        // so on the retry, the parser sees the freed heap. BLE auto-
+        // reconnects on the user's next button press, so the only visible
+        // cost is a ~2-3 s delay during this one cold-cache parse.
+        if (layoutAbortedForLowMemory && BluetoothHIDManager::getInstance().isEnabled() &&
+            !layoutBleRetryAttempted) {
+          LOG_INF("ERS", "Layout aborted under BLE pressure; dropping BLE and retrying chapter load");
+          layoutBleRetryAttempted = true;
+          BluetoothHIDManager::getInstance().requestDisableLater();
+          // Same re-enable hook the drawer path uses — once this retry's
+          // section build succeeds, bring BLE back up so the bonded
+          // remote reconnects on the user's next press.
+          bleAutoReEnableAfterReindex = true;
+          requestUpdate();
+          return;
+        }
+        // Build failed and we already retried (or BLE wasn't the culprit).
+        // Bring BLE back up before bailing so the user doesn't lose their
+        // remote on top of the layout error — checkAutoReconnect() will
+        // resume the bonded link on the next button press once the stack
+        // is enabled again.
+        if (bleAutoReEnableAfterReindex) {
+          bleAutoReEnableAfterReindex = false;
+          LOG_INF("ERS", "Section build failed; requesting BLE re-enable so the remote isn't lost");
+          BluetoothHIDManager::getInstance().requestEnableLater();
+        }
         if (layoutAbortedForLowMemory) {
           showLowMemoryLayoutError();
         } else {
@@ -1498,6 +1708,20 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       }
       LOG_DBG("ERS", "Cache build complete: pages=%u free=%u maxAlloc=%u", section->pageCount, ESP.getFreeHeap(),
               ESP.getMaxAllocHeap());
+      // Section parsed successfully — clear the BLE-retry latch so a future
+      // failure on a different chapter can also use the retry path.
+      layoutBleRetryAttempted = false;
+      // If we dropped BLE around this build (drawer settings change, or the
+      // reactive retry path above), bring it back up now that the heap
+      // pressure is gone. requestEnableLater() defers to the main loop so
+      // NimBLE init doesn't fight the page render that's about to fire.
+      // Once re-enabled, checkAutoReconnect() resumes the bonded link on
+      // the user's next button press.
+      if (bleAutoReEnableAfterReindex) {
+        bleAutoReEnableAfterReindex = false;
+        LOG_INF("ERS", "Section build done; requesting BLE re-enable for bonded remote reconnect");
+        BluetoothHIDManager::getInstance().requestEnableLater();
+      }
 
       if (imagesWereSuppressed) {
         snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s",
@@ -1781,10 +2005,28 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const auto tBwStore = millis();
   (void)bwStoreHeapBefore;
   (void)bwStoreHeapAfter;
-  const bool canApplyGrayscale = needsAnyGrayscale && storedBwBuffer;
-  if (needsAnyGrayscale && !storedBwBuffer) {
-    LOG_ERR("ERS", "Skipping grayscale enhancement: failed to store BW backup");
+  // Apply grayscale AA when we either captured a BW backup (fast path: restore
+  // it after the gray pass) OR Bluetooth is active. With BLE on, NimBLE's heap
+  // squeeze usually defeats the backup allocation; rather than drop AA we fall
+  // back to RE-RENDERING the BW page after the gray pass (see
+  // grayscaleNeedsReRender below) — one extra render pass, but it needs no
+  // backup buffer, so AA survives even when there's no room for the snapshot.
+  // Without BLE *and* without a backup the page is genuinely too dense to fit
+  // the 32 KB cap (rare); skip AA there since re-rendering would just slow
+  // every page with no memory pressure to justify it.
+  const bool bleActive = BluetoothHIDManager::getInstance().isEnabled();
+  const bool canApplyGrayscale = needsAnyGrayscale && (storedBwBuffer || bleActive);
+  const bool grayscaleNeedsReRender = canApplyGrayscale && !storedBwBuffer;
+  if (needsAnyGrayscale && !canApplyGrayscale) {
+    LOG_ERR("ERS", "Skipping grayscale enhancement: no BW backup and BLE off");
   }
+  // Per-page AA status for diagnosis. DBG level (compiled out of the
+  // production build). mode=re-render means we drew the page twice to avoid
+  // the backup buffer; mode=backup is the fast snapshot/restore path.
+  LOG_DBG("ERS", "AA: textAA=%s images=%s applied=%s mode=%s bwStore=%s freeHeap=%u",
+          needsTextGrayscale ? "on" : "off", needsImageGrayscale ? "yes" : "no",
+          canApplyGrayscale ? "YES" : "no", grayscaleNeedsReRender ? "re-render" : "backup",
+          storedBwBuffer ? "ok" : "FAILED", esp_get_free_heap_size());
 
   // grayscale rendering
   if (canApplyGrayscale) {
@@ -1813,8 +2055,25 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     renderer.displayGrayBuffer();
     const auto tGrayDisplay = millis();
     renderer.setRenderMode(GfxRenderer::BW);
-    // restore the bw data
-    renderer.restoreBwBuffer();
+    // Restore the BW framebuffer so the next partial refresh has the correct
+    // base image. Fast path: blit it back from the compressed backup. Fallback
+    // (BLE active, backup alloc failed): re-render the page in BW — one extra
+    // render pass, but needs no backup buffer, which is the whole point: AA
+    // works even when NimBLE has eaten the heap.
+    if (storedBwBuffer) {
+      renderer.restoreBwBuffer();
+    } else {
+      // Re-render fallback. Two parts mirror what restoreBwBuffer() does:
+      // (1) put the BW page back in the framebuffer (here by redrawing it),
+      // and (2) clean up the display controller's grayscale RAM state by
+      // writing that BW framebuffer back to it. Skipping (2) was the cause
+      // of the heavy ghosting — the panel kept the 4-level grayscale RAM
+      // and the next refresh smeared against it.
+      renderer.clearScreen();
+      page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+      renderStatusBar();
+      renderer.cleanupGrayscaleWithFrameBuffer();
+    }
     const auto tBwRestore = millis();
 
     const auto tEnd = millis();

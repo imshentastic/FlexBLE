@@ -29,6 +29,12 @@ class Epub {
   std::unique_ptr<CssParser> cssParser;
   // CSS files
   std::vector<std::string> cssFiles;
+  // CrumBLE: series captured from the most recent parseContentOpf
+  // pass. Not persisted to book.bin (cache version compatibility),
+  // so getSeriesName/Index returns empty if load() reused the on-disk
+  // cache. SeriesIndex caches across sessions instead.
+  std::string lastSeriesName;
+  std::string lastSeriesIndex;
 
   void migrateLegacyCachePath(const std::string& cacheDir) const;
   bool findContentOpfFile(std::string* contentOpfFile) const;
@@ -50,6 +56,22 @@ class Epub {
   const std::string& getTitle() const;
   const std::string& getAuthor() const;
   const std::string& getLanguage() const;
+  // CrumBLE series detection (ported from aalu, MIT-licensed by Dave
+  // Allie 2025; original repo: dawsonfi/aalu). Both values are
+  // populated by parseContentOpf — empty when the OPF didn't declare
+  // series, OR when load() short-circuited from the on-disk cache
+  // (book.bin doesn't persist series fields; SeriesIndex handles
+  // cross-session caching instead).
+  const std::string& getSeriesName() const { return lastSeriesName; }
+  const std::string& getSeriesIndex() const { return lastSeriesIndex; }
+  // Lightweight OPF parse that captures ONLY series metadata into the
+  // lastSeriesName/lastSeriesIndex fields. Doesn't touch book.bin so
+  // it's safe to run on already-cached books without invalidating the
+  // spine/TOC cache. Used by the lazy series-enrichment pass — the
+  // caller reads getSeriesName()/getSeriesIndex() afterwards and
+  // persists into SeriesIndex.  Returns true if the OPF was readable
+  // (regardless of whether series info was found).
+  bool extractSeriesFromOpf();
   std::string getCoverBmpPath(bool cropped = false) const;
   bool generateCoverBmp(bool cropped = false) const;
   std::string getThumbBmpPath() const;
@@ -71,6 +93,16 @@ class Epub {
   // thumbnail height.
   // Returns false on missing cache/cover, unsupported image format, or conversion failure.
   bool generateThumbBmp(int width, int height) const;
+  // Like generateThumbBmp, but does NOT build the full spine/TOC index
+  // (book.bin) when the book hasn't been opened yet. Instead it parses only
+  // content.opf to locate the cover image. Used by home/shelf cover loading
+  // where scrolling past many never-opened books (e.g. the Recently Added
+  // collection) would otherwise freeze the UI on full EPUB indexing — most
+  // of which is wasted when the book turns out to have no extractable cover.
+  // Returns false (in OPF-parse time) when there is no usable cover so the
+  // caller can render a placeholder cheaply. Non-const because it (re)sets
+  // the metadata cache and may run the OPF parse.
+  bool generateThumbBmpNoIndex(int width, int height);
   // Writes a thumbnail that can either crop-to-fill or contain unusual cover
   // ratios, depending on the source image dimensions.
   bool generateAdaptiveThumbBmp(int width, int height) const;
@@ -94,4 +126,12 @@ class Epub {
 
  private:
   bool generateThumbBmpInternal(int width, int height, bool adaptiveContain) const;
+  // Shared cover-image -> 1-bit BMP conversion used by both the cached
+  // (generateThumbBmpInternal) and no-index (generateThumbBmpNoIndex)
+  // thumbnail paths. coverImageHref must already be resolved against the
+  // EPUB's content base path. adaptiveContain selects crop-to-fill vs
+  // contain-unusual-ratios behaviour. Returns false for empty/unsupported
+  // covers.
+  bool convertCoverToThumbBmp(const std::string& coverImageHref, const std::string& thumbPath, int width,
+                              int height, bool adaptiveContain = false) const;
 };

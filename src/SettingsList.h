@@ -272,6 +272,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     add(SettingInfo::Enum(StrId::STR_SLEEP_COVER_FILTER, &CrossPointSettings::sleepScreenCoverFilter,
                           {StrId::STR_NONE_OPT, StrId::STR_FILTER_CONTRAST, StrId::STR_INVERTED},
                           "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY));
+    add(SettingInfo::Toggle(StrId::STR_CYCLE_SCREENSAVER_ON_TAP, &CrossPointSettings::cycleScreensaverOnTap,
+                            "cycleScreensaverOnTap", StrId::STR_CAT_DISPLAY));
     add(SettingInfo::Enum(StrId::STR_QUICK_RESUME_TIMEOUT, &CrossPointSettings::quickResumeSleepScreen,
                           {StrId::STR_STATE_OFF, StrId::STR_STATE_ON}, "quickResumeSleepScreen",
                           StrId::STR_CAT_DISPLAY));
@@ -284,11 +286,21 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         "refreshFrequency", StrId::STR_CAT_DISPLAY));
     add(SettingInfo::Enum(StrId::STR_UI_THEME, &CrossPointSettings::uiTheme,
                           {StrId::STR_THEME_CLASSIC, StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_EXTENDED,
-                           StrId::STR_THEME_ROUNDEDRAFF, StrId::STR_THEME_LYRA_CAROUSEL, StrId::STR_THEME_MINIMAL},
+                           StrId::STR_THEME_FLOW, StrId::STR_THEME_ROUNDEDRAFF, StrId::STR_THEME_MINIMAL
+#if defined(CROSSINK_ENABLE_LYRA_CAROUSEL) && CROSSINK_ENABLE_LYRA_CAROUSEL
+                           ,
+                           StrId::STR_THEME_LYRA_CAROUSEL
+#endif
+                          },
                           "uiTheme", StrId::STR_CAT_DISPLAY)
             .withEnumRawValues({CrossPointSettings::UI_THEME::CLASSIC, CrossPointSettings::UI_THEME::LYRA,
-                                CrossPointSettings::UI_THEME::LYRA_3_COVERS, CrossPointSettings::UI_THEME::ROUNDEDRAFF,
-                                CrossPointSettings::UI_THEME::LYRA_CAROUSEL, CrossPointSettings::UI_THEME::MINIMAL}));
+                                CrossPointSettings::UI_THEME::LYRA_3_COVERS, CrossPointSettings::UI_THEME::LYRA_FLOW,
+                                CrossPointSettings::UI_THEME::ROUNDEDRAFF, CrossPointSettings::UI_THEME::MINIMAL
+#if defined(CROSSINK_ENABLE_LYRA_CAROUSEL) && CROSSINK_ENABLE_LYRA_CAROUSEL
+                                ,
+                                CrossPointSettings::UI_THEME::LYRA_CAROUSEL
+#endif
+            }));
     add(SettingInfo::Enum(StrId::STR_RECENT_BOOKS_VIEW, &CrossPointSettings::recentBooksView,
                           {StrId::STR_LIST_VIEW, StrId::STR_GRID_VIEW}, "recentBooksView", StrId::STR_CAT_DISPLAY));
     add(SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
@@ -369,7 +381,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                           {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_CHANGE_FONT, StrId::STR_TOGGLE_GUIDE_DOTS,
                            StrId::STR_TOGGLE_BIONIC_READING, StrId::STR_TOGGLE_BOOKMARK, StrId::STR_FORCE_REFRESH,
                            StrId::STR_SYNC_PROGRESS, StrId::STR_MARK_FINISHED, StrId::STR_READING_STATS,
-                           StrId::STR_SCREENSHOT_BUTTON, StrId::STR_CYCLE_PAGE_TURN, StrId::STR_FILE_TRANSFER},
+                           StrId::STR_SCREENSHOT_BUTTON, StrId::STR_CYCLE_PAGE_TURN, StrId::STR_FILE_TRANSFER,
+                           StrId::STR_BOOK_SETTINGS},
                           "longPressMenuAction", StrId::STR_CAT_CONTROLS));
 
     // --- System ---
@@ -383,6 +396,11 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                             "removeReadBooksFromRecents", StrId::STR_CAT_SYSTEM));
     add(SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
                             "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM));
+    // CrumBLE: opt-in series detection. Off by default to skip the
+    // first-time OPF scan on libraries where most books don't have
+    // Calibre / EPUB-3 series metadata anyway.
+    add(SettingInfo::Toggle(StrId::STR_SERIES_DETECTION, &CrossPointSettings::seriesDetectionEnabled,
+                            "seriesDetectionEnabled", StrId::STR_CAT_SYSTEM));
 
     // --- KOReader Sync (web-only, uses KOReaderCredentialStore) ---
     add(SettingInfo::DynamicString(

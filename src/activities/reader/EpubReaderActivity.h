@@ -1,6 +1,7 @@
 #pragma once
 #include <Epub.h>
 #include <Epub/FootnoteEntry.h>
+#include <Epub/Page.h>
 #include <Epub/Section.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -31,6 +32,20 @@ class EpubReaderActivity final : public Activity {
   BookReadingStats stats;
   GlobalReadingStats globalStats;
   unsigned long sessionStartMs = 0UL;
+  // Wall-clock anchor for the current "session segment" — reset by
+  // commitReadingSession every time it banks elapsed time so we don't
+  // double-count across deep-sleep / shutdown commits.
+  unsigned long sessionSegmentStartMs = 0UL;
+  // Cumulative session ms already banked into stats this opening. Used
+  // only to gate sessionCount (the +1 happens once per session ≥ 60s,
+  // even if multiple commits add up to >60s).
+  unsigned long totalSessionMsThisOpen = 0UL;
+  bool sessionCountedThisOpen = false;
+  // Wall-clock anchor for the periodic incremental save. Reading
+  // sessions that crash before onExit (e.g. brown-out, hard hang) used
+  // to lose ALL elapsed time. Now we flush every kIncrementalSaveMs
+  // milliseconds during loop() so worst-case loss is bounded.
+  unsigned long lastIncrementalSaveMs = 0UL;
   // Signals that the next render should reposition within the newly loaded section
   // based on a cross-book percentage jump.
   bool pendingPercentJump = false;
@@ -45,6 +60,18 @@ class EpubReaderActivity final : public Activity {
   bool sideButtonLongPressHandled = false;
   bool frontButtonLongPressHandled = false;
   int pageLoadRetryCount = 0;
+  // CrumBLE: if a chapter layout aborts under heap pressure and BLE is
+  // currently consuming its ~58 KB share, retry the layout once with BLE
+  // disabled. Flag gates the retry so we don't loop forever if the
+  // chapter genuinely can't be parsed.
+  bool layoutBleRetryAttempted = false;
+  // CrumBLE: when we proactively drop BLE around a heavy re-layout (drawer
+  // settings change, or the reactive chapter-abort retry), set this so the
+  // next successful section build re-enables BLE via requestEnableLater().
+  // Without this, the user is stuck without their remote until they go to
+  // Reader Menu -> Bluetooth to re-enable manually — checkAutoReconnect()
+  // refuses to do anything while _enabled is false.
+  bool bleAutoReEnableAfterReindex = false;
   enum class BookmarkFeedbackType : uint8_t {
     Added,
     Removed,
@@ -83,6 +110,12 @@ class EpubReaderActivity final : public Activity {
   SavedPosition savedPositions[MAX_FOOTNOTE_DEPTH] = {};
   int footnoteDepth = 0;
 
+  // Banks elapsed time from `sessionSegmentStartMs` into stats.bin +
+  // GlobalReadingStats and resets the anchor so subsequent calls don't
+  // double-count. Idempotent: a 0-ms segment is a no-op. Called from
+  // onExit, onBeforeDeepSleep, and the incremental save tick.
+  void commitReadingSession();
+
   void renderContents(std::unique_ptr<Page> page, int orientedMarginTop, int orientedMarginRight,
                       int orientedMarginBottom, int orientedMarginLeft);
   void renderStatusBar() const;
@@ -119,6 +152,11 @@ class EpubReaderActivity final : public Activity {
       : Activity("EpubReader", renderer, mappedInput), epub(std::move(epub)) {}
   void onEnter() override;
   void onExit() override;
+  // Banks the current reading session into stats before the device
+  // powers off. Without this, time read since the last commit was
+  // lost — onExit only fires on explicit activity transitions, and
+  // hardware deep-sleep skips that path. Idempotent with onExit.
+  void onBeforeDeepSleep() override;
   void loop() override;
   void render(RenderLock&& lock) override;
   bool preventAutoSleep() override { return automaticPageTurnActive; }

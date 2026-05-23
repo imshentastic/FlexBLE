@@ -30,6 +30,13 @@ class Activity {
   virtual ~Activity() = default;
   virtual void onEnter();
   virtual void onExit();
+  // CrumBLE: called by main.cpp::enterDeepSleep BEFORE the hardware
+  // sleep enters. Activities can use this to commit in-flight state
+  // (reading sessions, draft inputs, etc.) that would otherwise be
+  // lost — the normal onExit() path doesn't fire when going to deep
+  // sleep, because the activity isn't being torn down; the chip is
+  // just being powered off. Default no-op.
+  virtual void onBeforeDeepSleep() {}
   virtual void loop() {}
 
   virtual void render(RenderLock&&) {}
@@ -63,4 +70,14 @@ class Activity {
   // TODO: remove this in near future
   void onGoHome(HomeMenuItem item = HomeMenuItem::NONE);
   void onSelectBook(const std::string& path);
+
+  // Like onGoHome(), but paints a brief "Going home..." popup with
+  // FAST_REFRESH before initiating the transition. Reader exits take
+  // ~700 ms (BLE teardown + session commit + activity replace +
+  // carousel render). Without the popup the user stares at the last
+  // page for that whole interval and the device feels hung. The
+  // popup persists on screen until HomeActivity's first render
+  // replaces it. Safe to call from any activity; small overhead if
+  // the actual transition would have been fast anyway.
+  void exitToHomeWithPopup();
 };

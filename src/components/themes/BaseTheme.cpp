@@ -656,7 +656,8 @@ void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
   }
 }
 
-Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) const {
+Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message, int minTextWidth,
+                          bool leftAlignText) const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int marginX = metrics.popupMarginX;
   const int marginY = metrics.popupMarginY;
@@ -664,7 +665,10 @@ Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) cons
   const EpdFontFamily::Style popupFontFamily = metrics.popupTextBold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
   // Scale y position proportionally to screen height
   const int y = static_cast<int>(renderer.getScreenHeight() * metrics.popupTopOffsetRatio);
-  const int textWidth = renderer.getTextWidth(UI_12_FONT_ID, message, popupFontFamily);
+  const int actualTextWidth = renderer.getTextWidth(UI_12_FONT_ID, message, popupFontFamily);
+  // CrumBLE: minTextWidth floors the box width so animated popups (cycling
+  // "Indexing." / ".." / "...") stay a stable width across frames.
+  const int textWidth = std::max(actualTextWidth, minTextWidth);
   const int textHeight = renderer.getLineHeight(UI_12_FONT_ID);
   const int w = textWidth + marginX * 2;
   const int h = textHeight + marginY * 2;
@@ -680,7 +684,10 @@ Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) cons
     renderer.fillRect(x, y, w, h, false);
   }
 
-  const int textX = x + (w - textWidth) / 2;
+  // CrumBLE: center the actual text in the (possibly wider) box, OR
+  // left-anchor it at the margin for dots-style animations (the leading
+  // word stays pinned and only the trailing dots shift).
+  const int textX = leftAlignText ? (x + marginX) : (x + (w - actualTextWidth) / 2);
   const int textY = y + marginY + metrics.popupTextBaselineOffsetY;
   renderer.drawText(UI_12_FONT_ID, textX, textY, message, metrics.popupTextInverted, popupFontFamily);
   renderer.displayBuffer();
