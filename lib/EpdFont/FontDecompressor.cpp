@@ -174,6 +174,26 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     stats.cacheMisses++;
     const EpdFontGroup& group = fontData->groups[groupIndex];
 
+    // Free any previously-cached group first so its buffer is available to
+    // satisfy this allocation, then pre-check the largest allocatable block.
+    // We MUST bail before std::vector::resize(): with C++ exceptions disabled a
+    // failed allocation calls std::terminate()/abort() (a hard panic + reboot),
+    // not a soft failure -- so the `if (hotGroup.empty())` guard below can never
+    // actually catch an OOM. On image-heavy pages with a BLE remote connected
+    // (~58 KB held by NimBLE) the heap is fragmented enough that a large
+    // contiguous group buffer can't be had; skipping the glyph (it renders
+    // blank) is far better than crashing the whole device.
+    hotGroup.clear();
+    hotGroup.shrink_to_fit();
+    hotGroupFont = nullptr;
+    hotGroupIndex = UINT16_MAX;
+    if (ESP.getMaxAllocHeap() < group.uncompressedSize + 256) {
+      LOG_ERR("FDC", "Insufficient contiguous heap (max alloc %u) for hot group %u (%u bytes); skipping",
+              ESP.getMaxAllocHeap(), groupIndex, group.uncompressedSize);
+      stats.getBitmapTimeUs += micros() - tStart;
+      return nullptr;
+    }
+
     hotGroup.resize(group.uncompressedSize);
     if (hotGroup.empty()) {
       LOG_ERR("FDC", "Failed to allocate %u bytes for hot group %u", group.uncompressedSize, groupIndex);
@@ -201,6 +221,15 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
 
   // Compact just the requested glyph from byte-aligned data into scratch buffer
   if (glyph->dataLength > hotGlyphBuf.size()) {
+    // Same OOM-abort hazard as the hot-group resize above: pre-check before
+    // growing the scratch buffer so a fragmented heap skips the glyph instead
+    // of panicking the device.
+    if (ESP.getMaxAllocHeap() < glyph->dataLength + 256) {
+      LOG_ERR("FDC", "Insufficient heap (max alloc %u) for glyph buffer (%u bytes); skipping", ESP.getMaxAllocHeap(),
+              glyph->dataLength);
+      stats.getBitmapTimeUs += micros() - tStart;
+      return nullptr;
+    }
     hotGlyphBuf.resize(glyph->dataLength);
   }
   if (hotGlyphBuf.empty()) {
