@@ -35,7 +35,13 @@ const uint8_t* GfxRenderer::getGlyphBitmap(const EpdFontData* fontData, const Ep
     // For page-buffer hits the pointer is stable for the page lifetime.
     // For hot-group hits it is valid only until the next getBitmap() call — callers
     // must consume it (draw the glyph) before requesting another bitmap.
-    return fd->getBitmap(fontData, glyph, glyphIndex);
+    const uint8_t* bitmap = fd->getBitmap(fontData, glyph, glyphIndex);
+    // Distinguish an OOM-skipped glyph (page can't render -> drop BLE) from a
+    // benignly-missing glyph.
+    if (bitmap == nullptr && fd->consumeOom()) {
+      markRenderStarved();
+    }
+    return bitmap;
   }
   // For SD card fonts, check if the glyph was loaded on demand into the overflow
   // buffer.  getOverflowBitmap() returns:
