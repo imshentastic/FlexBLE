@@ -99,6 +99,10 @@ class EpubReaderActivity final : public Activity {
   bool pendingTiltPageTurnFeedback = false;
   bool tiltPageTurnFeedbackEnabled = false;
   unsigned long tiltPageTurnFeedbackShowTime = 0UL;
+  // True if the previous render drew a feedback toast. Used to force a clean
+  // half-refresh on the toast's dismiss frame only, so the toast box is fully
+  // erased instead of ghosting ("failing to disappear") on a fast refresh.
+  bool toastShownLastRender = false;
   int completionTriggerSpineIndex = -1;
   float completionTriggerSpineProgress = 1.0f;
   bool completionPromptQueued = false;

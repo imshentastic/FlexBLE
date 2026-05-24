@@ -2007,6 +2007,19 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
             imageBlankDisplayMs, imageRestoreRenderMs, imageFinalDisplayMs);
   };
 
+  // Only the toast's *dismiss* frame needs a clean half-refresh. Erasing the
+  // white toast box on a fast refresh ghosts it ("mostly still visible"), so we
+  // force HALF on the frame where a toast was shown last render but is gone now.
+  // The appear frame can ride the normal fast cadence — drawing the box looks
+  // fine; forcing HALF there too just added a second, jarring black flash.
+  const bool toastShownThisRender =
+      pendingBookmarkFeedback || pendingCompletedFeedback || pendingTiltPageTurnFeedback;
+  const bool toastDismissedThisRender = toastShownLastRender && !toastShownThisRender;
+  if (toastDismissedThisRender) {
+    pagesUntilFullRefresh = 1;  // forces HALF_REFRESH to fully erase the toast box
+  }
+  toastShownLastRender = toastShownThisRender;
+
   if (pageHasImages) {
     // Double FAST_REFRESH with selective image blanking (pablohc's technique):
     // HALF_REFRESH sets particles too firmly for the grayscale LUT to adjust.
