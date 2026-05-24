@@ -12,6 +12,7 @@
 #include "LibraryIndex.h"
 #include "MappedInputManager.h"
 #include "NetworkModeSelectionActivity.h"
+#include "SdCardFontSystem.h"
 #include "SilentRestart.h"
 #include "WifiSelectionActivity.h"
 #include "activities/network/CalibreConnectActivity.h"
@@ -48,6 +49,13 @@ void CrossPointWebServerActivity::onEnter() {
   Activity::onEnter();
 
   LOG_DBG("WEBACT", "Free heap at onEnter: %d bytes", ESP.getFreeHeap());
+
+  // CrumBLE: free the loaded SD-card font before WiFi/web-server come up. File
+  // transfer runs with very little heap (~26 KB free while serving), and a
+  // stalled/failed TX-buffer alloc there is what wedges the server. Releasing
+  // the SD font (if one is loaded) reclaims that headroom; it's reloaded
+  // automatically when the reader resumes. No-op for built-in fonts.
+  sdFontSystem.releaseLoadedFont(renderer);
 
   // Reset state
   state = WebServerActivityState::MODE_SELECTION;

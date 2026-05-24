@@ -11,6 +11,8 @@
 #include <Logging.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
+#include <lwip/sockets.h>  // SO_SNDTIMEO for the streaming-send timeout
+#include <sys/time.h>      // struct timeval
 
 #include <algorithm>
 #include <iterator>
@@ -381,6 +383,21 @@ static void sendHtmlContent(WebServer* server, const char* data, size_t len) {
   server->send_P(200, "text/html", data, len);
 }
 
+// CrumBLE: bound a streaming response's blocking send. handleClient() runs on
+// the main task, so if a chunked send() stalls -- a TX buffer can't allocate
+// under the tight file-transfer heap (~20-26 KB free), or the AP drops the link
+// mid-response -- the write blocks until TCP eventually resets, which freezes
+// the main task (input + rendering) and wedges the device until a reboot.
+// SO_SNDTIMEO makes a blocked write() fail after the timeout so the handler
+// returns and the activity's loop resumes (watchdog fed, exit button checked).
+static void applyClientSendTimeout(WebServer* server) {
+  if (!server) return;
+  struct timeval tv;
+  tv.tv_sec = 5;  // a stalled send fails after 5 s instead of hanging forever
+  tv.tv_usec = 0;
+  server->client().setSocketOption(SO_SNDTIMEO, reinterpret_cast<char*>(&tv), sizeof(tv));
+}
+
 void CrossPointWebServer::handleRoot() const {
   sendHtmlContent(server.get(), HomePageHtml, sizeof(HomePageHtml));
   LOG_DBG("WEB", "Served root page");
@@ -492,6 +509,7 @@ void CrossPointWebServer::handleFileListData() const {
     return;
   }
 
+  applyClientSendTimeout(server.get());
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
   server->sendContent("[");
@@ -501,6 +519,9 @@ void CrossPointWebServer::handleFileListData() const {
   JsonDocument doc;
 
   scanFiles(currentPath.c_str(), [this, &output, &doc, seenFirst](const FileInfo& info) mutable {
+    // Stop streaming if the client/link dropped, so we don't spin sending to a
+    // dead socket (the send timeout above also bounds any single blocked write).
+    if (!server->client().connected()) return;
     doc.clear();
     doc["name"] = info.name;
     doc["size"] = info.size;
@@ -571,6 +592,7 @@ void CrossPointWebServer::handleDownload() const {
     filename = nameBuf;
   }
 
+  applyClientSendTimeout(server.get());
   server->setContentLength(file.size());
   server->sendHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
   server->send(200, contentType.c_str(), "");
