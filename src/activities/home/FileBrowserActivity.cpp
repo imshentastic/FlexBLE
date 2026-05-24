@@ -456,8 +456,8 @@ void FileBrowserActivity::loop() {
     const std::string& entry = files[selectorIndex];
     bool isDirectory = (entry.back() == '/');
 
-    // Firmware picker: select file -> return path; navigate into directories normally.
-    if (mode == Mode::PickFirmware && !isDirectory) {
+    // Picker modes: select a file -> return its path; navigate directories normally.
+    if ((mode == Mode::PickFirmware || mode == Mode::PickBook) && !isDirectory) {
       std::string cleanBasePath = basepath;
       if (cleanBasePath.back() != '/') cleanBasePath += "/";
       ActivityResult res{FilePathResult{cleanBasePath + entry}};
@@ -509,8 +509,8 @@ void FileBrowserActivity::loop() {
         selectorIndex = findEntry(dirName);
 
         requestUpdate();
-      } else if (mode == Mode::PickFirmware) {
-        // Firmware picker at root: cancel back to caller instead of going home.
+      } else if (mode == Mode::PickFirmware || mode == Mode::PickBook) {
+        // Picker at root: cancel back to caller instead of going home.
         ActivityResult res;
         res.isCancelled = true;
         setResult(std::move(res));
@@ -636,11 +636,12 @@ void FileBrowserActivity::render(RenderLock&&) {
   }
 
   // Help text
-  const char* backLabel = (basepath == "/") ? (mode == Mode::PickFirmware ? tr(STR_BACK) : tr(STR_HOME)) : tr(STR_BACK);
-  // In PickFirmware mode, Confirm on a .bin returns the path to the caller (not "open"); show
+  const bool pickerMode = (mode == Mode::PickFirmware || mode == Mode::PickBook);
+  const char* backLabel = (basepath == "/") ? (pickerMode ? tr(STR_BACK) : tr(STR_HOME)) : tr(STR_BACK);
+  // In a picker mode, Confirm on a file returns the path to the caller (not "open"); show
   // STR_SELECT instead. Directories in the same picker still descend, so keep STR_OPEN there.
-  const bool selectingFirmwareFile = mode == Mode::PickFirmware && !files.empty() && files[selectorIndex].back() != '/';
-  const char* confirmLabel = files.empty() ? "" : (selectingFirmwareFile ? tr(STR_SELECT) : tr(STR_OPEN));
+  const bool selectingPickFile = pickerMode && !files.empty() && files[selectorIndex].back() != '/';
+  const char* confirmLabel = files.empty() ? "" : (selectingPickFile ? tr(STR_SELECT) : tr(STR_OPEN));
   const auto labels = mappedInput.mapLabels(backLabel, confirmLabel, files.empty() ? "" : tr(STR_DIR_UP),
                                             files.empty() ? "" : tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

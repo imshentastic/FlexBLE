@@ -45,4 +45,7 @@ class AddBooksToCollectionActivity final : public Activity {
   int selectedIndex = 0;
 
   std::string rowLabel(int idx) const;
+  // Rebuilds the row list: recently-opened books first, then any collection
+  // members not already shown (e.g. older books added via "Browse files...").
+  void rebuildRows();
 };
