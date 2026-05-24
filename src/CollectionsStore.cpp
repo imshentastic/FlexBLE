@@ -48,11 +48,32 @@ void CollectionsStore::begin() {
       collections.push_back(std::move(v));
     }
   };
-  seedVirtual(RECENTLY_ADDED_ID, RECENTLY_ADDED_NAME);
-  seedVirtual(ALL_BOOKS_ID, ALL_BOOKS_NAME);
+  // CrumBLE: the index-backed virtuals are opt-in (avoids a boot-time SD walk).
+  // Only seed them when the user has turned them on; toggling at runtime adds /
+  // removes them via setVirtualCollectionVisible().
+  if (SETTINGS.showRecentlyAddedCollection) seedVirtual(RECENTLY_ADDED_ID, RECENTLY_ADDED_NAME);
+  if (SETTINGS.showAllBooksCollection) seedVirtual(ALL_BOOKS_ID, ALL_BOOKS_NAME);
 
   if (activeId.empty() || findCollection(activeId) == nullptr) {
     activeId = FAVORITES_ID;
+  }
+}
+
+void CollectionsStore::setVirtualCollectionVisible(const char* id, const char* name, bool visible) {
+  const bool present = findCollection(id) != nullptr;
+  if (visible && !present) {
+    Collection v;
+    v.id = id;
+    v.name = name;
+    v.isVirtual = true;
+    collections.push_back(std::move(v));
+  } else if (!visible && present) {
+    collections.erase(std::remove_if(collections.begin(), collections.end(),
+                                     [&](const Collection& c) { return c.id == id; }),
+                      collections.end());
+    // If the hidden collection was active, fall back to Favorites so Home
+    // doesn't point at a collection that no longer exists.
+    if (activeId == id) activeId = FAVORITES_ID;
   }
 }
 

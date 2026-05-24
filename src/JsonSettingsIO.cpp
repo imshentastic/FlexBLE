@@ -193,6 +193,10 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["bleBondedDeviceName"] = s.bleBondedDeviceName;
   doc["bleBondedDeviceAddrType"] = s.bleBondedDeviceAddrType;
 
+  // CrumBLE: opt-in virtual-collection visibility (Recently Added / All Books).
+  doc["showRecentlyAdded"] = s.showRecentlyAddedCollection;
+  doc["showAllBooks"] = s.showAllBooksCollection;
+
   // Language -- managed by LanguageSelectActivity, not in SettingsList.
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
   doc["language"] = (s.language < getLanguageCount()) ? LANGUAGE_CODES[s.language] : "EN";
@@ -324,6 +328,16 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
   s.bleBondedDeviceName[sizeof(s.bleBondedDeviceName) - 1] = '\0';
 
   s.bleBondedDeviceAddrType = doc["bleBondedDeviceAddrType"] | s.bleBondedDeviceAddrType;
+
+  // CrumBLE: opt-in virtual-collection visibility. If either key is present the
+  // config predates neither (already migrated) -- clear the pending flag so
+  // main.cpp skips the one-time existing-user migration. Absent keys leave it
+  // pending so an existing user keeps All Books / Recently Added on first update.
+  if (!doc["showRecentlyAdded"].isNull() || !doc["showAllBooks"].isNull()) {
+    s.virtualCollectionsDefaultPending = false;
+  }
+  s.showRecentlyAddedCollection = doc["showRecentlyAdded"] | s.showRecentlyAddedCollection;
+  s.showAllBooksCollection = doc["showAllBooks"] | s.showAllBooksCollection;
 
   // Font family — uses dynamic getter/setter in SettingsList so the generic loop skips it.
   s.fontFamily = clamp(doc["fontFamily"] | (uint8_t)0, CrossPointSettings::BUILTIN_FONT_COUNT, 0);

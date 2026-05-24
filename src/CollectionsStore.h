@@ -85,6 +85,12 @@ class CollectionsStore {
   // Idempotent — safe to call once at boot from main.cpp.
   void begin();
 
+  // CrumBLE: add/remove a virtual collection (Recently Added / All Books) from
+  // the live list when the user toggles its visibility from the Home menu. The
+  // visibility itself is persisted via CrossPointSettings; this just keeps the
+  // in-memory list in sync for the current session (begin() reseeds on reboot).
+  void setVirtualCollectionVisible(const char* id, const char* name, bool visible);
+
   // Mutators (auto-save after each).
   // Returns true if the book is now IN the collection after toggling.
   bool toggleBookInCollection(const std::string& collectionId, const std::string& bookPath);

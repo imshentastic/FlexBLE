@@ -355,6 +355,16 @@ class CrossPointSettings {
   uint8_t uiTheme = LYRA_FLOW;
   // Recent Books screen layout
   uint8_t recentBooksView = RECENT_BOOKS_LIST;
+  // CrumBLE: the index-backed virtual collections (Recently Added / All Books)
+  // are opt-in so a fresh device never runs the whole-SD walk at boot. 0 =
+  // hidden from Home. Existing users (who already have a library index) are
+  // migrated to 1 on the first boot after this update; fresh installs stay 0.
+  uint8_t showRecentlyAddedCollection = 0;
+  uint8_t showAllBooksCollection = 0;
+  // Transient (NOT persisted): true until loadSettings() sees either of the two
+  // keys above in the JSON. main.cpp uses it to apply the one-time existing-user
+  // migration default (index present -> show them), then clears it.
+  bool virtualCollectionsDefaultPending = true;
   // Sunlight fading compensation
   uint8_t fadingFix = 0;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)

@@ -65,6 +65,12 @@ enum class FileBrowserAction : int {
   // CrossInk 1.3 recent-books long-press action (List/Grid views). Distinct
   // from our home RemoveFromRecentBooks=7; assigned a non-colliding value.
   RemoveFromRecents = 16,
+  // CrumBLE: shelf-header toggles to opt into the index-backed virtual
+  // collections (Recently Added / All Books). They're hidden by default so a
+  // fresh device never runs the whole-SD walk at boot; turning one ON prompts
+  // to scan the library first. Label flips Show/Hide with current state.
+  ToggleShowRecentlyAdded = 17,
+  ToggleShowAllBooks = 18,
 };
 
 class FileBrowserActionActivity final : public Activity {

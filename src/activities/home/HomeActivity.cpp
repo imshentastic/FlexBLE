@@ -1366,6 +1366,14 @@ void HomeActivity::showShelfHeaderActionMenu() {
   // a quick path to create.
   items.push_back({FileBrowserAction::CreateNewCollectionFromHeader, StrId::STR_HEADER_NEW_COLLECTION});
   items.push_back({FileBrowserAction::RescanLibrary, StrId::STR_RESCAN_LIBRARY});
+  // CrumBLE: opt-in toggles for the index-backed virtual collections. Hidden by
+  // default so a fresh device never auto-indexes; turning one on prompts to scan.
+  // Label flips Show/Hide to match the current visibility.
+  items.push_back({FileBrowserAction::ToggleShowRecentlyAdded,
+                   SETTINGS.showRecentlyAddedCollection ? StrId::STR_HIDE_RECENTLY_ADDED
+                                                        : StrId::STR_SHOW_RECENTLY_ADDED});
+  items.push_back({FileBrowserAction::ToggleShowAllBooks,
+                   SETTINGS.showAllBooksCollection ? StrId::STR_HIDE_ALL_BOOKS : StrId::STR_SHOW_ALL_BOOKS});
 
   const std::string title = (active != nullptr) ? active->name : std::string();
 
@@ -1392,6 +1400,53 @@ void HomeActivity::showShelfHeaderActionMenu() {
           drawHomeToast(renderer, tr(STR_LIBRARY_RESCANNED));
           delay(800);
           requestUpdate();
+        } else if (action == FileBrowserAction::ToggleShowRecentlyAdded ||
+                   action == FileBrowserAction::ToggleShowAllBooks) {
+          const bool isRecently = (action == FileBrowserAction::ToggleShowRecentlyAdded);
+          const bool currentlyOn =
+              isRecently ? SETTINGS.showRecentlyAddedCollection : SETTINGS.showAllBooksCollection;
+          const char* vid = isRecently ? CollectionsStore::RECENTLY_ADDED_ID : CollectionsStore::ALL_BOOKS_ID;
+          const char* vname = isRecently ? CollectionsStore::RECENTLY_ADDED_NAME : CollectionsStore::ALL_BOOKS_NAME;
+          if (currentlyOn) {
+            // Turn OFF — just hide it; no scan needed.
+            if (isRecently) {
+              SETTINGS.showRecentlyAddedCollection = 0;
+            } else {
+              SETTINGS.showAllBooksCollection = 0;
+            }
+            SETTINGS.saveToFile();
+            CollectionsStore::getInstance().setVirtualCollectionVisible(vid, vname, false);
+            invalidateShelfPathsCache();
+            shelfSnapshotValid = false;
+            lastRenderedCoverSelectorValid = false;
+            shelfCoversLoaded = false;
+            requestUpdate();
+          } else {
+            // Turn ON — confirm the (possibly first) library scan before walking SD.
+            startActivityForResult(
+                std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_SCAN_LIBRARY_PROMPT), vname),
+                [this, isRecently, vid, vname](const ActivityResult& confirm) {
+                  if (confirm.isCancelled) return;  // declined — stay hidden
+                  if (isRecently) {
+                    SETTINGS.showRecentlyAddedCollection = 1;
+                  } else {
+                    SETTINGS.showAllBooksCollection = 1;
+                  }
+                  SETTINGS.saveToFile();
+                  CollectionsStore::getInstance().setVirtualCollectionVisible(vid, vname, true);
+                  // ensureWalked self-skips if a walk already ran this session
+                  // (e.g. the other virtual is already on), so this only costs
+                  // the SD walk the first time.
+                  const Rect popupRect = GUI.drawPopup(renderer, tr(STR_RESCAN_LIBRARY));
+                  LibraryIndex::getInstance().ensureWalked(
+                      [&](int pct) { GUI.fillPopupProgress(renderer, popupRect, pct); });
+                  invalidateShelfPathsCache();
+                  shelfSnapshotValid = false;
+                  lastRenderedCoverSelectorValid = false;
+                  shelfCoversLoaded = false;
+                  requestUpdate();
+                });
+          }
         } else if (action == FileBrowserAction::ToggleCollapseSeries) {
           const Collection* active = CollectionsStore::getInstance().getActiveCollection();
           if (active == nullptr) return;
