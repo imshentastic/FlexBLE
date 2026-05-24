@@ -1586,6 +1586,9 @@ void HomeActivity::onEnter() {
   minimalHomeNavIndex = -1;
   carouselFramesReady = false;
   carouselWarmupPending = isCarouselTheme;
+  // Clear ghosting from the previous screen (e.g. a dense reader page) with one
+  // full refresh on the first present of this Home visit; fast refreshes after.
+  pendingFullRefresh = true;
   // Force a re-check of shelf thumbnails on every onEnter so books that
   // were just toggled into a collection (e.g. via the file browser long-
   // press) get their cover generated on the next return to Home.
@@ -2623,6 +2626,17 @@ void HomeActivity::loop() {
   }
 }
 
+void HomeActivity::presentHomeBuffer() {
+  if (pendingFullRefresh) {
+    pendingFullRefresh = false;
+    // One full clear on entry wipes ghosting bled through from the previous
+    // screen (the reader page, a low-memory alert, etc.).
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  } else {
+    renderer.displayBuffer();
+  }
+}
+
 void HomeActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto pageWidth = renderer.getScreenWidth();
@@ -2641,7 +2655,7 @@ void HomeActivity::render(RenderLock&&) {
           [&menuItems](int index) { return menuItems[index].icon; });
       const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
       GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-      renderer.displayBuffer();
+      presentHomeBuffer();
       return;
     }
 
@@ -2660,7 +2674,7 @@ void HomeActivity::render(RenderLock&&) {
     MinimalTheme::setHomeButtonHintSelection(minimalHomeNavIndex);
     GUI.drawButtonHints(renderer, "Menu", "Browse", "Settings", recentBooks.empty() ? "" : "Read");
 
-    renderer.displayBuffer();
+    presentHomeBuffer();
 
     if (!firstRenderDone) {
       firstRenderDone = true;
@@ -2707,7 +2721,7 @@ void HomeActivity::render(RenderLock&&) {
         }
       }
 
-      renderer.displayBuffer();
+      presentHomeBuffer();
       // E-ink refresh complete — pre-render the missing adjacent frame while idle.
       updateSlidingWindowCache(centerIdx, bookCount);
       // Mirror the slow-path trigger: generate missing thumbnails on the second
@@ -3024,7 +3038,7 @@ void HomeActivity::render(RenderLock&&) {
     }
   }
 
-  renderer.displayBuffer();
+  presentHomeBuffer();
 
   if (!firstRenderDone) {
     firstRenderDone = true;

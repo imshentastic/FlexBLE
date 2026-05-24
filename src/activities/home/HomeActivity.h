@@ -141,6 +141,11 @@ class HomeActivity final : public Activity {
   bool recentsLoading = false;
   bool recentsLoaded = false;
   bool firstRenderDone = false;
+  // CrumBLE: set on every onEnter so the first time Home presents after a
+  // transition it does one full (HALF) refresh to clear ghosting bled through
+  // from the previous screen (e.g. a dense reader page). Consumed by
+  // presentHomeBuffer(); subsequent in-place updates stay fast.
+  bool pendingFullRefresh = false;
   bool hasReadingStats = false;
   bool hasBookmarks = false;
   bool hasOpdsServers = false;
@@ -200,6 +205,9 @@ class HomeActivity final : public Activity {
   void renderCarouselFrameToCurrentBuffer(int bookIdx, BookReadingStats* outStats, float* outProgressPercent,
                                           bool* outUsedCachedStats);
   void renderCarouselFrame(int bookIdx, int slotIdx);
+  // Present the composed Home framebuffer. Does one HALF (full) refresh the
+  // first time after onEnter (clears transition ghosting), then FAST refreshes.
+  void presentHomeBuffer();
   void updateSlidingWindowCache(int centerIdx, int bookCount);
   int getHighlightedBookIndex() const;
   void updateHighlightedBookContext();
