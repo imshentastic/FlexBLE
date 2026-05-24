@@ -483,7 +483,7 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
   ctx.caching = !config.cachePath.empty();
   if (ctx.caching) {
     if (!ctx.cache.allocate(destWidth, destHeight, config.x, config.y)) {
-      LOG_ERR("JPG", "Failed to allocate cache buffer, continuing without caching");
+      LOG_DBG("JPG", "Decoded-image cache buffer unavailable; decoding without caching (not an error)");
       ctx.caching = false;
     }
   }

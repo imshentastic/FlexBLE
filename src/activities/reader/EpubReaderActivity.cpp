@@ -2045,21 +2045,17 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const auto tBwStore = millis();
   (void)bwStoreHeapBefore;
   (void)bwStoreHeapAfter;
-  // Apply grayscale AA when we either captured a BW backup (fast path: restore
-  // it after the gray pass) OR Bluetooth is active. With BLE on, NimBLE's heap
-  // squeeze usually defeats the backup allocation; rather than drop AA we fall
-  // back to RE-RENDERING the BW page after the gray pass (see
-  // grayscaleNeedsReRender below) — one extra render pass, but it needs no
-  // backup buffer, so AA survives even when there's no room for the snapshot.
-  // Without BLE *and* without a backup the page is genuinely too dense to fit
-  // the 32 KB cap (rare); skip AA there since re-rendering would just slow
-  // every page with no memory pressure to justify it.
-  const bool bleActive = BluetoothHIDManager::getInstance().isEnabled();
-  const bool canApplyGrayscale = needsAnyGrayscale && (storedBwBuffer || bleActive);
+  // Always apply grayscale AA when the page wants it (text AA on, or the page
+  // has images). Fast path: if we captured a BW backup, restore it after the
+  // gray pass. Fallback: when there's no backup — either NimBLE ate the heap
+  // (BLE on) OR a dense / picture-heavy page's PackBits backup exceeded the
+  // 32 KB cap (which happens even with BLE off) — RE-RENDER the BW page after
+  // the gray pass (see grayscaleNeedsReRender below). The re-render needs no
+  // backup buffer, so AA survives regardless of BLE and regardless of how dense
+  // the page is. The extra pass only runs on the rare pages whose backup didn't
+  // fit, never on every page.
+  const bool canApplyGrayscale = needsAnyGrayscale;
   const bool grayscaleNeedsReRender = canApplyGrayscale && !storedBwBuffer;
-  if (needsAnyGrayscale && !canApplyGrayscale) {
-    LOG_ERR("ERS", "Skipping grayscale enhancement: no BW backup and BLE off");
-  }
   // Per-page AA status for diagnosis. DBG level (compiled out of the
   // production build). mode=re-render means we drew the page twice to avoid
   // the backup buffer; mode=backup is the fast snapshot/restore path.

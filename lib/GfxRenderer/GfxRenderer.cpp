@@ -2090,14 +2090,16 @@ bool GfxRenderer::storeBwBuffer() {
   // 2-5 KB, and allocating *that* (rather than the worst-case 32 KB block
   // the old single-buffer path grabbed up front) succeeds even when NimBLE
   // (~58 KB) has fragmented the heap and there's no large contiguous span
-  // free. Dense/image pages that exceed the cap still gracefully skip AA.
+  // free. Dense/image pages that exceed the cap fall back to the reader's
+  // re-render path for AA (no backup needed), so AA still applies.
   const size_t compressedSize = packbitsCompressBw(frameBuffer, frameBufferSize, nullptr);
   if (compressedSize == 0 || compressedSize > MAX_BW_COMPRESSED_SIZE) {
-    // Out of bounds (empty, or a page too complex to compress within the
-    // cap). Leave any existing backup intact so the BookSettings drawer's
+    // Empty, or a page too complex to compress within the cap. Not an error:
+    // the reader re-renders the page for grayscale instead of restoring this
+    // backup. Leave any existing backup intact so the BookSettings drawer's
     // fallback (restore the reader's previous snapshot) still works.
-    LOG_ERR("GFX", "!! BW backup compressed size %zu out of bounds (cap %zu); skipping grayscale", compressedSize,
-            MAX_BW_COMPRESSED_SIZE);
+    LOG_DBG("GFX", "BW backup compressed %zu exceeds cap %zu; not stored (reader re-renders for grayscale)",
+            compressedSize, MAX_BW_COMPRESSED_SIZE);
     return false;
   }
 
@@ -2106,7 +2108,7 @@ bool GfxRenderer::storeBwBuffer() {
   // than clobbering it (which used to leave the drawer painting on white).
   uint8_t* const newBackup = static_cast<uint8_t*>(malloc(compressedSize));
   if (!newBackup) {
-    LOG_ERR("GFX", "!! Failed to allocate %zu-byte BW backup; skipping grayscale (existing backup preserved)",
+    LOG_DBG("GFX", "Could not allocate %zu-byte BW backup; not stored (reader re-renders; existing backup preserved)",
             compressedSize);
     return false;
   }
