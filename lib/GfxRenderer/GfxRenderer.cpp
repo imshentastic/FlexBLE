@@ -2013,9 +2013,10 @@ void GfxRenderer::freeBwCompressedBackup() {
  *     and prefers literal runs for short sequences.
  *
  * Worst-case expansion (purely random input) is +1 byte per 128 literals,
- * but reader pages are >95% 0xFF runs and typically encode to <5 KB. If we
- * exceed MAX_BW_COMPRESSED_SIZE the call fails and the caller falls back
- * to skipping the grayscale pass — same UX as the old chunked alloc failure.
+ * but reader pages are >95% 0xFF runs and typically encode to <5 KB. If the
+ * compressed size exceeds the (heap-aware) ceiling in storeBwBuffer the call
+ * fails and the caller falls back to the re-render path for grayscale — same
+ * UX as the old chunked alloc failure, just one extra render pass.
  *
  * A `restoreBwBuffer` call should always follow the grayscale render if this
  * method was called.
@@ -2093,13 +2094,38 @@ bool GfxRenderer::storeBwBuffer() {
   // free. Dense/image pages that exceed the cap fall back to the reader's
   // re-render path for AA (no backup needed), so AA still applies.
   const size_t compressedSize = packbitsCompressBw(frameBuffer, frameBufferSize, nullptr);
-  if (compressedSize == 0 || compressedSize > MAX_BW_COMPRESSED_SIZE) {
-    // Empty, or a page too complex to compress within the cap. Not an error:
-    // the reader re-renders the page for grayscale instead of restoring this
-    // backup. Leave any existing backup intact so the BookSettings drawer's
-    // fallback (restore the reader's previous snapshot) still works.
-    LOG_DBG("GFX", "BW backup compressed %zu exceeds cap %zu; not stored (reader re-renders for grayscale)",
-            compressedSize, MAX_BW_COMPRESSED_SIZE);
+
+  // Size ceiling for keeping a backup, chosen from current heap headroom.
+  //
+  // The 32 KB floor (MAX_BW_COMPRESSED_SIZE) is always safe and is the right
+  // limit when a BLE remote is connected: NimBLE holds ~58 KB and fragments
+  // the heap, so only light text pages (2-5 KB) keep a backup and dense pages
+  // fall back to the reader's re-render path for grayscale.
+  //
+  // With BLE off there's a large contiguous span free (~80 KB) — more than
+  // enough to also hold a dense-page backup (~35 KB) AND still render the two
+  // grayscale passes that run while it's held. Raising the ceiling there lets
+  // dense/image pages use the fast restore path instead of an extra full
+  // re-render, which is the visible page-turn "delay" on those pages. (It also
+  // lets the BookSettings drawer snapshot dense pages instead of falling back.)
+  //
+  // The gate sits well above the BLE-on maxAlloc (~40 KB) so it only engages
+  // with the remote disconnected, and we always leave kGrayPassHeadroom in the
+  // largest block for the glyph/image rendering that follows.
+  size_t sizeCeiling = MAX_BW_COMPRESSED_SIZE;
+  constexpr size_t kHeapAwareGate = 64U * 1024U;     // BLE-off heap looks like this
+  constexpr size_t kGrayPassHeadroom = 24U * 1024U;  // keep this contiguous for the grayscale passes
+  const size_t maxAlloc = ESP.getMaxAllocHeap();
+  if (maxAlloc >= kHeapAwareGate) {
+    sizeCeiling = std::min<size_t>(frameBufferSize, maxAlloc - kGrayPassHeadroom);
+  }
+  if (compressedSize == 0 || compressedSize > sizeCeiling) {
+    // Empty, or too large to keep without risking the render that follows. Not
+    // an error: the reader re-renders the page for grayscale instead of
+    // restoring this backup. Leave any existing backup intact so the
+    // BookSettings drawer's fallback (restore the previous snapshot) still works.
+    LOG_DBG("GFX", "BW backup %zu over ceiling %zu (maxAlloc=%u); not stored (re-render path)", compressedSize,
+            sizeCeiling, static_cast<unsigned>(maxAlloc));
     return false;
   }
 
