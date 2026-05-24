@@ -1101,7 +1101,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   LOG_ERR("EHP", "Disabling remaining image extraction after failure (%u free, %u max alloc)",
                           postFailureFreeHeap, postFailureMaxAllocHeap);
                 }
-                LOG_ERR("EHP", "Failed to extract image");
+                LOG_ERR("EHP", "Failed to extract image: %s", resolvedPath.c_str());
               }
             }  // isFormatSupported
           }
