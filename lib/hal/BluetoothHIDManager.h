@@ -70,6 +70,7 @@ public:
   // can fire callbacks that call requestUpdateAndWait() while the lock is
   // still held.
   void requestDisableLater() { _disableLaterRequested = true; }
+  bool isDisableLaterRequested() const { return _disableLaterRequested; }
   bool tryDisableIfRequested() {
     if (!_disableLaterRequested) return false;
     _disableLaterRequested = false;

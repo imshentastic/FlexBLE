@@ -2456,6 +2456,16 @@ void HomeActivity::loop() {
   }
 
   if (getHighlightedBookIndex() != previousHighlightedBookIdx) {
+    // CrumBLE: updateHighlightedBookContext() reads per-book stats/progress from
+    // the SD card on a cache miss. loop() runs on the main task without the
+    // render lock, and the render task may be loading covers from the same
+    // (non-thread-safe) SdFat + shared SPI bus at the same moment. Concurrent SD
+    // access corrupts the SPI transaction/mutex state and panics in
+    // xTaskPriorityDisinherit -- seen when bouncing to Home under a fragmented
+    // heap (e.g. after a failed BLE chapter load). Hold the render lock so the
+    // two never touch SD at once. Cheap: the highlight only changes on
+    // navigation, and the common case is a cache hit with no SD I/O.
+    RenderLock lock;
     updateHighlightedBookContext();
   }
 

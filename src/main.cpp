@@ -1206,7 +1206,20 @@ void loop() {
   // disable() inline from onExit because the activity manager still holds
   // the render lock during the transition; doing it here, after loop()
   // returns, is safe.
-  btMgr.tryDisableIfRequested();
+  //
+  // CrumBLE: serialize NimBLE deinit with the render task. The render task
+  // drives the shared SPI bus (e-ink + SD cache I/O) under RenderLock. When the
+  // reader drops BLE around a cold chapter build it re-renders in a tight loop
+  // (cache-miss -> defer) while this main task tears the stack down; the deinit
+  // races the render task's SD access and HANGS the indexer (frozen "Indexing",
+  // needs a reboot). Holding RenderLock across the deinit keeps the render task
+  // idle for the teardown. Only take the lock when a disable is actually pending
+  // so we don't contend every loop. (requestUpdateAndWait gracefully rejects if
+  // reached while we hold the lock, so this can't deadlock the teardown.)
+  if (btMgr.isDisableLaterRequested()) {
+    RenderLock lock;
+    btMgr.tryDisableIfRequested();
+  }
   // Companion drain: when the reader proactively drops BLE around a heavy
   // re-layout (e.g. font change from the Book Settings drawer), it asks
   // for BLE to come back up once the indexer finishes. checkAutoReconnect
