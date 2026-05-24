@@ -1694,16 +1694,25 @@ void EpubReaderActivity::render(RenderLock&& lock) {
           return;
         }
         // Build failed and we already retried (or BLE wasn't the culprit).
-        // Bring BLE back up before bailing so the user doesn't lose their
-        // remote on top of the layout error — checkAutoReconnect() will
-        // resume the bonded link on the next button press once the stack
-        // is enabled again.
-        if (bleAutoReEnableAfterReindex) {
-          bleAutoReEnableAfterReindex = false;
-          LOG_INF("ERS", "Section build failed; requesting BLE re-enable so the remote isn't lost");
-          BluetoothHIDManager::getInstance().requestEnableLater();
-        }
-        if (layoutAbortedForLowMemory) {
+        //
+        // CrumBLE graceful fallback: a cold build that fails *after* we dropped
+        // BLE for it is the fragmentation wall -- even with BLE gone, the heap
+        // is too shattered to allocate the inflate window (no compaction on this
+        // chip). Show the low-memory message (accurate) instead of a misleading
+        // "save failed", and FLUSH it now so the panel shows the error during
+        // the ~7 s BLE re-enable below -- otherwise the stale "Indexing" popup
+        // stays frozen on screen the whole time (the reboot-needing hang the
+        // user hit). Then bring BLE back so the remote isn't lost.
+        const bool coldBuildLowMem = layoutAbortedForLowMemory || bleAutoReEnableAfterReindex;
+        // Do NOT re-enable BLE on a failed cold build. The build failed because
+        // the heap is too fragmented for the inflate window; re-enabling runs a
+        // ~7 s BLOCKING connect right as the low-memory alert appears, and button
+        // sampling is frozen for that whole window -- so the user's "Back" tap on
+        // the alert is swallowed and it feels stuck. Leave the remote off: the
+        // alert is immediately responsive, and the user can reconnect from Home
+        // or a cached chapter. (On a *successful* cold build we still re-enable.)
+        bleAutoReEnableAfterReindex = false;
+        if (coldBuildLowMem) {
           showLowMemoryLayoutError();
         } else {
           showPendingSyncSaveError();
@@ -1934,6 +1943,20 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   (void)heapAfter;
 
   const bool pageHasImages = page->hasImages();
+  // CrumBLE: NimBLE holds ~90 KB while the remote is up, leaving ~24 KB
+  // contiguous -- not enough for the grayscale re-render pass (it would starve
+  // glyphs, the "5% of characters" bug). Gate the AA re-render on the remote
+  // being up. We gate on the stack being enabled rather than a mid-render heap
+  // threshold: measured here (after the glyph prewarm) maxAlloc reads well below
+  // the ~82 KB idle value even with the remote OFF, which wrongly skipped work.
+  //
+  // Images are NOT blanket-suppressed here: the image converters already apply
+  // their own per-image heap check, so a light book keeps an image that fits
+  // even with the remote on, and a heavy book drops images that don't fit. A
+  // blanket "text-only under the remote" hid images that would have rendered
+  // fine -- lost functionality -- so we leave per-image suppression to the
+  // converters and only gate the (whole-page) AA re-render here.
+  const bool bleConnected = BluetoothHIDManager::getInstance().isEnabled();
   const bool needsImageGrayscale = pageHasImages;
   const bool needsTextGrayscale = SETTINGS.textAntiAliasing;
   const bool needsAnyGrayscale = needsTextGrayscale || needsImageGrayscale;
@@ -2058,16 +2081,26 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const auto tBwStore = millis();
   (void)bwStoreHeapBefore;
   (void)bwStoreHeapAfter;
-  // Always apply grayscale AA when the page wants it (text AA on, or the page
-  // has images). Fast path: if we captured a BW backup, restore it after the
-  // gray pass. Fallback: when there's no backup — either NimBLE ate the heap
-  // (BLE on) OR a dense / picture-heavy page's PackBits backup exceeded the
-  // 32 KB cap (which happens even with BLE off) — RE-RENDER the BW page after
-  // the gray pass (see grayscaleNeedsReRender below). The re-render needs no
-  // backup buffer, so AA survives regardless of BLE and regardless of how dense
-  // the page is. The extra pass only runs on the rare pages whose backup didn't
-  // fit, never on every page.
-  const bool canApplyGrayscale = needsAnyGrayscale;
+  // Apply grayscale AA when the page wants it (text AA on, or the page has
+  // images). Fast path: if we captured a BW backup, restore it after the gray
+  // pass. Fallback: when there's no backup (a dense / picture-heavy page whose
+  // PackBits backup exceeded the cap), RE-RENDER the BW page after the gray pass
+  // -- the re-render needs no backup buffer, so AA survives on dense pages.
+  //
+  // BUT the re-render lays the whole page out a SECOND time, which needs real
+  // contiguous heap. With the remote connected NimBLE holds ~90 KB and the
+  // largest free block is only ~24 KB, so that extra pass starves glyph
+  // rendering -- the "page shows only 5% of its characters" bug. So take the
+  // re-render path only when the remote is OFF (ample heap); with it connected,
+  // fall back to the original behavior and SKIP grayscale (render once in BW).
+  // (We gate on the remote being up, not a mid-render heap threshold: measured
+  // here -- after the prewarm -- maxAlloc reads well below idle even with the
+  // remote off, which would wrongly skip AA on dense pages.) Net effect: AA
+  // always works without a remote (full heap re-renders fine), light pages still
+  // get AA via the backup path even with the remote on, and dense pages under
+  // the remote render cleanly without AA instead of starving.
+  const bool reRenderSafe = !bleConnected;
+  const bool canApplyGrayscale = needsAnyGrayscale && (storedBwBuffer || reRenderSafe);
   const bool grayscaleNeedsReRender = canApplyGrayscale && !storedBwBuffer;
   // Per-page AA status for diagnosis. DBG level (compiled out of the
   // production build). mode=re-render means we drew the page twice to avoid
