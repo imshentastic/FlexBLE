@@ -13,12 +13,19 @@
 
 namespace {
 constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
-constexpr uint8_t SECTION_FILE_VERSION = 37;
+// v38: added imagesSuppressed + buildMaxAlloc to the header so a chapter cached
+// with images dropped under low heap can be rebuilt with images once memory
+// recovers. The bump also invalidates any v37 cache that was silently cached
+// imageless (it will rebuild fresh on next open).
+constexpr uint8_t SECTION_FILE_VERSION = 38;
+// How much the largest free block must have grown since a degraded build before
+// we bother rebuilding it for images (avoids rebuild churn on tiny variations).
+constexpr uint32_t SECTION_DEGRADED_REBUILD_MARGIN = 12 * 1024;
 constexpr uint32_t HEADER_SIZE = sizeof(SECTION_CACHE_MAGIC) + sizeof(uint8_t) + sizeof(int) + sizeof(float) +
                                  sizeof(bool) + sizeof(bool) + sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) +
                                  sizeof(uint16_t) + sizeof(bool) + sizeof(bool) + sizeof(uint8_t) + sizeof(bool) +
-                                 sizeof(bool) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) +
-                                 sizeof(uint32_t);
+                                 sizeof(bool) + sizeof(bool) /*imagesSuppressed*/ + sizeof(uint32_t) /*buildMaxAlloc*/ +
+                                 sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t);
 
 struct PageLutEntry {
   uint32_t fileOffset;
@@ -60,7 +67,8 @@ bool Section::writeSectionFileHeader(const int fontId, const float lineCompressi
                                    sizeof(forceParagraphIndents) + sizeof(paragraphAlignment) + sizeof(viewportWidth) +
                                    sizeof(viewportHeight) + sizeof(pageCount) + sizeof(hyphenationEnabled) +
                                    sizeof(embeddedStyle) + sizeof(imageRendering) + sizeof(bionicReadingEnabled) +
-                                   sizeof(guideReadingEnabled) + sizeof(uint32_t) + sizeof(uint32_t) +
+                                   sizeof(guideReadingEnabled) + sizeof(bool) /*imagesSuppressed*/ +
+                                   sizeof(uint32_t) /*buildMaxAlloc*/ + sizeof(uint32_t) + sizeof(uint32_t) +
                                    sizeof(uint32_t) + sizeof(uint32_t),
                 "Header size mismatch");
   return serialization::tryWritePod(file, SECTION_CACHE_MAGIC) &&
@@ -72,6 +80,8 @@ bool Section::writeSectionFileHeader(const int fontId, const float lineCompressi
          serialization::tryWritePod(file, embeddedStyle) && serialization::tryWritePod(file, imageRendering) &&
          serialization::tryWritePod(file, bionicReadingEnabled) &&
          serialization::tryWritePod(file, guideReadingEnabled) &&
+         serialization::tryWritePod(file, static_cast<bool>(false)) &&     // imagesSuppressed (patched in finalize)
+         serialization::tryWritePod(file, static_cast<uint32_t>(0)) &&     // buildMaxAlloc (patched in finalize)
          serialization::tryWritePod(file,
                                     pageCount) &&  // Placeholder for page count (will be initially 0, patched later)
          serialization::tryWritePod(file, static_cast<uint32_t>(0)) &&  // Placeholder for LUT offset (patched later)
@@ -162,12 +172,37 @@ bool Section::loadSectionFile(const int fontId, const float lineCompression, con
     }
   }
 
+  // CrumBLE: degraded-cache metadata, written right after the layout params.
+  bool fileImagesSuppressed = false;
+  uint32_t fileBuildMaxAlloc = 0;
+  if (!serialization::tryReadPod(file, fileImagesSuppressed) ||
+      !serialization::tryReadPod(file, fileBuildMaxAlloc)) {
+    file.close();
+    LOG_ERR("SCT", "Deserialization failed: missing degraded-cache fields");
+    clearCache();
+    return false;
+  }
+
   if (!serialization::tryReadPod(file, pageCount)) {
     file.close();
     LOG_ERR("SCT", "Deserialization failed: missing page count");
     clearCache();
     return false;
   }
+
+  // CrumBLE: this section was cached with images dropped because heap was tight
+  // at build time (typically a BLE remote was connected). If the largest free
+  // block has since grown well beyond what we had then -- e.g. the user
+  // disconnected the remote -- treat it as a cache miss so it rebuilds *with*
+  // images. Comparing against the build-time value (plus a margin) stops a
+  // rebuild loop for chapters that genuinely can't fit images even on full heap.
+  if (fileImagesSuppressed && ESP.getMaxAllocHeap() > fileBuildMaxAlloc + SECTION_DEGRADED_REBUILD_MARGIN) {
+    file.close();
+    LOG_INF("SCT", "Image-suppressed cache (maxAlloc then=%u now=%u); rebuilding to restore images",
+            fileBuildMaxAlloc, ESP.getMaxAllocHeap());
+    return false;
+  }
+
   // Explicit close() required: member variable persists beyond function scope
   file.close();
   LOG_DBG("SCT", "Deserialization succeeded: %d pages", pageCount);
@@ -202,6 +237,11 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
   const auto tmpSectionPath = filePath + ".tmp";
   pageCount = 0;
   if (layoutAbortedForLowMemory) *layoutAbortedForLowMemory = false;
+  // CrumBLE: snapshot the largest free block we're building with. If images end
+  // up suppressed, this is stored in the cache header so a later load can tell
+  // whether the heap has recovered enough (e.g. BLE disconnected) to be worth
+  // rebuilding the chapter with images.
+  const uint32_t buildStartMaxAlloc = ESP.getMaxAllocHeap();
   LOG_DBG("SCT", "Create section start: spine=%d viewport=%ux%u image=%u bionic=%u guide=%u free=%u maxAlloc=%u",
           spineIndex, viewportWidth, viewportHeight, imageRendering, bionicReadingEnabled, guideReadingEnabled,
           ESP.getFreeHeap(), ESP.getMaxAllocHeap());
@@ -304,7 +344,8 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
   LOG_DBG("SCT", "Parser done: spine=%d success=%u pages=%u free=%u maxAlloc=%u", spineIndex, success, pageCount,
           ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
-  if (imagesWereSuppressed) *imagesWereSuppressed = visitor.wasLowMemoryFallbackTriggered();
+  const bool builtImagesSuppressed = visitor.wasLowMemoryFallbackTriggered();
+  if (imagesWereSuppressed) *imagesWereSuppressed = builtImagesSuppressed;
   if (layoutAbortedForLowMemory) *layoutAbortedForLowMemory = visitor.wasLowMemoryAbortTriggered();
 
   Storage.remove(tmpHtmlPath.c_str());
@@ -380,10 +421,14 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
     }
   }
 
-  // Patch header with final pageCount, lutOffset, anchorMapOffset, paragraphLutOffset, and liLutOffset.
-  if (!file.seek(HEADER_SIZE - sizeof(uint32_t) * 4 - sizeof(pageCount)) ||
-      !serialization::tryWritePod(file, pageCount) || !serialization::tryWritePod(file, lutOffset) ||
-      !serialization::tryWritePod(file, anchorMapOffset) || !serialization::tryWritePod(file, paragraphLutOffset) ||
+  // Patch header with final imagesSuppressed, buildMaxAlloc, pageCount, lutOffset,
+  // anchorMapOffset, paragraphLutOffset, and liLutOffset (all written as
+  // placeholders by writeSectionFileHeader, in this exact order).
+  if (!file.seek(HEADER_SIZE - sizeof(uint32_t) * 4 - sizeof(pageCount) - sizeof(uint32_t) - sizeof(bool)) ||
+      !serialization::tryWritePod(file, builtImagesSuppressed) ||
+      !serialization::tryWritePod(file, buildStartMaxAlloc) || !serialization::tryWritePod(file, pageCount) ||
+      !serialization::tryWritePod(file, lutOffset) || !serialization::tryWritePod(file, anchorMapOffset) ||
+      !serialization::tryWritePod(file, paragraphLutOffset) ||
       !serialization::tryWritePod(file, liLutFileOffset) || !file.sync()) {
     LOG_ERR("SCT", "Failed to finalize section cache");
     file.close();

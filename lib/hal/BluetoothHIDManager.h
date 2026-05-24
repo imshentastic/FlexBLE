@@ -131,6 +131,20 @@ public:
   void onScanResult(NimBLEAdvertisedDevice* advertisedDevice);
   static void onHIDNotify(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify);
 
+  // CrumBLE: called from the NimBLE disconnect callback with the HCI reason.
+  // Flags an alert when a link drops on its own shortly after connecting --
+  // typically the connect spike craters free heap and the controller times the
+  // link out (HCI 0x08 / reason 520), which otherwise fails silently and leaves
+  // the user wondering why Bluetooth "didn't connect".
+  void noteClientDisconnect(int reason);
+  // Consumes the pending "connection lost" flag (one-shot). The app polls this
+  // and shows a clear message.
+  bool takeConnectionLostAlert() {
+    bool v = _connectionLostAlertPending;
+    _connectionLostAlertPending = false;
+    return v;
+  }
+
 private:
   BluetoothHIDManager();
   ~BluetoothHIDManager();
@@ -146,6 +160,11 @@ private:
   bool _disableLaterRequested = false;
   bool _enableLaterRequested = false;
   bool _scanning = false;
+  // CrumBLE: connect-stability tracking for the "couldn't stay connected" alert.
+  unsigned long _lastConnectMillis = 0;        // when a link was last established
+  bool _intentionalDisconnect = false;         // suppress the alert for disconnects we initiate
+  bool _connectionLostAlertPending = false;    // one-shot: a link dropped unexpectedly soon after connecting
+  static constexpr unsigned long EARLY_DISCONNECT_MS = 10000;  // a drop within this of connect = unstable/low heap
   std::vector<BluetoothDevice> _discoveredDevices;
   std::vector<ConnectedDevice> _connectedDevices;
   std::function<void(uint16_t)> _inputCallback;

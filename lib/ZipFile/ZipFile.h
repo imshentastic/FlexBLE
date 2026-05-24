@@ -61,6 +61,10 @@ class ZipFile {
   bool close();
   bool loadAllFileStatSlims();
   bool getInflatedFileSize(const char* filename, size_t* size);
+  // CrumBLE: report a file's ZIP compression method (0 = STORED, 8 = DEFLATE).
+  // The reader uses this to tell whether a chapter can cold-load without the
+  // 32 KB inflate window (STORED) and therefore build in place under BLE.
+  bool getCompressionMethod(const char* filename, uint16_t* method);
   // Batch lookup: scan ZIP central dir once and fill sizes for matching targets.
   // targets must be sorted by (hash, len). sizes[target.index] receives uncompressedSize.
   // Returns number of targets matched.

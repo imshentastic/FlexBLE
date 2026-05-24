@@ -110,6 +110,11 @@ class Epub {
                                    bool trailingNullByte = false) const;
   bool readItemContentsToStream(const std::string& itemHref, Print& out, size_t chunkSize) const;
   bool getItemSize(const std::string& itemHref, size_t* size) const;
+  // CrumBLE: true if the item is STORED (uncompressed) in the EPUB zip. A STORED
+  // chapter needs no 32 KB DEFLATE window to cold-load, so the reader can build
+  // it in place while BLE is connected instead of dropping/re-enabling BLE
+  // (which re-fragments the heap). Returns false if the method can't be read.
+  bool isItemStored(const std::string& itemHref) const;
   BookMetadataCache::SpineEntry getSpineItem(int spineIndex) const;
   BookMetadataCache::TocEntry getTocItem(int tocIndex) const;
   int getSpineItemsCount() const;

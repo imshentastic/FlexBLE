@@ -175,6 +175,7 @@ class ClientCallbacks : public NimBLEClientCallbacks {
   
   void onDisconnect(NimBLEClient* pClient, int reason) override {
     LOG_ERR("BT", "Client disconnected: %s (reason: %d)", pClient->getPeerAddress().toString().c_str(), reason);
+    BluetoothHIDManager::getInstance().noteClientDisconnect(reason);
   }
 };
 
@@ -576,6 +577,10 @@ bool BluetoothHIDManager::connectToDevice(const std::string& address) {
     connDev.subscribed = true;
     connDev.lastActivityTime = millis();  // Initialize activity timer
     connDev.wasConnected = true;  // Mark for auto-reconnect if disconnected
+    // CrumBLE: a fresh link starts clean -- record when it came up and clear any
+    // stale intentional-disconnect latch so a real early drop isn't suppressed.
+    _lastConnectMillis = millis();
+    _intentionalDisconnect = false;
     connDev.descriptorHasKeyboardPage = reportHints.hasKeyboardPage;
     connDev.descriptorHasConsumerPage = reportHints.hasConsumerPage;
     connDev.descriptorSuggestedIndex = reportHints.preferredByteIndex;
@@ -671,9 +676,30 @@ bool BluetoothHIDManager::connectToDevice(const std::string& address) {
     return true;
 }
 
+void BluetoothHIDManager::noteClientDisconnect(int reason) {
+  // A disconnect we triggered ourselves: consume the latch, no alert.
+  if (_intentionalDisconnect) {
+    _intentionalDisconnect = false;
+    return;
+  }
+  // A link that drops on its own within seconds of connecting almost always
+  // means the connect spike left too little free heap for NimBLE to service the
+  // link, so the controller times it out (HCI 0x08 / reason 520). Surface it so
+  // the user isn't left wondering why Bluetooth silently went away.
+  if (_lastConnectMillis != 0 && (millis() - _lastConnectMillis) < EARLY_DISCONNECT_MS) {
+    LOG_INF("BT", "Link dropped %lums after connect (reason %d); flagging low-memory connect alert",
+            millis() - _lastConnectMillis, reason);
+    _connectionLostAlertPending = true;
+  }
+}
+
 bool BluetoothHIDManager::disconnectFromDevice(const std::string& address) {
   LOG_INF("BT", "Disconnecting from device %s", address.c_str());
-  
+  // CrumBLE: this is a disconnect WE initiate (user toggle, or the temporary
+  // drop-BLE-for-build path). Mark it so the resulting onDisconnect callback
+  // doesn't raise the "couldn't stay connected" alert.
+  _intentionalDisconnect = true;
+
   auto it = std::find_if(_connectedDevices.begin(), _connectedDevices.end(),
     [&address](const ConnectedDevice& dev) { return dev.address == address; });
   

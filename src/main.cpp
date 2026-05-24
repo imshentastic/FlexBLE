@@ -1225,6 +1225,17 @@ void loop() {
   // for BLE to come back up once the indexer finishes. checkAutoReconnect
   // then resumes the bonded-device link on the user's next button press.
   btMgr.tryEnableIfRequested();
+  // CrumBLE: a Bluetooth link that dropped on its own seconds after connecting
+  // is almost always heap starvation -- the connect spike craters free heap and
+  // the controller times the link out (HCI 0x08). Surface a clear message
+  // instead of failing silently, so the user understands why the remote
+  // "didn't connect". Don't clobber an alert that's already queued.
+  if (btMgr.takeConnectionLostAlert() && !APP_STATE.hasPendingAlert.load(std::memory_order_acquire)) {
+    snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s", tr(STR_BT_CONNECT_FAILED_TITLE));
+    snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), "%s", tr(STR_BT_CONNECT_FAILED_BODY));
+    APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
+    APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
+  }
   const bool bleRecentActivity = btMgr.hasRecentActivity();
 
   renderer.setFadingFix(SETTINGS.fadingFix);

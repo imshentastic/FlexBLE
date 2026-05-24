@@ -1133,6 +1133,15 @@ bool Epub::getItemSize(const std::string& itemHref, size_t* size) const {
   return ZipFile(filepath).getInflatedFileSize(path.c_str(), size);
 }
 
+bool Epub::isItemStored(const std::string& itemHref) const {
+  const std::string path = FsHelpers::normalisePath(itemHref);
+  uint16_t method = 0xFFFF;
+  if (!ZipFile(filepath).getCompressionMethod(path.c_str(), &method)) {
+    return false;  // unknown -> treat as not-stored (keeps the safe drop-BLE path)
+  }
+  return method == 0;  // 0 == ZIP STORED (no DEFLATE window needed to read)
+}
+
 int Epub::getSpineItemsCount() const {
   if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
     return 0;

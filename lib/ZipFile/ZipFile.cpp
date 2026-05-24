@@ -297,6 +297,16 @@ bool ZipFile::getInflatedFileSize(const char* filename, size_t* size) {
   return true;
 }
 
+bool ZipFile::getCompressionMethod(const char* filename, uint16_t* method) {
+  FileStatSlim fileStat = {};
+  if (!loadFileStatSlim(filename, &fileStat)) {
+    return false;
+  }
+
+  *method = fileStat.method;
+  return true;
+}
+
 int ZipFile::fillUncompressedSizes(std::deque<SizeTarget>& targets, std::deque<uint32_t>& sizes) {
   if (targets.empty()) {
     return 0;

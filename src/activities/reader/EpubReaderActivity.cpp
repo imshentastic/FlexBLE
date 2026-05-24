@@ -1613,18 +1613,34 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       // back online + reconnects to the bonded remote after the build.
       auto& btMgr = BluetoothHIDManager::getInstance();
       if (btMgr.isEnabled()) {
-        LOG_INF("ERS", "Cache miss with BLE up; dropping BLE and deferring build to next render");
-        btMgr.requestDisableLater();
-        bleAutoReEnableAfterReindex = true;
-        // Reset section back to null. We constructed it above (line ~1495)
-        // and loadSectionFile failed, so it's holding an empty Section
-        // shell. If we don't drop it, the next render iteration's
-        // `if (!section)` short-circuits and the render proceeds with a
-        // zero-page Section — user sees "empty chapter". Resetting ensures
-        // we re-enter the construct+build path next time around.
-        section.reset();
-        requestUpdate();
-        return;
+        // CrumBLE: a STORED (Bluetooth-friendly optimized) chapter needs no
+        // 32 KB DEFLATE window to read, so it can build in place with BLE still
+        // connected -- text lays out above the 16/10 KB floor and images get
+        // suppressed (the heap check before image decode skips them). That skips
+        // the drop-build-re-enable cycle entirely; the re-enable was the real
+        // problem, re-fragmenting the heap to ~3 KB contiguous and breaking
+        // both font rendering and the bonded-remote reconnect. Only DEFLATE
+        // chapters still pre-drop BLE, where the window allocation would hang
+        // under NimBLE's fragmentation. If a STORED build still aborts for low
+        // memory, the reactive path below drops BLE and retries -- same safety
+        // net, just reached on demand instead of pre-emptively.
+        const bool chapterStored = epub->isItemStored(epub->getSpineItem(currentSpineIndex).href);
+        if (!chapterStored) {
+          LOG_INF("ERS", "Cache miss with BLE up (DEFLATE chapter); dropping BLE and deferring build to next render");
+          btMgr.requestDisableLater();
+          bleAutoReEnableAfterReindex = true;
+          // Reset section back to null. We constructed it above (line ~1495)
+          // and loadSectionFile failed, so it's holding an empty Section
+          // shell. If we don't drop it, the next render iteration's
+          // `if (!section)` short-circuits and the render proceeds with a
+          // zero-page Section — user sees "empty chapter". Resetting ensures
+          // we re-enter the construct+build path next time around.
+          section.reset();
+          requestUpdate();
+          return;
+        }
+        LOG_INF("ERS", "Cache miss with BLE up (STORED chapter); building in place, BLE stays connected");
+        // fall through to the in-place build below (BLE remains connected)
       }
 
       LOG_DBG("ERS", "Cache not found, building... (free=%u, maxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
@@ -1737,9 +1753,17 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       }
 
       if (imagesWereSuppressed) {
+        // Be honest about *why* the images are gone. When a Bluetooth remote is
+        // connected this is the expected trade-off (we kept BLE up and built the
+        // chapter in place), so tell the user images come back if they
+        // disconnect -- otherwise it's a plain low-memory notice.
+        const bool bleConnected = BluetoothHIDManager::getInstance().isEnabled();
+        const StrId titleId = bleConnected ? StrId::STR_BT_IMAGES_HIDDEN_TITLE : StrId::STR_LOW_MEMORY_IMAGES_TITLE;
+        const StrId bodyId = bleConnected ? StrId::STR_BT_IMAGES_HIDDEN_BODY : StrId::STR_LOW_MEMORY_IMAGES_BODY;
         snprintf(APP_STATE.pendingAlertTitle, sizeof(APP_STATE.pendingAlertTitle), "%s",
-                 tr(STR_LOW_MEMORY_IMAGES_TITLE));
-        snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), "%s", tr(STR_LOW_MEMORY_IMAGES_BODY));
+                 I18n::getInstance().get(titleId));
+        snprintf(APP_STATE.pendingAlertBody, sizeof(APP_STATE.pendingAlertBody), "%s",
+                 I18n::getInstance().get(bodyId));
         APP_STATE.pendingAlertGoHomeOnBack.store(false, std::memory_order_relaxed);
         APP_STATE.hasPendingAlert.store(true, std::memory_order_release);
       }
