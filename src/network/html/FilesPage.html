@@ -1636,6 +1636,19 @@
               </label>
             </div>
           </div>
+          <!-- Store chapter text uncompressed (Bluetooth-friendly cold loads) -->
+          <div class="advanced-setting-row">
+            <div class="setting-label">
+              <div class="setting-title">📖 Bluetooth-friendly chapters</div>
+              <div class="setting-desc">Store chapter text uncompressed so chapters load while a Bluetooth remote is connected. Grows text on the SD card (~3-4×); the EPUB stays readable on other devices and keeps filename-mode KOReader sync.</div>
+            </div>
+            <div class="setting-controls">
+              <label class="toggle-switch">
+                <input type="checkbox" id="store-text-uncompressed-checkbox">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
           </div><!-- advanced-settings-content -->
       </div><!-- end convert-options -->
       <!-- Image Picker Section - in picker-columns for two-column layout -->
@@ -4329,6 +4342,16 @@ async function convertEpubFile(file, progressCallback) {
   });
 
   const out = new JSZip();
+  // CrumBLE: "Bluetooth-friendly chapters" stores chapter XHTML uncompressed so
+  // the device needs no DEFLATE inflate window to cold-load a chapter -- chapter
+  // boundaries / Select / jumps / font changes then work even with a remote
+  // connected (which fragments the heap so a 32 KB contiguous block is
+  // unavailable). Small entries (CSS/OPF/NCX) are left DEFLATE; the device's
+  // window-sizing handles those. Only the large XHTML needs storing.
+  const bluetoothTextMode = !!document.getElementById('store-text-uncompressed-checkbox')?.checked;
+  const xhtmlFileOpts = bluetoothTextMode
+    ? { compression: 'STORE', createFolders: false }
+    : { compression: 'DEFLATE', compressionOptions: { level: 8 }, createFolders: false };
   const entries = Object.entries(zip.files);
   const splitImages = {};
   const xhtmlFiles = {};
@@ -4590,7 +4613,7 @@ async function convertEpubFile(file, progressCallback) {
       t = t.replace('</head>', DEFENSIVE_STYLE + '</head>');
     }
 
-    out.file(xhtmlPath, t, { compression: 'DEFLATE', compressionOptions: { level: 8 }, createFolders: false });
+    out.file(xhtmlPath, t, xhtmlFileOpts);
   }
 
   // Extract main identifier from OPF using DOMParser with regex fallback
