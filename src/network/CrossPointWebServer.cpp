@@ -30,6 +30,7 @@
 #include "html/HomePageHtml.generated.h"
 #include "html/SettingsPageHtml.generated.h"
 #include "html/js/jszip_minJs.generated.h"
+#include "html/js/optimizerJs.generated.h"
 #include "util/BookCacheUtils.h"
 #include "util/StringUtils.h"
 
@@ -179,6 +180,7 @@ void CrossPointWebServer::begin() {
   server->on("/", HTTP_GET, [this] { handleRoot(); });
   server->on("/files", HTTP_GET, [this] { handleFileList(); });
   server->on("/js/jszip.min.js", HTTP_GET, [this] { handleJszip(); });
+  server->on("/js/optimizer.js", HTTP_GET, [this] { handleOptimizerJs(); });
 
   server->on("/api/status", HTTP_GET, [this] { handleStatus(); });
   server->on("/api/files", HTTP_GET, [this] { handleFileListData(); });
@@ -378,11 +380,6 @@ CrossPointWebServer::WsUploadStatus CrossPointWebServer::getWsUploadStatus() con
   return status;
 }
 
-static void sendHtmlContent(WebServer* server, const char* data, size_t len) {
-  server->sendHeader("Content-Encoding", "gzip");
-  server->send_P(200, "text/html", data, len);
-}
-
 // CrumBLE: bound a streaming response's blocking send. handleClient() runs on
 // the main task, so if a chunked send() stalls -- a TX buffer can't allocate
 // under the tight file-transfer heap (~20-26 KB free), or the AP drops the link
@@ -398,15 +395,36 @@ static void applyClientSendTimeout(WebServer* server) {
   server->client().setSocketOption(SO_SNDTIMEO, reinterpret_cast<char*>(&tv), sizeof(tv));
 }
 
+// CrumBLE: every page/asset serve gets the same stall protection, and we log
+// heap around the send so a crater can be pinned to a specific response.
+static void sendBufferGzip(WebServer* server, const char* mime, const char* data,
+                           size_t len, const char* tag) {
+  applyClientSendTimeout(server);
+  LOG_INF("WEB", "serve %s: %u B, pre free=%d maxAlloc=%d", tag, (unsigned)len,
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  server->sendHeader("Content-Encoding", "gzip");
+  server->send_P(200, mime, data, len);
+  LOG_INF("WEB", "serve %s done: post free=%d maxAlloc=%d", tag,
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+}
+
+static void sendHtmlContent(WebServer* server, const char* data, size_t len) {
+  sendBufferGzip(server, "text/html", data, len, "html");
+}
+
 void CrossPointWebServer::handleRoot() const {
   sendHtmlContent(server.get(), HomePageHtml, sizeof(HomePageHtml));
   LOG_DBG("WEB", "Served root page");
 }
 
 void CrossPointWebServer::handleJszip() const {
-  server->sendHeader("Content-Encoding", "gzip");
-  server->send_P(200, "application/javascript", jszip_minJs, jszip_minJsCompressedSize);
-  LOG_DBG("WEB", "Served jszip.min.js");
+  sendBufferGzip(server.get(), "application/javascript", jszip_minJs,
+                 jszip_minJsCompressedSize, "jszip.js");
+}
+
+void CrossPointWebServer::handleOptimizerJs() const {
+  sendBufferGzip(server.get(), "application/javascript", optimizerJs,
+                 optimizerJsCompressedSize, "optimizer.js");
 }
 
 void CrossPointWebServer::handleNotFound() const {
@@ -1576,7 +1594,8 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
       break;
 
     case WStype_CONNECTED: {
-      LOG_DBG("WS", "Client %u connected", num);
+      LOG_INF("WS", "Client %u connected: free=%d maxAlloc=%d", num,
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       break;
     }
 
