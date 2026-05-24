@@ -424,7 +424,7 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
                                        const std::vector<std::string>& coverPaths, int selectedSpineIndex,
                                        int scrollOffset, bool headerFocused, bool hasMultipleCollections,
                                        const char* focusedBookTitle,
-                                       const std::vector<int>* seriesMemberCounts) const {
+                                       const std::vector<int>* seriesMemberCounts, const char* focusedBookAuthor) const {
   // Vertical layout (top → bottom):
   //   [focused book title]  — drawn ABOVE rect.y so the rest of the layout
   //                           doesn't shift when focused vs unfocused
@@ -459,7 +459,7 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
   // Extends `rect.height` by 40 px to wipe the shadow band (6 px) PLUS
   // the focused-title strip below it (one full UI_10 line height) with
   // generous padding so descenders/ascenders never leak past.
-  renderer.fillRect(rect.x, rect.y, rect.width, rect.height + 40, false);
+  renderer.fillRect(rect.x, rect.y, rect.width, rect.height + 56, false);
 
   const int tabY = rect.y;
   // Tab font is one step up from the row's prior 8px (SMALL_FONT_ID) to
@@ -619,6 +619,16 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
     const int tw = renderer.getTextWidth(kTitleFontId, truncated.c_str(), EpdFontFamily::REGULAR);
     renderer.drawText(kTitleFontId, rect.x + (rect.width - tw) / 2, titleY, truncated.c_str(), true,
                       EpdFontFamily::REGULAR);
+
+    // Author on a smaller second line under the title (metadata only).
+    if (focusedBookAuthor != nullptr && *focusedBookAuthor != '\0') {
+      constexpr int kAuthorFontId = SMALL_FONT_ID;
+      const int authorY = titleY + renderer.getLineHeight(kTitleFontId);
+      const auto authTrunc = renderer.truncatedText(kAuthorFontId, focusedBookAuthor, rect.width - 2 * kSidePad);
+      const int aw = renderer.getTextWidth(kAuthorFontId, authTrunc.c_str(), EpdFontFamily::ITALIC);
+      renderer.drawText(kAuthorFontId, rect.x + (rect.width - aw) / 2, authorY, authTrunc.c_str(), true,
+                        EpdFontFamily::ITALIC);
+    }
   }
 }
 

@@ -2681,6 +2681,30 @@ void HomeActivity::loop() {
   }
 }
 
+void HomeActivity::updateFocusedBookMeta(const std::string& path) {
+  if (path == focusedMetaPath) return;  // focused book unchanged — reuse cache
+  focusedMetaPath = path;
+  focusedMetaTitle.clear();
+  focusedMetaAuthor.clear();
+  const size_t slash = path.find_last_of('/');
+  const std::string fname = (slash != std::string::npos) ? path.substr(slash + 1) : path;
+  // Read the cached metadata only (buildIfMissing=false): cheap, and leaves the
+  // title blank for un-indexed books so the caller falls back to the filename.
+  if (FsHelpers::hasEpubExtension(fname)) {
+    Epub epub(path, "/.crosspoint");
+    epub.load(/*buildIfMissing=*/false, /*skipLoadingCss=*/true);
+    focusedMetaTitle = epub.getTitle();
+    focusedMetaAuthor = epub.getAuthor();
+  } else if (FsHelpers::hasXtcExtension(fname)) {
+    Xtc xtc(path, "/.crosspoint");
+    if (xtc.load()) {
+      focusedMetaTitle = xtc.getTitle();
+      focusedMetaAuthor = xtc.getAuthor();
+    }
+  }
+  // .txt / .md have no embedded metadata — leave title empty (filename fallback).
+}
+
 void HomeActivity::presentHomeBuffer() {
   if (pendingFullRefresh) {
     pendingFullRefresh = false;
@@ -2952,6 +2976,9 @@ void HomeActivity::render(RenderLock&&) {
     // row: previous value (240) clipped the title's bottom ~1/3 against
     // the icon bar's label area. 260 raises the strip ~20px so the title
     // sits with comfortable headroom above the icons.
+    // 260: keeps the collection-name tab clear of the carousel above (raising
+    // it clipped "Favorites"). The author caption line still fits in the band
+    // below the title before the icon bar at this position.
     constexpr int kEmptySpaceMidpointFromBottom = 260;
     const int shelfStripY = pageHeight - kEmptySpaceMidpointFromBottom - (kShelfStripHeight / 2);
     const Rect shelfRect{0, shelfStripY, pageWidth, kShelfStripHeight};
@@ -2969,6 +2996,9 @@ void HomeActivity::render(RenderLock&&) {
     // keeping the c_str pointer stable until the next call.
     static thread_local std::string focusedTitleBuf;
     const char* focusedTitle = nullptr;
+    // Author shown on a second line under the title -- only when we resolved the
+    // title from metadata (filename-fallback and series cells have no author).
+    const char* focusedAuthor = nullptr;
     if (shelfSelectedSpine >= 0 && activeCollection2 != nullptr) {
       const std::vector<ShelfEntry>& entries = cachedShelfEntries();
       if (shelfSelectedSpine < static_cast<int>(entries.size())) {
@@ -2980,12 +3010,19 @@ void HomeActivity::render(RenderLock&&) {
           focusedTitleBuf += std::to_string(e.memberPaths.size());
           focusedTitleBuf += ")";
         } else {
-          // Single book: filename minus extension, same as before.
+          // Single book: prefer the EPUB/XTC metadata title; fall back to the
+          // filename (minus extension) only when no metadata is available.
           const std::string& bp = e.firstPath;
-          const size_t slash = bp.find_last_of('/');
-          const std::string fname = (slash != std::string::npos) ? bp.substr(slash + 1) : bp;
-          const size_t dot = fname.find_last_of('.');
-          focusedTitleBuf = (dot != std::string::npos && dot > 0) ? fname.substr(0, dot) : fname;
+          updateFocusedBookMeta(bp);
+          if (!focusedMetaTitle.empty()) {
+            focusedTitleBuf = focusedMetaTitle;
+            if (!focusedMetaAuthor.empty()) focusedAuthor = focusedMetaAuthor.c_str();
+          } else {
+            const size_t slash = bp.find_last_of('/');
+            const std::string fname = (slash != std::string::npos) ? bp.substr(slash + 1) : bp;
+            const size_t dot = fname.find_last_of('.');
+            focusedTitleBuf = (dot != std::string::npos && dot > 0) ? fname.substr(0, dot) : fname;
+          }
         }
         focusedTitle = focusedTitleBuf.c_str();
       }
@@ -3031,7 +3068,7 @@ void HomeActivity::render(RenderLock&&) {
     if (!shelfStateMatchesSnapshot) {
       static_cast<const LyraFlowTheme&>(GUI).drawBookshelfStrip(
           renderer, shelfRect, collectionName, shelfCoverPaths, shelfSelectedSpine, shelfScrollOffset,
-          shelfHeaderFocused, hasMultipleCollections, focusedTitle, &seriesMemberCounts);
+          shelfHeaderFocused, hasMultipleCollections, focusedTitle, &seriesMemberCounts, focusedAuthor);
       // Remember the state of the shelf we just painted so the next
       // render can short-circuit if nothing about it has changed.
       shelfSnapshotActiveId = currentShelfActiveId;

@@ -77,7 +77,11 @@ class LyraFlowTheme : public LyraTheme {
                           // (no spine glyph). count >= 2 means series group —
                           // theme draws a dark spine to the left of the cover
                           // and the focused-title overlay reads "Series (N)".
-                          const std::vector<int>* seriesMemberCounts = nullptr) const;
+                          const std::vector<int>* seriesMemberCounts = nullptr,
+                          // CrumBLE: focused book's author, drawn on a smaller second
+                          // line under the title. Null/empty for series cells and
+                          // filename-fallback books (which have no metadata author).
+                          const char* focusedBookAuthor = nullptr) const;
 
  public:
   // Set by HomeActivity right before invoking drawRecentBookCover. When

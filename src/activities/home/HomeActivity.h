@@ -149,6 +149,12 @@ class HomeActivity final : public Activity {
   bool hasReadingStats = false;
   bool hasBookmarks = false;
   bool hasOpdsServers = false;
+  // CrumBLE: cache the focused shelf book's metadata title/author keyed by path,
+  // so we only read the book's metadata when the focused book changes -- not on
+  // every render. Empty title means "no metadata; fall back to filename".
+  std::string focusedMetaPath;
+  std::string focusedMetaTitle;
+  std::string focusedMetaAuthor;
   bool minimalMenuOpen = false;
   bool minimalSuppressInitialFrontRelease = false;
   int minimalMenuIndex = 0;
@@ -269,6 +275,11 @@ class HomeActivity final : public Activity {
   // Always opens the SeriesMiniPicker for a series cell (used by the
   // long-press path).
   void openSeriesMiniPicker(const ShelfEntry& entry);
+  // CrumBLE: refresh focusedMeta{Title,Author} from the book's metadata cache
+  // for `path` (cheap: reads the cached metadata, no full EPUB parse). Title is
+  // left empty when no metadata is available so the caller falls back to the
+  // filename. No-op when `path` already matches the cached one.
+  void updateFocusedBookMeta(const std::string& path);
 
  public:
   explicit HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
