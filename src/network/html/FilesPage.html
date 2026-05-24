@@ -630,6 +630,12 @@
       margin-top: 4px;
       line-height: 1.3;
     }
+    .setting-info {
+      cursor: help;
+      color: var(--accent-color);
+      font-size: 0.9em;
+      margin-left: 3px;
+    }
     /* Rotation Buttons */
     .rotation-buttons {
       display: flex;
@@ -1639,8 +1645,8 @@
           <!-- Store chapter text uncompressed (Bluetooth-friendly cold loads) -->
           <div class="advanced-setting-row">
             <div class="setting-label">
-              <div class="setting-title">📖 Bluetooth-friendly chapters</div>
-              <div class="setting-desc">Store chapter text uncompressed so chapters load while a Bluetooth remote is connected. Grows text on the SD card (~3-4×); the EPUB stays readable on other devices and keeps filename-mode KOReader sync.</div>
+              <div class="setting-title">📖 Bluetooth-friendly chapters <span class="setting-info" title="Stores chapter text uncompressed so chapters load while a Bluetooth remote is connected (the remote fragments memory). Trade-off: text is ~3-4x larger on the SD card. The EPUB still reads on other devices, and KOReader sync still works in filename mode (content/binary-hash sync breaks, as with any optimization).">&#9432;</span></div>
+              <div class="setting-desc">Chapters load with a remote connected</div>
             </div>
             <div class="setting-controls">
               <label class="toggle-switch">
