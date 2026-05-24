@@ -59,6 +59,19 @@ class LibraryIndex {
   // next virtual-collection access) so onExit stays snappy.
   void markStale() { walkPerformed = false; }
 
+  // CrumBLE: free the in-RAM entry vector to reclaim heap. The index can be
+  // tens of KB for a large library (~80 bytes/entry), which is dead weight
+  // while the WiFi web server runs — file transfer is desperately heap-bound
+  // (~25 KB free), so releasing it here roughly doubles available headroom.
+  // The next ensureWalked()/begin() repopulates it from the on-disk JSON plus
+  // an SD walk; web-server exit paths already markStale() so the rebuild is
+  // automatic. Only call when nothing is actively reading the index.
+  void releaseMemory() {
+    std::vector<LibraryEntry>().swap(entries);  // free capacity, not just size
+    jsonLoaded = false;
+    walkPerformed = false;
+  }
+
   // Read accessors. Both produce a fresh vector copy — the underlying
   // index is small enough that this is cheap.
   std::vector<std::string> getAllBookPaths() const;        // sorted by path (case-insensitive)

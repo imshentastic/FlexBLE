@@ -108,6 +108,13 @@ void LibraryIndex::begin() {
 
 void LibraryIndex::ensureWalked(const std::function<void(int)>& progress) {
   if (walkPerformed) return;
+  // Restore the persisted index (with each book's firstSeen) before walking.
+  // Normally a no-op (begin() ran at boot), but after releaseMemory() freed the
+  // in-RAM vector this reloads it from JSON so the rescan below sees a populated
+  // index and does an *incremental* diff -- otherwise an empty entries list
+  // would make rescan() treat every book as newly-discovered and reset all the
+  // "Recently Added" timestamps.
+  begin();
   rescan(progress);
 }
 

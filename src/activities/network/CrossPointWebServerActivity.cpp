@@ -57,6 +57,15 @@ void CrossPointWebServerActivity::onEnter() {
   // automatically when the reader resumes. No-op for built-in fonts.
   sdFontSystem.releaseLoadedFont(renderer);
 
+  // CrumBLE: the in-RAM LibraryIndex (up to tens of KB for a big library) is
+  // dead weight while the web server runs and is a major reason free heap sits
+  // at only ~25 KB here. Release it now for serving headroom; onExit marks it
+  // stale so it's rebuilt (and picks up any just-uploaded books) on the next
+  // Recently Added / All Books visit.
+  LibraryIndex::getInstance().releaseMemory();
+  LOG_DBG("WEBACT", "Free heap after index release: %d bytes (maxAlloc %d)",
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
   // Reset state
   state = WebServerActivityState::MODE_SELECTION;
   networkMode = NetworkMode::JOIN_NETWORK;
