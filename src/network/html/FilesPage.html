@@ -4,7 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Files - CrossInk</title>
-  <script src="/js/jszip.min.js"></script>
+  <!-- jszip is loaded on demand (only when optimizing an EPUB) via ensureJSZip()
+       so plain file browsing/uploading doesn't pay to serve ~28 KB on every
+       page load -- that extra serve was exhausting the device's tiny
+       file-transfer heap and wedging WiFi transfers. -->
   <style>
     :root {
       --font-color: #333;
@@ -1770,6 +1773,23 @@
 </div>
 
 <script>
+  // Load jszip on demand. Only the EPUB optimizer needs it, so we avoid serving
+  // ~28 KB from the device's tiny file-transfer heap on every page load (which
+  // was OOM'ing the device on flaky links). Resolves once JSZip is available.
+  let _jszipLoading = null;
+  function ensureJSZip() {
+    if (typeof JSZip !== 'undefined') return Promise.resolve();
+    if (_jszipLoading) return _jszipLoading;
+    _jszipLoading = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = '/js/jszip.min.js';
+      s.onload = () => resolve();
+      s.onerror = () => { _jszipLoading = null; reject(new Error('Failed to load jszip')); };
+      document.head.appendChild(s);
+    });
+    return _jszipLoading;
+  }
+
   // get current path from query parameter
   const currentPath = decodeURIComponent(new URLSearchParams(window.location.search).get('path') || '/');
 
@@ -2545,6 +2565,8 @@
    * Show image picker after EPUB file selection
    */
   async function showImagePicker(file) {
+    // Lazily load jszip now that the optimizer is actually being used.
+    try { await ensureJSZip(); } catch (e) { console.error(e); }
     // Check if JSZip is available
     if (typeof JSZip === 'undefined') {
       console.error('JSZip not loaded');
@@ -4325,6 +4347,9 @@ async function processImage(data, imageState = 0, imagePath = '') {
 async function convertEpubFile(file, progressCallback) {
   const startTime = Date.now();
   const originalSize = file.size;
+
+  // Lazily load jszip (only needed for optimization).
+  await ensureJSZip();
 
   // Initialize logging
   clearLog();
