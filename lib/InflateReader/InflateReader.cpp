@@ -13,16 +13,24 @@ static_assert(std::is_standard_layout<InflateReader>::value,
 
 InflateReader::~InflateReader() { deinit(); }
 
-bool InflateReader::init(const bool streaming) {
+bool InflateReader::init(const bool streaming, const size_t dictSizeHint) {
   deinit();  // free any previously allocated ring buffer and reset state
 
-  if (streaming) {
-    ringBuffer = static_cast<uint8_t*>(malloc(INFLATE_DICT_SIZE));
-    if (!ringBuffer) return false;
-    memset(ringBuffer, 0, INFLATE_DICT_SIZE);
+  // The window only needs to cover the largest possible back-reference, which is
+  // bounded by the uncompressed size. Shrink to the hint when it's smaller than
+  // the DEFLATE max so a modest chapter inflates even in a fragmented heap.
+  size_t dictSize = INFLATE_DICT_SIZE;
+  if (dictSizeHint > 0 && dictSizeHint < INFLATE_DICT_SIZE) {
+    dictSize = dictSizeHint;
   }
 
-  uzlib_uncompress_init(&decomp, ringBuffer, ringBuffer ? INFLATE_DICT_SIZE : 0);
+  if (streaming) {
+    ringBuffer = static_cast<uint8_t*>(malloc(dictSize));
+    if (!ringBuffer) return false;
+    memset(ringBuffer, 0, dictSize);
+  }
+
+  uzlib_uncompress_init(&decomp, ringBuffer, ringBuffer ? dictSize : 0);
   return true;
 }
 

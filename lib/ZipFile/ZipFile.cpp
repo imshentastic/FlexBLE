@@ -490,9 +490,13 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
     ctx.file = &file;
     ctx.fileRemaining = deflatedDataSize;
 
-    if (!ctx.reader.init(true)) {
-      LOG_ERR("ZIP", "Failed to init inflate reader (free=%u, maxAlloc=%u, chunk=%zu)", ESP.getFreeHeap(),
-              ESP.getMaxAllocHeap(), chunkSize);
+    // Size the back-reference window to this entry's uncompressed size (capped
+    // at the 32 KB DEFLATE max). A modest chapter then needs only a modest
+    // contiguous block, so cold loads succeed even when a BLE remote has
+    // fragmented the heap and a full 32 KB block is unavailable.
+    if (!ctx.reader.init(true, inflatedDataSize)) {
+      LOG_ERR("ZIP", "Failed to init inflate reader (free=%u, maxAlloc=%u, chunk=%zu, dict=%u)", ESP.getFreeHeap(),
+              ESP.getMaxAllocHeap(), chunkSize, static_cast<unsigned>(inflatedDataSize));
       return false;
     }
 

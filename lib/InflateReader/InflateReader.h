@@ -44,10 +44,16 @@ class InflateReader {
   InflateReader(const InflateReader&) = delete;
   InflateReader& operator=(const InflateReader&) = delete;
 
-  // Initialise decompressor. streaming=true allocates a 32KB ring buffer needed
-  // when read() or readAtMost() will be called multiple times.
-  // Returns false only in streaming mode if the ring buffer allocation fails.
-  bool init(bool streaming = false);
+  // Initialise decompressor. streaming=true allocates a ring buffer (the
+  // back-reference window) needed when read()/readAtMost() are called multiple
+  // times. Returns false only in streaming mode if the allocation fails.
+  //
+  // dictSizeHint lets the caller shrink that window to the stream's uncompressed
+  // size. A DEFLATE back-reference can never point before the start of the data,
+  // so a window equal to the uncompressed size is always sufficient -- and a
+  // smaller window is far more likely to fit a fragmented heap (e.g. when a BLE
+  // remote has shattered it). 0 (or >= 32 KB) uses the full 32 KB DEFLATE max.
+  bool init(bool streaming = false, size_t dictSizeHint = 0);
 
   // Release the ring buffer and reset internal state.
   void deinit();
