@@ -28,6 +28,7 @@
 #include "CrossPointState.h"
 #include "EpubReaderBookmarkListActivity.h"
 #include "EpubReaderChapterSelectionActivity.h"
+#include "LibraryIndex.h"
 #include "EpubReaderFootnotesActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
 #include "EpubReaderUtils.h"
@@ -253,6 +254,16 @@ void EpubReaderActivity::onEnter() {
   if (!epub) {
     return;
   }
+
+  // CrumBLE: free the in-RAM library index for the duration of the reading
+  // session. Recently Added / All Books keep it loaded -- tens of KB of scattered
+  // string allocations for a large library -- and holding it through reading
+  // erodes the contiguous heap that BLE glyph rendering needs. On the full feature
+  // set that pushed the largest free block below the font glyph group, so text
+  // starved and the remote dropped ("Bluetooth couldn't stay connected"). It
+  // auto-rebuilds from the on-disk JSON on the next Recently Added / All Books
+  // visit, so the only cost is a one-time rewalk back at Home.
+  LibraryIndex::getInstance().releaseMemory();
 
   // Configure screen orientation based on settings
   // NOTE: This affects layout math and must be applied before any render calls.
