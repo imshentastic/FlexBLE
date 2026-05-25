@@ -272,6 +272,7 @@ void EpubReaderActivity::onEnter() {
   // drawer action again.
   renderer.setSuppressImages(false);
   btNoImgLinkSeen = false;
+  pendingGraceReRender = false;
 
   // Configure screen orientation based on settings
   // NOTE: This affects layout math and must be applied before any render calls.
@@ -467,6 +468,21 @@ void EpubReaderActivity::loop() {
       LOG_INF("ERS", "BLE link gone; restoring images for BT no-images mode");
       renderer.setSuppressImages(false);
       btNoImgLinkSeen = false;
+      requestUpdate();
+      return;
+    }
+  }
+
+  // #48: a render starved inside the BLE connect grace window and we suppressed
+  // the half-drawn frame. Fire exactly one re-render once the grace window has
+  // expired (the connect spike has settled by then) or BLE has dropped. If the
+  // page now renders clean it paints normally; if it's still starved the
+  // past-grace auto-drop in render() takes over. One-shot, never a tight loop.
+  if (pendingGraceReRender) {
+    const bool btOn = BluetoothHIDManager::getInstance().isEnabled();
+    const bool pastGrace = btOn && (millis() - btEnabledAtMs) > kBtConnectGraceMs;
+    if (!btOn || pastGrace) {
+      pendingGraceReRender = false;
       requestUpdate();
       return;
     }
@@ -2045,8 +2061,22 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const bool btOn = BluetoothHIDManager::getInstance().isEnabled();
   if (btOn && !btWasEnabled) btEnabledAtMs = millis();
   btWasEnabled = btOn;
-  constexpr unsigned long kBtConnectGraceMs = 4000;
   const bool pastBtConnectGrace = btOn && (millis() - btEnabledAtMs) > kBtConnectGraceMs;
+  const bool renderStarvedNow = renderer.takeRenderStarved();
+
+  // #48: during the BLE connect grace window the handshake's heap spike can
+  // transiently starve a single render (half-drawn glyphs) on a book that
+  // otherwise reads fine with the remote. Don't paint that broken frame -- keep
+  // the previous page on the panel and re-render once, after the grace window
+  // settles (handled in loop()). We deliberately do NOT requestUpdate() here: a
+  // tight in-grace retry loop previously forced a render right at the grace
+  // boundary and tripped the auto-drop below on books that actually stay
+  // connected.
+  if (renderStarvedNow && btOn && !pastBtConnectGrace) {
+    LOG_INF("ERS", "Render starved during BT connect grace; suppressing frame, retry after grace");
+    pendingGraceReRender = true;
+    return;  // skip displayBuffer: the half-drawn frame is never shown
+  }
 
   // If this page still couldn't render with a BLE remote connected past the
   // grace window — an image failed to decode, or glyphs were starved (missing
@@ -2057,7 +2087,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   // device buttons; re-enabling BLE from the reader menu will just starve
   // again. We return before any display so the broken frame is never shown —
   // the panel keeps the previous page until the re-render lands.
-  if (pastBtConnectGrace && renderer.takeRenderStarved()) {
+  if (pastBtConnectGrace && renderStarvedNow) {
     LOG_INF("ERS", "Page render starved with BLE up past grace; dropping Bluetooth for this book");
     BluetoothHIDManager::getInstance().requestDisableLater();
     if (!btDisabledForMemoryThisBook) {
@@ -2070,6 +2100,10 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     requestUpdate();
     return;
   }
+
+  // This render is clean (not starved). Cancel any pending #48 grace re-render so
+  // loop() doesn't fire a redundant repaint.
+  pendingGraceReRender = false;
 
   renderStatusBar();
   if (pendingBookmarkFeedback) {

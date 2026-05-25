@@ -85,6 +85,16 @@ class EpubReaderActivity final : public Activity {
   // books that stay unrenderable past the transient.
   unsigned long btEnabledAtMs = 0UL;
   bool btWasEnabled = false;
+  // Length of the post-connect grace window during which a starved render is
+  // attributed to NimBLE's transient connect-spike rather than a genuinely
+  // unrenderable book. Shared by render() (auto-drop gate) and loop() (the #48
+  // post-grace re-render).
+  static constexpr unsigned long kBtConnectGraceMs = 4000;
+  // #48: set when a render was suppressed because it starved inside the connect
+  // grace window (half-drawn glyphs). loop() fires exactly one re-render once the
+  // grace window expires (or BLE drops) -- never a tight in-grace retry loop,
+  // which previously tripped the auto-drop on books that stay connected.
+  bool pendingGraceReRender = false;
   // BT No Images Quick Connect: latched true once the bonded remote actually
   // links while image suppression is armed. Lets loop() tell a genuine link drop
   // (controller powered off / out of range -- stack stays enabled, isConnected
