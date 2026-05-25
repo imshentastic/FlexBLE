@@ -1001,12 +1001,12 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
           }
           if (cacheDeleted) {
             drawToast(renderer, tr(STR_BOOK_CACHE_DELETED));
+          } else {
+            drawToast(renderer, tr(STR_CACHE_DELETE_FAILED));
           }
         }
       }
-      if (cacheDeleted) {
-        delay(1000);
-      }
+      delay(cacheDeleted ? 1000 : 1500);
       exitToHomeWithPopup();
       return;
     }
@@ -1915,6 +1915,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       LOG_ERR("ERS", "Failed to load page from SD after %d retries", pageLoadRetryCount);
       renderer.clearScreen();
       renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_PAGE_LOAD_ERROR), true, EpdFontFamily::BOLD);
+      // The auto-retry already tried clearing+rebuilding this chapter's cache. If
+      // it still won't load, the SD filesystem is likely the problem (it can't be
+      // self-healed on-device) -- point the user at the recovery options.
+      renderer.drawCenteredText(UI_10_FONT_ID, 332, tr(STR_PAGE_LOAD_ERROR_HINT), true);
       renderStatusBar();
       renderer.displayBuffer();
       automaticPageTurnActive = false;

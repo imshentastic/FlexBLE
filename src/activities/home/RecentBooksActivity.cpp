@@ -195,6 +195,8 @@ void RecentBooksActivity::showBookActionMenu(const size_t bookIndex, const bool 
                              case FileBrowserAction::DeleteCache:
                                if (!BookActions::clearBookCache(book.path)) {
                                  LOG_ERR("RBA", "Failed to clear book cache for: %s", book.path.c_str());
+                                 BookActions::drawToast(renderer, tr(STR_CACHE_DELETE_FAILED));
+                                 delay(1500);
                                } else {
                                  BookActions::drawToast(renderer, tr(STR_BOOK_CACHE_DELETED));
                                  delay(1000);

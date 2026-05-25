@@ -1199,6 +1199,8 @@ void HomeActivity::showHomeBookActionMenu(const std::string& bookPath) {
             }
             if (!ok) {
               LOG_ERR("HOME", "Failed to clear book cache for: %s", bookPath.c_str());
+              drawHomeToast(renderer, tr(STR_CACHE_DELETE_FAILED));
+              delay(1500);
             } else {
               drawHomeToast(renderer, tr(STR_BOOK_CACHE_DELETED));
               delay(800);

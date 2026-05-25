@@ -307,6 +307,8 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
           case FileBrowserAction::DeleteCache:
             if (!BookActions::clearBookCache(fullPath)) {
               LOG_ERR("FileBrowser", "Failed to clear book cache for: %s", fullPath.c_str());
+              BookActions::drawToast(renderer, tr(STR_CACHE_DELETE_FAILED));
+              delay(1500);
             } else {
               BookActions::drawToast(renderer, tr(STR_BOOK_CACHE_DELETED));
               delay(1000);

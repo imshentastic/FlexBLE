@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <functional>
 #include <utility>
+#include <vector>
 
 #include "Epub/parsers/ContainerParser.h"
 #include "Epub/parsers/ContentOpfParser.h"
@@ -750,19 +751,59 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
   return true;
 }
 
+namespace {
+// Best-effort recursive delete, used when removeDir() bails. SdFat's rmRf stops
+// at the first entry it can't remove, so a single bad file leaves the whole
+// directory behind. This walks the tree, deleting each file individually and
+// continuing past per-entry failures, then removes the now-empty directories.
+// Returns true only if the directory is finally gone. (Bounded depth: book
+// caches are at most cachePath/sections/<file>, so recursion is shallow.)
+bool bestEffortRemoveDir(const std::string& dirPath) {
+  auto dir = Storage.open(dirPath.c_str());
+  if (dir && dir.isDirectory()) {
+    std::vector<std::string> files;
+    std::vector<std::string> subdirs;
+    char name[128];
+    for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+      name[0] = '\0';
+      entry.getName(name, sizeof(name));
+      const bool isDir = entry.isDirectory();
+      entry.close();
+      if (name[0] == '\0') continue;
+      (isDir ? subdirs : files).push_back(dirPath + "/" + name);
+    }
+    dir.close();
+    for (const auto& sub : subdirs) bestEffortRemoveDir(sub);
+    for (const auto& f : files) Storage.remove(f.c_str());
+  } else if (dir) {
+    dir.close();
+  }
+  Storage.rmdir(dirPath.c_str());
+  return !Storage.exists(dirPath.c_str());
+}
+}  // namespace
+
 bool Epub::clearCache() const {
   if (!Storage.exists(cachePath.c_str())) {
     LOG_DBG("EPB", "Cache does not exist, no action needed");
     return true;
   }
 
-  if (!Storage.removeDir(cachePath.c_str())) {
-    LOG_ERR("EPB", "Failed to clear cache");
-    return false;
+  if (Storage.removeDir(cachePath.c_str())) {
+    LOG_DBG("EPB", "Cache cleared successfully");
+    return true;
   }
 
-  LOG_DBG("EPB", "Cache cleared successfully");
-  return true;
+  // removeDir() can fail partway on a partially-corrupt directory. Fall back to
+  // a best-effort file-by-file walk that reclaims as much as possible.
+  LOG_ERR("EPB", "removeDir failed; attempting best-effort recursive delete");
+  if (bestEffortRemoveDir(cachePath)) {
+    LOG_DBG("EPB", "Cache cleared via best-effort delete");
+    return true;
+  }
+
+  LOG_ERR("EPB", "Failed to clear cache (SD filesystem may be corrupt)");
+  return false;
 }
 
 void Epub::setupCacheDir() const {
