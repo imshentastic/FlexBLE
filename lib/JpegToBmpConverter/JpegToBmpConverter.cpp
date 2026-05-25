@@ -652,7 +652,12 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
   rc = jpeg->decode(0, 0, decodeFlags);
 
   if (rc != 1 || ctx.error) {
-    LOG_ERR("JPG", "JPEG decode failed (rc=%d, err=%d)", rc, jpeg->getLastError());
+    // Include the image shape so a one-off decode failure can be triaged from
+    // serial without pulling the file: progressive vs baseline distinguishes a
+    // 1/8-scale progressive-path failure from a baseline/MCU-skip one, and the
+    // dimensions flag oversized/odd-subsampling sources.
+    LOG_ERR("JPG", "JPEG decode failed (rc=%d, err=%d, %dx%d, %s)", rc, jpeg->getLastError(), srcWidth, srcHeight,
+            progressive ? "progressive" : "baseline");
     return false;
   }
 
