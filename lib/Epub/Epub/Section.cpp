@@ -190,18 +190,18 @@ bool Section::loadSectionFile(const int fontId, const float lineCompression, con
     return false;
   }
 
-  // CrumBLE: this section was cached with images dropped because heap was tight
-  // at build time (typically a BLE remote was connected). If the largest free
-  // block has since grown well beyond what we had then -- e.g. the user
-  // disconnected the remote -- treat it as a cache miss so it rebuilds *with*
-  // images. Comparing against the build-time value (plus a margin) stops a
-  // rebuild loop for chapters that genuinely can't fit images even on full heap.
-  if (fileImagesSuppressed && ESP.getMaxAllocHeap() > fileBuildMaxAlloc + SECTION_DEGRADED_REBUILD_MARGIN) {
-    file.close();
-    LOG_INF("SCT", "Image-suppressed cache (maxAlloc then=%u now=%u); rebuilding to restore images",
-            fileBuildMaxAlloc, ESP.getMaxAllocHeap());
-    return false;
-  }
+  // CrumBLE: the degraded-cache fields are still parsed (v38 format stays valid,
+  // so existing caches don't all re-index), but we no longer auto-rebuild on load
+  // when the heap looks "recovered". That rebuild-when-recovered re-indexed the
+  // chapter on boot-resume into a book -- where the fresh-boot heap always reads
+  // recovered -- right as the bonded BLE remote auto-connected, starving NimBLE
+  // and dropping the link ("Bluetooth couldn't stay connected" on a book that
+  // read fine when entered from home). Leaving the cache as-is keeps BLE reading
+  // stable. Image-suppressed chapters restore their images on an explicit cache
+  // clear / re-open instead of automatically. (Follow-up: a heap-safe, BLE-aware
+  // image-recovery that doesn't re-index right as the remote connects.)
+  (void)fileImagesSuppressed;
+  (void)fileBuildMaxAlloc;
 
   // Explicit close() required: member variable persists beyond function scope
   file.close();
