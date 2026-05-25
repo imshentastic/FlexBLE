@@ -6,7 +6,7 @@
 
 </div>
 
-> **Runs on the Xteink X4 and X3** — one firmware, auto-detected at boot. Primarily tested on the X4; X3 support is verified in the simulator (no X3 hardware on hand yet). **Back up your device before flashing.** See [Install firmware](#install-firmware) below.
+> **Runs on the Xteink X4 (X3 in development) ** — one firmware, auto-detected at boot. **Back up your device before flashing.** See [Install firmware](#install-firmware) below.
 
 ---
 
