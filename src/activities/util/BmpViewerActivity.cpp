@@ -11,6 +11,7 @@
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/PngOverlayRenderer.h"
 
 BmpViewerActivity::BmpViewerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string path)
     : Activity("BmpViewer", renderer, mappedInput), filePath(std::move(path)) {}
@@ -37,7 +38,7 @@ void BmpViewerActivity::loadSiblingImages() {
       file.getName(name, sizeof(name));
       if (name[0] != '.') {
         std::string fname(name);
-        if (fname.length() >= 4 && fname.substr(fname.length() - 4) == ".bmp") {
+        if (FsHelpers::hasBmpExtension(fname) || FsHelpers::hasPngExtension(fname)) {
           siblingImages.push_back(fname);
         }
       }
@@ -61,6 +62,12 @@ void BmpViewerActivity::onEnter() {
 
   if (siblingImages.empty() && !filePath.empty()) {
     loadSiblingImages();
+  }
+
+  // PNGs render through the shared overlay decoder over a white background.
+  if (FsHelpers::hasPngExtension(filePath)) {
+    renderPngPreview();
+    return;
   }
 
   FsFile file;
@@ -143,13 +150,55 @@ void BmpViewerActivity::onExit() {
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
 }
 
+void BmpViewerActivity::renderPngPreview() {
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+
+  // Decode the PNG over a white background. We deliberately do NOT rebuild the
+  // last book page here: re-rendering a chapter fragments the heap enough that
+  // the ~40 KB PNG decoder allocation then fails (every PNG showed "page load
+  // error"). The over-the-page look still happens at actual sleep time, which
+  // composites against a heap-safe page snapshot rather than a fresh render.
+  renderer.clearScreen();
+
+  // PngOverlay::decodeToBuffer logs the precise failure reason (low heap, open,
+  // or decode error) via LOG_ERR("PNG", ...).
+  if (!PngOverlay::decodeToBuffer(renderer, filePath, pageWidth, pageHeight)) {
+    renderer.clearScreen();
+    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_PAGE_LOAD_ERROR));
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+    return;
+  }
+
+  const bool hasPrevious = (siblingImages.size() > 1 && currentImageIndex > 0);
+  const bool hasNext = (siblingImages.size() > 1 && currentImageIndex != -1 &&
+                        currentImageIndex < static_cast<int>(siblingImages.size()) - 1);
+  const auto labels =
+      mappedInput.mapLabels(tr(STR_BACK), tr(STR_SET_SLEEP_COVER), (hasPrevious ? "<" : ""), (hasNext ? ">" : ""));
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+}
+
 void BmpViewerActivity::doSetSleepCover() {
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
 
+  // Custom sleep mode reads /sleep.bmp first, then /sleep.png. Write the chosen
+  // image to the slot matching its format and remove the other slot so the
+  // just-picked image is the one that shows. A PNG lands as /sleep.png (sleep
+  // composites it, transparency preserved, over the last book page); a BMP lands
+  // as /sleep.bmp and fills the full screen.
+  const bool isPng = FsHelpers::hasPngExtension(filePath);
+  const char* targetPath = isPng ? "/sleep.png" : "/sleep.bmp";
+  const char* otherPath = isPng ? "/sleep.bmp" : "/sleep.png";
+
   bool success = false;
   FsFile inFile, outFile;
-  if (Storage.openFileForRead("BMP", filePath, inFile)) {
-    if (Storage.openFileForWrite("BMP", "/sleep.bmp", outFile)) {
+  if (Storage.openFileForRead("IMG", filePath, inFile)) {
+    if (Storage.openFileForWrite("IMG", targetPath, outFile)) {
       char buffer[2048];
       int bytesRead;
       success = true;
@@ -165,6 +214,9 @@ void BmpViewerActivity::doSetSleepCover() {
   }
 
   if (success) {
+    if (Storage.exists(otherPath)) {
+      Storage.remove(otherPath);
+    }
     SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM;
     SETTINGS.saveToFile();
     GUI.drawPopup(renderer, tr(STR_DONE));

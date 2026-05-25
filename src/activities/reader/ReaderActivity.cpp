@@ -111,7 +111,9 @@ void ReaderActivity::onEnter() {
   sdFontSystem.ensureLoaded(renderer);
 
   currentBookPath = initialBookPath;
-  if (isBmpFile(initialBookPath)) {
+  if (isBmpFile(initialBookPath) || FsHelpers::hasPngExtension(initialBookPath)) {
+    // PNG and BMP both open in the image viewer. PNG previously fell through to
+    // the EPUB loader below, failed to parse, and bounced back to Home.
     onGoToBmpViewer(initialBookPath);
   } else if (isXtcFile(initialBookPath)) {
     auto xtc = loadXtc(initialBookPath);
