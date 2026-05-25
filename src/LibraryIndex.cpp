@@ -32,7 +32,7 @@ constexpr int MAX_WALK_DEPTH = 8;
 // reject it via the header check.
 class LineReader {
   FsFile& file;
-  char buf[256];
+  char buf[256] = {};
   int len = 0;
   int pos = 0;
   static constexpr size_t kMaxLine = 1024;

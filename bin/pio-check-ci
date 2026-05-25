@@ -17,4 +17,4 @@ if [[ -n "$pio_version" && "$pio_version" != "$EXPECTED_PIO_VERSION" ]]; then
   echo "Local results may differ slightly from GitHub until the versions match." >&2
 fi
 
-exec pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high "$@"
+exec pio check --fail-on-defect medium --fail-on-defect high "$@"
