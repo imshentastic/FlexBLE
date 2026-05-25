@@ -313,10 +313,12 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                           {StrId::STR_LEXEND_DECA, StrId::STR_BITTER, StrId::STR_CHAREINK}, "fontFamily",
                           StrId::STR_CAT_READER));
     add(buildBuiltinFontSizeSetting());
-    add(SettingInfo::Enum(StrId::STR_SD_FONT_SIZE_RANGE, &CrossPointSettings::sdFontSizeRange,
-                          {StrId::STR_FONT_RANGE_TEENSY, StrId::STR_FONT_RANGE_TINY, StrId::STR_FONT_RANGE_XLARGE,
-                           StrId::STR_FONT_RANGE_NO_EMOJI, StrId::STR_FONT_RANGE_ALL},
-                          "sdFontSizeRange", StrId::STR_CAT_READER));
+    // CrumBLE: "Download Font Size Range" (sdFontSizeRange) is omitted from the
+    // settings UI. It existed to pick SD-font point sizes per hardware variant,
+    // but this single build ships a fixed set of reader font sizes, and the
+    // compile-time default already matches them. The field + default are kept so
+    // SD-font downloads still resolve point sizes; only the user-facing picker is
+    // removed (it was redundant and confusing).
     add(SettingInfo::Enum(StrId::STR_LINE_SPACING, &CrossPointSettings::lineSpacing,
                           {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR_WIDE}, "lineSpacing",
                           StrId::STR_CAT_READER));
