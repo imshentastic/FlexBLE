@@ -3,6 +3,7 @@
 #include <HalStorage.h>
 #include <JsonSettingsIO.h>
 #include <Logging.h>
+#include <MemoryBudget.h>
 #include <Serialization.h>
 
 #include <algorithm>
@@ -297,9 +298,40 @@ uint8_t CrossPointSettings::sleepScreenModeToStorage(const uint8_t mode) {
   return 0;
 }
 
+namespace {
+// Building the settings JSON allocates several KB: getSettingsList() returns a
+// freshly built std::vector<SettingInfo> (with nested option vectors), plus the
+// ArduinoJson document, the serialized String, and std::string temporaries.
+// With C++ exceptions disabled a failed allocation calls abort() -> panic
+// reboot, which is exactly what happened when a settings save landed while
+// NimBLE held the heap. Guard the write behind a heap floor and defer it rather
+// than risk the abort; the main loop retries once heap recovers (e.g. after the
+// BLE remote disconnects), so the change still persists instead of being lost.
+constexpr uint32_t kSettingsSaveMinFree = 32U * 1024U;
+constexpr uint32_t kSettingsSaveMinMaxAlloc = 8U * 1024U;
+bool gSettingsSaveDeferred = false;
+}  // namespace
+
+bool CrossPointSettings::hasDeferredSave() { return gSettingsSaveDeferred; }
+
 bool CrossPointSettings::saveToFile() const {
+  if (!MemoryBudget::hasHeap(MemoryBudget::snapshot(), kSettingsSaveMinFree, kSettingsSaveMinMaxAlloc)) {
+    const auto heap = MemoryBudget::snapshot();
+    LOG_ERR("CPS", "Deferring settings save: heap too low (free=%u, maxAlloc=%u)", heap.freeHeap, heap.maxAllocHeap);
+    gSettingsSaveDeferred = true;
+    return false;
+  }
   Storage.mkdir("/.crosspoint");
-  return JsonSettingsIO::saveSettings(*this, SETTINGS_FILE_JSON);
+  const bool ok = JsonSettingsIO::saveSettings(*this, SETTINGS_FILE_JSON);
+  gSettingsSaveDeferred = !ok;  // a real write failure also retries later
+  return ok;
+}
+
+void CrossPointSettings::retryDeferredSaveIfNeeded() const {
+  if (!gSettingsSaveDeferred) return;
+  if (!MemoryBudget::hasHeap(MemoryBudget::snapshot(), kSettingsSaveMinFree, kSettingsSaveMinMaxAlloc)) return;
+  LOG_INF("CPS", "Retrying deferred settings save (heap recovered)");
+  saveToFile();
 }
 
 bool CrossPointSettings::loadFromFile() {

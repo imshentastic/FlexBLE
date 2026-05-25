@@ -1185,6 +1185,13 @@ void loop() {
   // for BLE to come back up once the indexer finishes. checkAutoReconnect
   // then resumes the bonded-device link on the user's next button press.
   btMgr.tryEnableIfRequested();
+
+  // CrumBLE: flush a settings save that was deferred because heap was too low to
+  // build the JSON safely (e.g. while NimBLE held the heap). Cheap no-op when
+  // nothing is pending; this lands the change once a BLE drop / chapter teardown
+  // frees the heap back up, so a low-heap setting change isn't silently lost.
+  SETTINGS.retryDeferredSaveIfNeeded();
+
   // CrumBLE: a Bluetooth link that dropped on its own seconds after connecting
   // is almost always heap starvation -- the connect spike craters free heap and
   // the controller times the link out (HCI 0x08). Surface a clear message

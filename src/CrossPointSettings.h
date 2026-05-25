@@ -450,6 +450,12 @@ class CrossPointSettings {
   uint8_t writeSettings(FsFile& file, bool count_only = false) const;
 
   bool saveToFile() const;
+  // OOM-safe persistence: saveToFile() skips the write when heap is too low to
+  // build the settings JSON without risking an allocation-failure abort, marking
+  // the save deferred. The main loop calls retryDeferredSaveIfNeeded() so the
+  // change still lands once heap recovers (e.g. after a BLE remote disconnects).
+  static bool hasDeferredSave();
+  void retryDeferredSaveIfNeeded() const;
   bool loadFromFile();
 
   static void validateFrontButtonMapping(CrossPointSettings& settings);
