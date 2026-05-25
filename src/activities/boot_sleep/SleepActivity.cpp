@@ -55,6 +55,49 @@ bool restoreFramebufferFromCycleCache() {
   return true;
 }
 
+// CrumBLE #38: a full-screen sleep image cached as a raw, display-buffer-sized
+// framebuffer that needs no decode to show. Written after any successful
+// full-screen sleep render (Custom/Cover/Minimal), i.e. when the heap was
+// healthy enough to decode the source image. Restored as a low-heap fallback
+// when the PNG decoder can't get its ~60 KB working set (e.g. sleeping while a
+// BLE page-turner is still connected and has fragmented the heap), so the
+// user's chosen sleep picture survives instead of dropping to the default logo.
+constexpr char SLEEP_FB_CACHE_PATH[] = "/.crosspoint/sleep_screen_fb.bin";
+
+bool writeFramebufferCache(const char* path) {
+  Storage.mkdir("/.crosspoint");
+  FsFile f;
+  if (!Storage.openFileForWrite("SLP", path, f)) {
+    LOG_ERR("SLP", "FB cache: open for write failed: %s", path);
+    return false;
+  }
+  const uint8_t* buf = display.getFrameBuffer();
+  const uint32_t size = display.getBufferSize();
+  const int written = f.write(buf, size);
+  f.close();
+  if (written != static_cast<int>(size)) {
+    LOG_ERR("SLP", "FB cache: short write %d/%u to %s", written, size, path);
+    return false;
+  }
+  return true;
+}
+
+bool readFramebufferCache(const char* path) {
+  FsFile f;
+  if (!Storage.openFileForRead("SLP", path, f)) {
+    return false;
+  }
+  uint8_t* buf = display.getFrameBuffer();
+  const uint32_t size = display.getBufferSize();
+  const int bytesRead = f.read(buf, size);
+  f.close();
+  if (bytesRead != static_cast<int>(size)) {
+    LOG_ERR("SLP", "FB cache: short read %d/%u from %s", bytesRead, size, path);
+    return false;
+  }
+  return true;
+}
+
 void hideOverlayBatteryStrip(const GfxRenderer& renderer) {
   if (!SETTINGS.statusBarBattery) {
     return;
@@ -351,6 +394,11 @@ void renderBitmapToSleepScreen(GfxRenderer& renderer, const Bitmap& bitmap) {
   }
 
   renderer.displayBuffer(HalDisplay::HALF_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
+
+  // Cache the composed B/W full-screen sleep image so a later heap-starved sleep
+  // can restore it without a decode (see SLEEP_FB_CACHE_PATH). Snapshot the B/W
+  // buffer here, before the optional grayscale passes overwrite it below.
+  writeFramebufferCache(SLEEP_FB_CACHE_PATH);
 
   if (hasGreyscale) {
     bitmap.rewindToData();
@@ -792,6 +840,8 @@ void SleepActivity::renderMinimalSleepScreen() const {
   MinimalTheme theme;
   theme.drawSleepScreen(renderer, book, &bookStats, progressPercent);
   renderer.displayBuffer(HalDisplay::HALF_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
+  // Cache the rendered Minimal sleep screen for the low-heap restore (#38).
+  writeFramebufferCache(SLEEP_FB_CACHE_PATH);
 }
 
 void SleepActivity::renderLastScreenSleepScreen() const {
@@ -856,14 +906,27 @@ void SleepActivity::composePngOverReaderPage(const std::string& pngPath) const {
 
   if (!decodeSleepPngToBuffer(renderer, pngPath, pageWidth, pageHeight)) {
     LOG_ERR("SLP", "Failed to compose PNG over reader page: %s", pngPath.c_str());
-    // Never leave the "Going to sleep" popup frozen on screen. Fall back to a
-    // clean, heap-light default sleep screen so a proper sleep state is always
-    // shown even when the PNG decoder is out of memory.
     renderer.setOrientation(GfxRenderer::Portrait);
-    renderDefaultSleepScreen();
+    // Low-heap fallback (#38): restore the last successfully-rendered full-screen
+    // sleep image from the framebuffer cache -- no decode needed -- so the user's
+    // sleep picture survives a heap-starved sleep (e.g. BLE page-turner still
+    // connected). Only if the cache is unavailable do we drop to the heap-light
+    // default sleep screen. Either way the "Going to sleep" popup never stays
+    // frozen on screen.
+    if (readFramebufferCache(SLEEP_FB_CACHE_PATH)) {
+      LOG_INF("SLP", "Restored cached sleep image (PNG decode unavailable, low heap)");
+      renderer.displayBuffer(HalDisplay::HALF_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
+    } else {
+      renderDefaultSleepScreen();
+    }
     renderer.setOrientation(savedOrientation);
     return;
   }
+
+  // Cache the composed B/W sleep image for the low-heap restore above. Snapshot
+  // before the grayscale passes (which overwrite the buffer) and before the
+  // orientation is restored, mirroring the B/W displayBuffer below.
+  writeFramebufferCache(SLEEP_FB_CACHE_PATH);
 
   renderer.setOrientation(savedOrientation);
 
