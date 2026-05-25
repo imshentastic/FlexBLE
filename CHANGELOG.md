@@ -1,5 +1,27 @@
 # Changelog
 
+## [crumble-v3.1.0] - 2026-05-25
+
+### Added
+- Added "BT No Images Quick Connect" to the reader's Book Settings drawer: connect a Bluetooth page-turner on image-heavy books by skipping image decode (images show as placeholder boxes) so the link stays up. Images return automatically when Bluetooth disconnects, and reopening or rebooting the book restores them.
+- Added a "Browse files to add a book" action to Add/Remove Books so a book can be added to a collection directly from a folder.
+- Added an optimizer toggle (web file-transfer page) to store chapter text uncompressed for smoother Bluetooth reading.
+- Made Recently Added and All Books opt-in virtual collections and moved library indexing off boot for a faster startup.
+
+### Fixed
+- Hardened Bluetooth reading on image-heavy books: keep the link usable, recover dropped images, gate anti-aliasing by available memory, fall back gracefully on cold chapter loads, and serialize NimBLE teardown with the render task.
+- Suppressed the brief half-drawn-glyphs frame that could flash during the Bluetooth connect handshake, without dropping links on books that read fine.
+- Deferred settings saves when heap is too low to build the settings JSON safely (previously a rare panic-reboot under Bluetooth memory pressure); the save is retried automatically once memory recovers.
+- Recovered wedged book caches with a best-effort cleanup, and added clear guidance ("SD may need a disk repair") when a cache or page genuinely can't be cleared instead of failing silently.
+- Improved large-library reliability: find books with long names at the SD root, give Recently Added a stable order, reclaim heap so Flow shelf covers generate reliably, and full-refresh on entering Home to clear transition ghosting.
+- Improved web file-transfer reliability: lazy-load the zip and optimizer scripts to avoid running the device out of memory, bound the streaming-send timeout, and free the active SD font to stop WiFi hangs.
+- Showed the sleep screen on auto-sleep timeout (no stuck "Going to sleep"), and cached a full-screen sleep image so it restores under low/fragmented heap.
+
+### Changed
+- Removed the redundant "Download Font Size Range" picker from reader settings (the shipped font sizes already determine it).
+- Captioned collection shelf books with their metadata title and author, falling back to the filename.
+- Moved the Bluetooth-friendly chapters toggle out of Advanced and clarified its labels.
+
 ## [v1.3.0] - 2026-05-21
 
 ### Added
