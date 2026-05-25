@@ -126,6 +126,44 @@ void BookSettingsDrawerActivity::buildItems() {
     items.push_back(std::move(item));
   }
 
+  // 2a) Bluetooth quick-action, no-images variant. Identical to BT Quick Connect
+  // below, but first arms render-time image suppression on the shared renderer.
+  // Image-heavy books can't decode their images while NimBLE holds ~58 KB of the
+  // contiguous heap; this lets the user keep the page-turner connected by trading
+  // images (drawn as placeholder borders) for a stable BLE link. The flag is
+  // session-scoped (reset on reader entry) and auto-cleared when BLE drops.
+  {
+    Item btNoImg;
+    btNoImg.nameId = StrId::STR_BT_NO_IMAGES_QUICK_CONNECT;
+    btNoImg.isAction = true;
+    btNoImg.activate = [this]() {
+      auto& btMgr = BluetoothHIDManager::getInstance();
+      // Arm image suppression before we connect so the reader's first post-connect
+      // render already skips image decodes (and won't trip the auto-drop).
+      renderer.setSuppressImages(true);
+      const bool hasBonded = SETTINGS.bleBondedDeviceAddr[0] != '\0';
+      if (!hasBonded) {
+        MenuResult result;
+        result.settingsChanged = settingsChanged;
+        result.requestBluetoothFlow = true;
+        setResult(ActivityResult{result});
+        finish();
+        return;
+      }
+      GUI.drawPopup(renderer, tr(STR_CONNECTING));
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+      if (!btMgr.isEnabled()) {
+        btMgr.enable();
+      }
+      btMgr.connectToDevice(SETTINGS.bleBondedDeviceAddr);
+      MenuResult result;
+      result.settingsChanged = settingsChanged;
+      setResult(ActivityResult{result});
+      finish();
+    };
+    items.push_back(std::move(btNoImg));
+  }
+
   // 2) Bluetooth quick-action. One-shot button: enables BLE (if needed) and
   // reconnects to the bonded remote synchronously, then closes the drawer.
   // If the user has no bonded remote, instead closes the drawer with a flag

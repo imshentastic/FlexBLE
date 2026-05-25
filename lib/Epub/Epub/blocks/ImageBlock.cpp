@@ -136,6 +136,18 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   }
   const bool fullyOnScreen = x >= 0 && y >= 0 && x + width <= screenWidth && y + height <= screenHeight;
 
+  // BT No Images Quick Connect: when image rendering is suppressed (so a BLE
+  // remote keeps the full contiguous heap), skip the decode entirely and draw a
+  // lightweight placeholder border instead, so the page still shows where an
+  // image belongs. Crucially we do NOT markRenderStarved here -- the page is
+  // considered fully rendered, so the reader's auto-drop logic won't tear down
+  // Bluetooth over an image it was deliberately told to skip.
+  if (renderer.suppressImages()) {
+    LOG_DBG("IMG", "Image suppressed (BT no-images): placeholder at %d,%d (%dx%d)", x, y, width, height);
+    renderer.drawRect(x, y, width, height, true);
+    return;
+  }
+
   // Try to render from cache first
   std::string cachePath = getCachePath(imagePath);
   if (renderFromCache(renderer, cachePath, x, y, width, height)) {

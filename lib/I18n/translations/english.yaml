@@ -493,6 +493,7 @@ STR_RECOVERY_MODE_HINT: "Place firmware.bin on SD card root and select it"
 
 STR_BLUETOOTH: "Bluetooth"
 STR_BT_QUICK_CONNECT: "BT Quick Connect"
+STR_BT_NO_IMAGES_QUICK_CONNECT: "BT No Images Quick Connect"
 STR_CYCLE_SCREENSAVER_ON_TAP: "Tap Power While Asleep to Cycle"
 STR_DIR_PREV: "Prev"
 STR_DIR_NEXT: "Next"

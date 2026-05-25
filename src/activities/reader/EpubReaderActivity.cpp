@@ -265,6 +265,14 @@ void EpubReaderActivity::onEnter() {
   // visit, so the only cost is a one-time rewalk back at Home.
   LibraryIndex::getInstance().releaseMemory();
 
+  // BT No Images Quick Connect is session-scoped: always start a freshly opened
+  // (or reopened-after-reboot) book with images enabled. If the user picked the
+  // no-images connect last session, rebooting and re-entering the book brings the
+  // images back -- the flag is only re-armed when they explicitly choose that
+  // drawer action again.
+  renderer.setSuppressImages(false);
+  btNoImgLinkSeen = false;
+
   // Configure screen orientation based on settings
   // NOTE: This affects layout math and must be applied before any render calls.
   ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
@@ -436,6 +444,32 @@ void EpubReaderActivity::loop() {
     // Should never happen
     finish();
     return;
+  }
+
+  // BT No Images Quick Connect auto-restore. The no-images flag exists only to
+  // keep the contiguous heap free for NimBLE's ~58 KB, so restore images the
+  // moment Bluetooth stops holding that heap. Two distinct drop signals:
+  //   (1) stack disabled  -- user toggled BT off from the menu, or text starved
+  //       and the auto-drop disabled it: isEnabled() goes false.
+  //   (2) link dropped     -- controller powered off / out of range: the stack
+  //       stays enabled (auto-reconnect armed) but the client reports
+  //       disconnected, so isConnected(bonded) goes false. This is the case that
+  //       also raises "Bluetooth couldn't stay connected".
+  // We latch btNoImgLinkSeen once the remote actually links so the brief
+  // pre-link connect handshake isn't mistaken for a drop.
+  if (renderer.suppressImages()) {
+    auto& btMgr = BluetoothHIDManager::getInstance();
+    const bool stackUp = btMgr.isEnabled();
+    const bool linked = stackUp && SETTINGS.bleBondedDeviceAddr[0] != '\0' &&
+                        btMgr.isConnected(SETTINGS.bleBondedDeviceAddr);
+    if (linked) btNoImgLinkSeen = true;
+    if (!stackUp || (btNoImgLinkSeen && !linked)) {
+      LOG_INF("ERS", "BLE link gone; restoring images for BT no-images mode");
+      renderer.setSuppressImages(false);
+      btNoImgLinkSeen = false;
+      requestUpdate();
+      return;
+    }
   }
 
   // Incremental session save. Without this, a brown-out / hard crash

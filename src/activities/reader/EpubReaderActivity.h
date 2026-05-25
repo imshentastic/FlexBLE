@@ -85,6 +85,12 @@ class EpubReaderActivity final : public Activity {
   // books that stay unrenderable past the transient.
   unsigned long btEnabledAtMs = 0UL;
   bool btWasEnabled = false;
+  // BT No Images Quick Connect: latched true once the bonded remote actually
+  // links while image suppression is armed. Lets loop() tell a genuine link drop
+  // (controller powered off / out of range -- stack stays enabled, isConnected
+  // goes false) apart from the brief pre-link handshake window, so we restore
+  // images on the drop but not during the initial connect.
+  bool btNoImgLinkSeen = false;
   enum class BookmarkFeedbackType : uint8_t {
     Added,
     Removed,

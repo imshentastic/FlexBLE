@@ -58,6 +58,11 @@ class GfxRenderer {
   Orientation orientation;
   bool fadingFix;
   mutable bool renderStarved = false;
+  // BT No Images Quick Connect: when true, ImageBlock::render skips decoding and
+  // draws a placeholder border instead, so an image-heavy book can be read over a
+  // BLE remote without the decoder's large contiguous allocations starving NimBLE.
+  // Session-scoped (reset on reader entry); auto-cleared when Bluetooth drops.
+  bool suppressImages_ = false;
   uint8_t* frameBuffer = nullptr;
   uint16_t panelWidth = HalDisplay::DISPLAY_WIDTH;
   uint16_t panelHeight = HalDisplay::DISPLAY_HEIGHT;
@@ -183,6 +188,12 @@ class GfxRenderer {
     renderStarved = false;
     return starved;
   }
+
+  // BT No Images Quick Connect image suppression. When enabled, image blocks are
+  // drawn as placeholder borders instead of decoded, keeping the contiguous heap
+  // free for NimBLE on image-heavy books.
+  void setSuppressImages(bool suppress) { suppressImages_ = suppress; }
+  bool suppressImages() const { return suppressImages_; }
 
   // Screen ops
   int getScreenWidth() const;
