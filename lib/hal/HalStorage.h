@@ -90,6 +90,13 @@ class HalFile : public Print {
   bool sync();
   bool rename(const char* newPath);
   bool isDirectory() const;
+  // CrumBLE: file timestamps as chronologically-sortable keys (FAT date<<16 |
+  // FAT time), 0 when unavailable. CREATE time is set by the OS when the file is
+  // written to *this* SD card (copy time) -- the right signal for "recently
+  // added". MODIFY time is preserved from the source on copy (authoring date),
+  // so it's the fallback only.
+  uint32_t getCreateTimeKey();
+  uint32_t getModifyTimeKey();
   void rewindDirectory();
   bool close();
   HalFile openNextFile();

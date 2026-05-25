@@ -159,6 +159,22 @@ size_t HalFile::write(uint8_t b) { HAL_FILE_WRAPPED_CALL(write, b); }
 bool HalFile::sync() { HAL_FILE_WRAPPED_CALL(sync, ); }
 bool HalFile::rename(const char* newPath) { HAL_FILE_WRAPPED_CALL(rename, newPath); }
 bool HalFile::isDirectory() const { HAL_FILE_FORWARD_CALL(isDirectory, ); }  // already thread-safe, no need to wrap
+uint32_t HalFile::getCreateTimeKey() {
+  HalStorage::StorageLock lock;
+  if (impl == nullptr) return 0;
+  uint16_t date = 0, timeOfDay = 0;
+  if (!impl->file.getCreateDateTime(&date, &timeOfDay)) return 0;
+  // FAT packs the date in the high half (year/month/day) and time in the low
+  // half, so the combined value sorts chronologically.
+  return (static_cast<uint32_t>(date) << 16) | timeOfDay;
+}
+uint32_t HalFile::getModifyTimeKey() {
+  HalStorage::StorageLock lock;
+  if (impl == nullptr) return 0;
+  uint16_t date = 0, timeOfDay = 0;
+  if (!impl->file.getModifyDateTime(&date, &timeOfDay)) return 0;
+  return (static_cast<uint32_t>(date) << 16) | timeOfDay;
+}
 void HalFile::rewindDirectory() { HAL_FILE_WRAPPED_CALL(rewindDirectory, ); }
 bool HalFile::close() { HAL_FILE_WRAPPED_CALL(close, ); }
 HalFile HalFile::openNextFile() {

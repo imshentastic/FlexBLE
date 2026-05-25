@@ -16,7 +16,16 @@
 
 struct LibraryEntry {
   std::string path;
+  // Sort key for "Recently Added" / "Date Added" (DESC = newest first). Despite
+  // the legacy name, this is a persistent monotonic "first seen by the device"
+  // counter, NOT a wall-clock time: millis() resets each boot, and file
+  // timestamps are unreliable on this device (WiFi transfers stamp a default
+  // date when the clock is unset). New books -- and same-name files whose size
+  // changed (a replaced copy) -- get the next counter value so they sort newest.
   uint64_t firstSeenMillis = 0;
+  // File size in bytes at last index (capped to uint32). Lets a rescan notice a
+  // same-path file was replaced and re-date it. 0 = unknown (legacy entry).
+  uint32_t fileSize = 0;
 };
 
 class LibraryIndex {
@@ -94,8 +103,11 @@ class LibraryIndex {
   bool loadFromFile();
   bool saveToFile() const;
   // Recursive descent. depth caps at 8 to avoid runaway nesting. Skips
-  // dot-prefixed directories (".crosspoint", ".Trashes", etc.).
-  void walkRecursive(const std::string& dirPath, int depth, std::vector<std::string>& outPaths) const;
+  // dot-prefixed directories (".crosspoint", ".Trashes", etc.). For each book
+  // file found, appends its path to outPaths and its size (bytes) to outSizes at
+  // the same index.
+  void walkRecursive(const std::string& dirPath, int depth, std::vector<std::string>& outPaths,
+                     std::vector<uint32_t>& outSizes) const;
   // True if the file extension marks it as one of our supported book
   // formats (.epub / .xtc / .txt / .md / .markdown).
   static bool isBookPath(const std::string& path);
