@@ -58,6 +58,9 @@ class GfxRenderer {
   Orientation orientation;
   bool fadingFix;
   mutable bool renderStarved = false;
+  // Set when an image was decoded this render but not cached to .pxc (partial /
+  // off-screen). Such a page re-decodes on every repaint, so it is not BLE-safe.
+  mutable bool imageRepaintUnsafe_ = false;
   // BT No Images Quick Connect: when true, ImageBlock::render skips decoding and
   // draws a placeholder border instead, so an image-heavy book can be read over a
   // BLE remote without the decoder's large contiguous allocations starving NimBLE.
@@ -187,6 +190,20 @@ class GfxRenderer {
     const bool starved = renderStarved;
     renderStarved = false;
     return starved;
+  }
+
+  // Image-repaint-safety signal. Set when an image was DECODED this render without
+  // being written to its .pxc pixel cache (a partial/off-screen image, which the
+  // cache path skips). Such a page would have to decode the image again on the
+  // next repaint -- so it is NOT safe to bring a BLE remote back up over it. When
+  // this stays clear after a clean render, every image on the page is either
+  // cached or absent, so the page repaints decoder-free (BLE-safe). The reader
+  // uses this to decide whether to re-enable Bluetooth after a low-memory rebuild.
+  void markImageRepaintUnsafe() const { imageRepaintUnsafe_ = true; }
+  bool takeImageRepaintUnsafe() {
+    const bool unsafe = imageRepaintUnsafe_;
+    imageRepaintUnsafe_ = false;
+    return unsafe;
   }
 
   // BT No Images Quick Connect image suppression. When enabled, image blocks are

@@ -1802,15 +1802,19 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       // failure on a different chapter can also use the retry path.
       layoutBleRetryAttempted = false;
       // If we dropped BLE around this build (drawer settings change, or the
-      // reactive retry path above), bring it back up now that the heap
-      // pressure is gone. requestEnableLater() defers to the main loop so
-      // NimBLE init doesn't fight the page render that's about to fire.
-      // Once re-enabled, checkAutoReconnect() resumes the bonded link on
-      // the user's next button press.
+      // reactive retry path above), the heap pressure is gone now -- but do NOT
+      // re-enable BLE here. The page we're about to render may carry an inline
+      // image, and re-enabling now would let NimBLE grab its ~58 KB right before
+      // the JPEG/PNG decode, starving it and dropping BLE again -- the exact
+      // connect/disconnect thrash seen at image-heavy chapter boundaries. Instead
+      // latch the re-enable and let renderContents() fire it only after a clean,
+      // image-free render, so we reconnect once we're past the un-decodable page.
+      // (An image-free rebuilt chapter re-enables on this same render(), so a
+      // text-only boundary still reconnects promptly.)
       if (bleAutoReEnableAfterReindex) {
         bleAutoReEnableAfterReindex = false;
-        LOG_INF("ERS", "Section build done; requesting BLE re-enable for bonded remote reconnect");
-        BluetoothHIDManager::getInstance().requestEnableLater();
+        bleReEnableHeldForImagePage = true;
+        LOG_INF("ERS", "Section build done; holding BLE re-enable until a clean image-free render");
       }
 
       if (imagesWereSuppressed) {
@@ -2050,7 +2054,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const bool needsTextGrayscale = SETTINGS.textAntiAliasing;
   const bool needsAnyGrayscale = needsTextGrayscale || needsImageGrayscale;
 
-  renderer.takeRenderStarved();  // clear stale; capture only this render's failures
+  renderer.takeRenderStarved();        // clear stale; capture only this render's failures
+  renderer.takeImageRepaintUnsafe();   // clear stale; capture only this render's uncached images
   page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
 
   // Note when the BLE remote came up. The connect handshake makes NimBLE grab
@@ -2063,6 +2068,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   btWasEnabled = btOn;
   const bool pastBtConnectGrace = btOn && (millis() - btEnabledAtMs) > kBtConnectGraceMs;
   const bool renderStarvedNow = renderer.takeRenderStarved();
+  const bool imageRepaintUnsafeNow = renderer.takeImageRepaintUnsafe();
 
   // #48: during the BLE connect grace window the handshake's heap spike can
   // transiently starve a single render (half-drawn glyphs) on a book that
@@ -2104,6 +2110,21 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   // This render is clean (not starved). Cancel any pending #48 grace re-render so
   // loop() doesn't fire a redundant repaint.
   pendingGraceReRender = false;
+
+  // CrumBLE: a low-memory rebuild dropped BLE and latched a re-enable. Now that
+  // this page rendered cleanly with BLE off, bring the remote back as soon as the
+  // page is BLE-safe to *repaint* -- i.e. it has no images, or every image is now
+  // in its .pxc cache (this BLE-off render decoded and cached them). A cached
+  // image repaints via a tiny row-buffer blit with no decoder, so NimBLE's ~58 KB
+  // no longer starves it. We only keep holding when the page decoded an image it
+  // could NOT cache (partial/off-screen), since that one would re-decode and drop
+  // BLE again. requestEnableLater() defers to the loop so NimBLE init doesn't
+  // fight the next render; checkAutoReconnect() then relinks on the next press.
+  if (bleReEnableHeldForImagePage && !imageRepaintUnsafeNow) {
+    bleReEnableHeldForImagePage = false;
+    LOG_INF("ERS", "Clean BLE-safe render after rebuild (images cached); re-enabling BLE for bonded remote reconnect");
+    BluetoothHIDManager::getInstance().requestEnableLater();
+  }
 
   renderStatusBar();
   if (pendingBookmarkFeedback) {

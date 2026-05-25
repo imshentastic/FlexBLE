@@ -182,6 +182,11 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   config.useExactDimensions = true;  // Use pre-calculated dimensions to avoid rounding mismatches
   if (fullyOnScreen) {
     config.cachePath = cachePath;  // Enable caching during decode
+  } else {
+    // Partial/off-screen image: we decode but do NOT write a .pxc, so this page
+    // would have to decode again on the next repaint. Flag it so the reader won't
+    // bring a BLE remote back up over a page that isn't decoder-free to redraw.
+    renderer.markImageRepaintUnsafe();
   }
 
   ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(imagePath);

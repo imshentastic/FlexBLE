@@ -72,6 +72,14 @@ class EpubReaderActivity final : public Activity {
   // Reader Menu -> Bluetooth to re-enable manually — checkAutoReconnect()
   // refuses to do anything while _enabled is false.
   bool bleAutoReEnableAfterReindex = false;
+  // CrumBLE: after a low-memory rebuild dropped BLE (bleAutoReEnableAfterReindex
+  // path), we must NOT bring BLE back while we're still sitting on a page that
+  // needs the JPEG/PNG decoder -- re-enabling there just starves the decode and
+  // drops BLE again (a connect/disconnect thrash at every image-heavy chapter
+  // boundary). Instead we latch the re-enable here and only fire it from
+  // renderContents() once a page renders cleanly AND has no images, so the
+  // bonded remote reconnects only after we're past the un-decodable page(s).
+  bool bleReEnableHeldForImagePage = false;
   // CrumBLE: set once per book open when a page can't render with a BLE remote
   // connected (image decode or glyphs starved by NimBLE's ~58 KB). We drop
   // Bluetooth so the full heap renders the page (images AND text), and show the
