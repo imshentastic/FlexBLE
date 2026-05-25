@@ -53,6 +53,13 @@ constexpr uint16_t CAROUSEL_CACHE_VERSION = 4;
 constexpr char CAROUSEL_CACHE_PATH[] = "/.crosspoint/home_carousel_cache.bin";
 constexpr char CAROUSEL_CACHE_TMP_PATH[] = "/.crosspoint/home_carousel_cache.tmp";
 
+// Below this largest-contiguous-block size, shelf cover generation drops the
+// Flow home's 48 KB fast-path snapshot buffers to free room for the cover
+// extractor's DEFLATE inflate window (up to 32 KB) plus its read/output/decoder
+// scratch. Sized with headroom over 32 KB so a compressed cover JPEG or the
+// book's content.opf can be inflated without OOM.
+constexpr uint32_t kCoverGenMinContiguousHeap = 40 * 1024;
+
 enum class HomeMenuAction {
   BrowseFiles,
   ContinueReading,
@@ -935,6 +942,23 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffs
       failedShelfCovers.push_back(bookPath);
       processed++;
       continue;
+    }
+
+    // Reclaim the Flow home's fast-path snapshot buffers before extracting a
+    // (possibly DEFLATE-compressed) cover image. The Flow home pins a 48 KB
+    // full-framebuffer snapshot (coverBuffer) plus the carousel frame cache, so
+    // the largest contiguous block here is only ~16-22 KB -- below the up-to-
+    // 32 KB DEFLATE window the cover/`content.opf` extractor needs. Without this
+    // every compressed cover failed ("[ZIP] Failed to init inflate reader") and
+    // the book rendered a permanent blank cover for the session. Freeing them
+    // restores ~65 KB+ contiguous so generation succeeds; they are rebuilt on
+    // the follow-up repaint (the homeRenderPopupShown path at end-of-render
+    // invalidates the snapshot and re-warms the carousel).
+    if (ESP.getMaxAllocHeap() < kCoverGenMinContiguousHeap) {
+      freeCoverBuffer();
+      coverBufferStored = false;
+      gCarouselCache.invalidate();
+      freeCarouselFrames();
     }
 
     // Need to generate. Show a loading popup if this is the first book in
