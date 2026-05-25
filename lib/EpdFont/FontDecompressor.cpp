@@ -20,7 +20,12 @@ void FontDecompressor::deinit() {
 
 void FontDecompressor::clearCache() {
   freePageBuffer();
-  freeHotGroup();
+  // Keep the hot-group scratch buffer's capacity across renders. clearCache() is
+  // called twice per page render by FontCacheManager::PrewarmScope (ctor + dtor);
+  // shrink_to_fit()'ing here forces this ~6 KB contiguous block to be re-allocated
+  // every render, which is exactly what fails once a BLE remote (~58 KB) has
+  // fragmented the heap -- dropping the link mid-read. Only deinit() truly frees it.
+  invalidateHotGroup();
 }
 
 void FontDecompressor::freePageBuffer() {
@@ -39,6 +44,15 @@ void FontDecompressor::freeHotGroup() {
   hotGroupIndex = UINT16_MAX;
   hotGlyphBuf.clear();
   hotGlyphBuf.shrink_to_fit();
+}
+
+void FontDecompressor::invalidateHotGroup() {
+  // size -> 0 but capacity retained (no shrink_to_fit), so the next group fits
+  // without a fresh contiguous allocation.
+  hotGroup.clear();
+  hotGroupFont = nullptr;
+  hotGroupIndex = UINT16_MAX;
+  hotGlyphBuf.clear();
 }
 
 uint16_t FontDecompressor::getGroupIndex(const EpdFontData* fontData, uint32_t glyphIndex) {
@@ -174,28 +188,37 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     stats.cacheMisses++;
     const EpdFontGroup& group = fontData->groups[groupIndex];
 
-    // Free any previously-cached group first so its buffer is available to
-    // satisfy this allocation, then pre-check the largest allocatable block.
-    // We MUST bail before std::vector::resize(): with C++ exceptions disabled a
-    // failed allocation calls std::terminate()/abort() (a hard panic + reboot),
-    // not a soft failure -- so the `if (hotGroup.empty())` guard below can never
-    // actually catch an OOM. On image-heavy pages with a BLE remote connected
-    // (~58 KB held by NimBLE) the heap is fragmented enough that a large
-    // contiguous group buffer can't be had; skipping the glyph (it renders
-    // blank) is far better than crashing the whole device.
-    hotGroup.clear();
-    hotGroup.shrink_to_fit();
+    // Keep the hot-group buffer's capacity across group switches AND across page
+    // renders (clearCache() now only invalidates it -- see invalidateHotGroup()).
+    // A page render switches glyph groups several times; re-allocating this
+    // contiguous block each time is what fails once a BLE remote (~58 KB) has
+    // fragmented the heap, dropping the link mid-read. By holding the buffer at
+    // its natural high-water mark -- which it reaches on the early pages, before
+    // BT connects -- later renders resize() within the existing capacity and need
+    // no new contiguous allocation, so text keeps rendering even after maxAlloc
+    // later drops below a group size.
+    // (#50, re-attempted now that the saveSettings OOM crash is fixed by #51.)
+    hotGroup.clear();  // size 0, capacity retained for reuse
     hotGroupFont = nullptr;
     hotGroupIndex = UINT16_MAX;
-    if (ESP.getMaxAllocHeap() < group.uncompressedSize + 256) {
-      LOG_ERR("FDC", "Insufficient contiguous heap (max alloc %u) for hot group %u (%u bytes); skipping",
-              ESP.getMaxAllocHeap(), groupIndex, group.uncompressedSize);
-      oomOccurred = true;
-      stats.getBitmapTimeUs += micros() - tStart;
-      return nullptr;
+
+    // Only a group larger than the buffer we already hold needs a fresh (larger)
+    // allocation. Pre-check the largest allocatable block before resize(): with
+    // C++ exceptions disabled a failed allocation calls std::terminate()/abort()
+    // (a hard panic + reboot), not a soft failure -- so the `if (hotGroup.empty())`
+    // guard below can never actually catch an OOM. Skipping the glyph (it renders
+    // blank) is far better than crashing the whole device.
+    if (group.uncompressedSize > hotGroup.capacity()) {
+      if (ESP.getMaxAllocHeap() < group.uncompressedSize + 256) {
+        LOG_ERR("FDC", "Insufficient contiguous heap (max alloc %u) for hot group %u (%u bytes); skipping",
+                ESP.getMaxAllocHeap(), groupIndex, group.uncompressedSize);
+        oomOccurred = true;
+        stats.getBitmapTimeUs += micros() - tStart;
+        return nullptr;
+      }
     }
 
-    hotGroup.resize(group.uncompressedSize);
+    hotGroup.resize(group.uncompressedSize);  // within capacity => no reallocation
     if (hotGroup.empty()) {
       LOG_ERR("FDC", "Failed to allocate %u bytes for hot group %u", group.uncompressedSize, groupIndex);
       hotGroupFont = nullptr;
@@ -205,8 +228,7 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     }
 
     if (!decompressGroup(fontData, groupIndex, hotGroup.data(), group.uncompressedSize)) {
-      hotGroup.clear();
-      hotGroup.shrink_to_fit();
+      hotGroup.clear();  // keep capacity; this is a decode failure, not a memory release point
       hotGroupFont = nullptr;
       hotGroupIndex = UINT16_MAX;
       stats.getBitmapTimeUs += micros() - tStart;
@@ -494,18 +516,41 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
     uint16_t groupIdx = neededGroups[g];
     const EpdFontGroup& group = fontData->groups[groupIdx];
 
-    auto* tempBuf = static_cast<uint8_t*>(malloc(group.uncompressedSize));
-    if (!tempBuf) {
-      LOG_ERR("FDC", "Failed to allocate temp buffer (%u bytes) for group %u", group.uncompressedSize, groupIdx);
+    // Reuse the persistent hotGroup scratch instead of malloc/free per group.
+    // This per-page malloc of a ~6 KB contiguous block is what fails once a BLE
+    // remote (~58 KB) fragments the heap: prewarm then misses the group and the
+    // render falls back to the getBitmap() hot-group path -- which, because
+    // prewarm normally does all the work, was never grown and also can't
+    // allocate, so text starves and BLE is dropped. Holding one buffer at its
+    // high-water mark (reached on the first text page, before BT connects) means
+    // later pages resize() within capacity and need no new contiguous
+    // allocation. The same buffer backs the getBitmap() fallback, so both paths
+    // share it. (#50: the actual fix -- the earlier getBitmap-only change missed
+    // that prewarm, not the fallback, is the workhorse allocation.)
+    if (group.uncompressedSize > hotGroup.capacity()) {
+      if (ESP.getMaxAllocHeap() < group.uncompressedSize + 256) {
+        LOG_ERR("FDC", "Insufficient contiguous heap (max alloc %u) for prewarm group %u (%u bytes); skipping",
+                ESP.getMaxAllocHeap(), groupIdx, group.uncompressedSize);
+        missed++;
+        continue;
+      }
+    }
+    hotGroup.resize(group.uncompressedSize);
+    if (hotGroup.empty()) {
       missed++;
       continue;
     }
+    // Repurposing the buffer as a decompression temp invalidates its identity as
+    // a "current group" for the getBitmap() fast-path.
+    hotGroupFont = nullptr;
+    hotGroupIndex = UINT16_MAX;
+    uint8_t* tempBuf = hotGroup.data();
+
     if (group.uncompressedSize > stats.peakTempBytes) {
       stats.peakTempBytes = group.uncompressedSize;
     }
 
     if (!decompressGroup(fontData, groupIdx, tempBuf, group.uncompressedSize)) {
-      free(tempBuf);
       missed++;
       continue;
     }
@@ -521,8 +566,7 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
       slot.glyphs[i].bufferOffset = writeOffset;
       writeOffset += glyph.dataLength;
     }
-
-    free(tempBuf);
+    // No free(): tempBuf aliases the persistent hotGroup buffer (reused next group/page).
   }
 
   LOG_DBG("FDC", "Prewarm: %u glyphs in %u bytes from %u groups (%d missed)", glyphCount, writeOffset, groupCount,

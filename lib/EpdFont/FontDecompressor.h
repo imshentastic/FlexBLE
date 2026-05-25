@@ -88,6 +88,11 @@ class FontDecompressor {
 
   void freePageBuffer();
   void freeHotGroup();
+  // Invalidate the hot group's logical contents (font/index) but KEEP the
+  // vector's allocated capacity, so the next render reuses the same contiguous
+  // block instead of re-allocating it. Used by the per-render clearCache() path;
+  // freeHotGroup() (which actually releases the memory) is reserved for deinit().
+  void invalidateHotGroup();
   uint16_t getGroupIndex(const EpdFontData* fontData, uint32_t glyphIndex);
   uint32_t getAlignedOffset(const EpdFontData* fontData, uint16_t groupIndex, uint32_t glyphIndex);
   bool decompressGroup(const EpdFontData* fontData, uint16_t groupIndex, uint8_t* outBuf, uint32_t outSize);
