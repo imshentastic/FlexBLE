@@ -1,5 +1,18 @@
 # Changelog
 
+## [crumble-v3.2.0] - 2026-05-25
+
+### Added
+- Preview PNG images straight from the file browser (they previously failed to open and bounced back to Home), and set a PNG as a sleep screen image.
+- Show the loading popup immediately when opening a book, so a tap registers right away even while the cover decodes or the first chapter indexes.
+
+### Fixed
+- Text now keeps rendering with a Bluetooth page-turner connected: the glyph decompression buffer is held across pages instead of being reallocated on every render, which previously starved under Bluetooth heap fragmentation and dropped the link mid-chapter.
+- Bluetooth now survives image-heavy chapter boundaries: after a low-memory chapter rebuild the remote reconnects on its own once the page is safe to repaint (its images are cached to the on-device pixel cache), instead of thrashing connect/disconnect and leaving the remote off for the rest of the book.
+
+### Changed
+- Trimmed NimBLE host buffers (a single page-turner doesn't need the default multi-connection pools) to free heap for the reader's glyph and image buffers while Bluetooth is connected.
+
 ## [crumble-v3.1.0] - 2026-05-25
 
 ### Added
