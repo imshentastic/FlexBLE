@@ -2,6 +2,7 @@
 
 #include <FsHelpers.h>
 #include <HalStorage.h>
+#include <I18n.h>
 
 #include "CrossPointSettings.h"
 #include "Epub.h"
@@ -13,6 +14,7 @@
 #include "XtcReaderActivity.h"
 #include "activities/util/BmpViewerActivity.h"
 #include "activities/util/FullScreenMessageActivity.h"
+#include "components/UITheme.h"
 
 bool ReaderActivity::isXtcFile(const std::string& path) { return FsHelpers::hasXtcExtension(path); }
 
@@ -107,6 +109,15 @@ void ReaderActivity::onEnter() {
     goToLibrary();  // Start from root when entering via Browse
     return;
   }
+
+  // Immediate tap feedback. The work below -- SD font load, EPUB/XTC/TXT parse,
+  // then the first chapter build (which for a full-page cover also decodes the
+  // image) -- can take several seconds, during which the screen would otherwise
+  // keep showing the previous page and the tap feels dropped. Draw the loading
+  // popup right away so the user sees their open registered. The reader's first
+  // render replaces it (with the animated "Indexing..." popup on a cache miss).
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  renderer.displayBuffer();
 
   sdFontSystem.ensureLoaded(renderer);
 
