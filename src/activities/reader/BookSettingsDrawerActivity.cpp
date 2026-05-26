@@ -5,9 +5,11 @@
 #include <HalDisplay.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <MemoryBudget.h>
 
 #include <algorithm>
 
+#include "../util/ConfirmationActivity.h"
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "SettingsList.h"
@@ -64,11 +66,21 @@ void applyDeltaToSetting(const SettingInfo& info, int delta) {
 
 }  // namespace
 
-BookSettingsDrawerActivity::BookSettingsDrawerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-    : Activity("BookSettingsDrawer", renderer, mappedInput) {}
+BookSettingsDrawerActivity::BookSettingsDrawerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                                       const std::vector<SettingInfo>* externalReaderSettings,
+                                                       const std::optional<PxcManifest>* pxcManifest)
+    : Activity("BookSettingsDrawer", renderer, mappedInput),
+      externalReaderSettings_(externalReaderSettings && !externalReaderSettings->empty() ? externalReaderSettings
+                                                                                         : nullptr),
+      pxcManifest_(pxcManifest) {}
 
 void BookSettingsDrawerActivity::onEnter() {
   Activity::onEnter();
+
+  // Remember whether BLE was on so onExit() can request its return after the
+  // reader's re-layout drains. Settings toggles silently drop BLE (no prompt
+  // anymore -- the disconnect is just a side-effect of the layout change).
+  bleWasEnabledOnEntry_ = BluetoothHIDManager::getInstance().isEnabled();
 
   // Cache the underlying reader page so we can preserve it through every
   // partial-refresh redraw without re-rendering the EPUB. If the malloc
@@ -93,6 +105,22 @@ void BookSettingsDrawerActivity::onExit() {
   Activity::onExit();
   // Persist any changes the user made before the reader resumes.
   SETTINGS.saveToFile();
+  // CrumBLE: if BLE was on at entry and we silently dropped it to apply a
+  // layout change, request it back. Deferred so the drain fires AFTER the
+  // reader's re-layout completes (main loop runs tryEnableIfRequested every
+  // tick). User-initiated disconnect via the "BT Quick Disconnect" action
+  // also clears bleWasEnabledOnEntry_-checked state correctly: the state
+  // check is "was on AND is now off". If user explicitly disconnected, we
+  // still bring it back -- but that's intentional; the disconnect action
+  // closes the drawer immediately so this path won't fire (drawer onExit
+  // happens before the disconnect lambda's finish() returns, but the
+  // disconnect happens INSIDE the lambda before finish()). To be safe we
+  // skip auto-reconnect when the disconnect action was taken (no settings
+  // change to re-layout for); approximate via settingsChanged.
+  auto& bt = BluetoothHIDManager::getInstance();
+  if (bleWasEnabledOnEntry_ && !bt.isEnabled() && settingsChanged) {
+    bt.requestEnableLater();
+  }
 }
 
 void BookSettingsDrawerActivity::buildItems() {
@@ -100,110 +128,142 @@ void BookSettingsDrawerActivity::buildItems() {
 
   // 1) Pull every Reader-category non-Action setting, in declaration order.
   //
-  // `getSettingsList()` returns std::vector<SettingInfo> BY VALUE. The
-  // returned vector is a temporary that lives only for the duration of this
-  // range-for loop; any pointer captured into `info` becomes dangling once
-  // the loop exits. We used to do `infoPtr = &info` and bake that pointer
-  // into the lambda closures stored on each Item — which "worked" right
-  // after onEnter (the freed bytes were still intact) but broke after the
-  // next allocation overwrote them. Loading a new font in particular
-  // triggered enough heap churn that the SettingInfos for items right after
-  // Font (Line Spacing, Orientation) got clobbered first; their enumValues
-  // vector read as garbage and I18N.get(garbage_id) rendered as "????".
+  // PREFERRED PATH: when EpubReaderActivity built a settings cache at book
+  // open (heap healthy, BLE not yet eating 58 KB), we iterate that vector
+  // directly and item.settingIndex stays valid against it for the drawer's
+  // lifetime. This means the drawer always shows the full settings list,
+  // even mid-BLE-read with a fragmented heap -- the build that used to OOM
+  // never happens here. Toggle-time BT prompt (attemptSettingChange) is the
+  // gate, not list visibility.
   //
-  // Fix: copy SettingInfo by value into each lambda's closure. The
-  // valuePtr / valueGetter / enumValues members are all owned-by-value, so
-  // the copy stays valid as long as the lambda lives. SETTINGS itself is a
-  // global, and the pointer-to-member in valuePtr is stable regardless of
-  // where the SettingInfo copy lives.
-  for (const auto& info : getSettingsList()) {
-    if (info.category != StrId::STR_CAT_READER) continue;
-    if (info.type == SettingType::ACTION || info.type == SettingType::SECTION_HEADER) continue;
-    Item item;
-    item.nameId = info.nameId;
-    item.getValueText = [infoCopy = info]() { return valueTextForSetting(infoCopy); };
-    item.change = [infoCopy = info](int delta) { applyDeltaToSetting(infoCopy, delta); };
-    items.push_back(std::move(item));
+  // FALLBACK PATH (no external cache): rebuild locally with the original
+  // heap-gate. `getSettingsList()` returns std::vector<SettingInfo> by value;
+  // even one copy under a fragmented heap can bad_alloc -> terminate, so we
+  // skip the build when heap is too tight and the drawer degrades to BT
+  // actions only. This path is now rare -- only triggers when the parent
+  // (EpubReaderActivity) couldn't build its own cache either.
+  if (externalReaderSettings_) {
+    const auto& src = *externalReaderSettings_;
+    for (size_t i = 0; i < src.size(); ++i) {
+      const auto& info = src[i];
+      if (info.category != StrId::STR_CAT_READER) continue;
+      if (info.type == SettingType::ACTION || info.type == SettingType::SECTION_HEADER) continue;
+      Item item;
+      item.nameId = info.nameId;
+      item.settingIndex = static_cast<int>(i);
+      items.push_back(std::move(item));
+    }
+  } else {
+    const auto heap = MemoryBudget::snapshot();
+    if (MemoryBudget::hasHeap(heap, 28u * 1024u, 14u * 1024u)) {
+      settingsList_ = getSettingsList();
+      for (size_t i = 0; i < settingsList_.size(); ++i) {
+        const auto& info = settingsList_[i];
+        if (info.category != StrId::STR_CAT_READER) continue;
+        if (info.type == SettingType::ACTION || info.type == SettingType::SECTION_HEADER) continue;
+        Item item;
+        item.nameId = info.nameId;
+        item.settingIndex = static_cast<int>(i);
+        items.push_back(std::move(item));
+      }
+    } else {
+      LOG_INF("BSD", "Low heap (free=%u maxAlloc=%u); showing Bluetooth actions only", heap.freeHeap,
+              heap.maxAllocHeap);
+    }
   }
 
-  // 2a) Bluetooth quick-action, no-images variant. Identical to BT Quick Connect
-  // below, but first arms render-time image suppression on the shared renderer.
-  // Image-heavy books can't decode their images while NimBLE holds ~58 KB of the
-  // contiguous heap; this lets the user keep the page-turner connected by trading
-  // images (drawn as placeholder borders) for a stable BLE link. The flag is
-  // session-scoped (reset on reader entry) and auto-cleared when BLE drops.
+  // 2) Bluetooth action row(s). Behavior depends on current link state:
+  //
+  //   - Not linked: show TWO connect rows -- "BT Quick Connect" (full images)
+  //     and "BT No Images Quick Connect" (suppress image decode to keep a
+  //     stable link on image-heavy books). Both enable BLE and connect to the
+  //     bonded remote.
+  //
+  //   - Linked: show ONE disconnect row. Label reflects which mode is active:
+  //     "BT No Images Disconnect" if suppressImages is armed, "BT Quick
+  //     Disconnect" otherwise. Pressing it disables BLE (and clears image
+  //     suppression on the way out). Avoids the confusing UX of offering a
+  //     "Quick Connect" button while a remote is already connected.
   {
-    Item btNoImg;
-    btNoImg.nameId = StrId::STR_BT_NO_IMAGES_QUICK_CONNECT;
-    btNoImg.isAction = true;
-    btNoImg.activate = [this]() {
-      auto& btMgr = BluetoothHIDManager::getInstance();
-      // Arm image suppression before we connect so the reader's first post-connect
-      // render already skips image decodes (and won't trip the auto-drop).
-      renderer.setSuppressImages(true);
-      const bool hasBonded = SETTINGS.bleBondedDeviceAddr[0] != '\0';
-      if (!hasBonded) {
-        MenuResult result;
-        result.settingsChanged = settingsChanged;
-        result.requestBluetoothFlow = true;
-        setResult(ActivityResult{result});
-        finish();
-        return;
-      }
-      GUI.drawPopup(renderer, tr(STR_CONNECTING));
-      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-      if (!btMgr.isEnabled()) {
-        btMgr.enable();
-      }
-      btMgr.connectToDevice(SETTINGS.bleBondedDeviceAddr);
-      MenuResult result;
-      result.settingsChanged = settingsChanged;
-      setResult(ActivityResult{result});
-      finish();
-    };
-    items.push_back(std::move(btNoImg));
-  }
+    auto& btMgr = BluetoothHIDManager::getInstance();
+    const bool stackUp = btMgr.isEnabled();
+    const bool linked = stackUp && SETTINGS.bleBondedDeviceAddr[0] != '\0' &&
+                        btMgr.isConnected(SETTINGS.bleBondedDeviceAddr);
 
-  // 2) Bluetooth quick-action. One-shot button: enables BLE (if needed) and
-  // reconnects to the bonded remote synchronously, then closes the drawer.
-  // If the user has no bonded remote, instead closes the drawer with a flag
-  // asking the reader to launch the full BT settings UI for pairing.
-  {
-    Item bt;
-    bt.nameId = StrId::STR_BT_QUICK_CONNECT;
-    bt.isAction = true;
-    bt.activate = [this]() {
-      auto& btMgr = BluetoothHIDManager::getInstance();
-      const bool hasBonded = SETTINGS.bleBondedDeviceAddr[0] != '\0';
-      if (!hasBonded) {
-        // No saved remote — bounce out to the BT settings activity so the
-        // user can scan and pair. Reader's drawer result handler picks up
-        // the flag and launches the BT UI.
+    if (linked) {
+      Item disc;
+      disc.nameId = StrId::STR_BT_QUICK_CONNECT;  // base id for theming; customName overrides label
+      disc.isAction = true;
+      disc.customName = renderer.suppressImages() ? std::string("BT No Images Disconnect")
+                                                  : std::string("BT Quick Disconnect");
+      disc.activate = [this]() {
+        // Hardcoded popup -- sub-second op, not worth a 25-translation round-trip.
+        GUI.drawPopup(renderer, "Disconnecting Bluetooth...");
+        renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+        BluetoothHIDManager::getInstance().disable();
+        // disable() doesn't clear the renderer's image-suppression flag (that's
+        // owned by the renderer, not the BT manager). Clear it here so the next
+        // render restores images without waiting for the loop()'s link-teardown
+        // check to fire.
+        renderer.setSuppressImages(false);
         MenuResult result;
         result.settingsChanged = settingsChanged;
-        result.requestBluetoothFlow = true;
         setResult(ActivityResult{result});
         finish();
-        return;
+      };
+      items.push_back(std::move(disc));
+    } else {
+      // 2a) Bluetooth quick-action, no-images variant. Sets MenuResult flags
+      // so the reader can sequence: (1) drain any pending re-layout first
+      // (settings just toggled), (2) run the .pxc manifest-mismatch check and
+      // prompt if needed, (3) finally enable BLE and connect. Doing this
+      // synchronously here used to race the NimBLE handshake against a
+      // heap-heavy section rebuild and brick the connect.
+      {
+        Item btNoImg;
+        btNoImg.nameId = StrId::STR_BT_NO_IMAGES_QUICK_CONNECT;
+        btNoImg.isAction = true;
+        btNoImg.activate = [this]() {
+          const bool hasBonded = SETTINGS.bleBondedDeviceAddr[0] != '\0';
+          MenuResult result;
+          result.settingsChanged = settingsChanged;
+          if (!hasBonded) {
+            // No bonded remote -- bounce to the pairing UI as before. Don't
+            // bother flagging connect-after-relayout; the user has to pair
+            // first and the BT UI handles its own connect flow.
+            result.requestBluetoothFlow = true;
+          } else {
+            result.bleConnectRequested = true;
+            result.bleConnectNoImages = true;
+          }
+          setResult(ActivityResult{result});
+          finish();
+        };
+        items.push_back(std::move(btNoImg));
       }
-      // Show a "Connecting..." popup while the synchronous connect runs
-      // (~2-3 s for NimBLE + GATT handshake). The user is still inside the
-      // drawer render; we just paint over it.
-      GUI.drawPopup(renderer, tr(STR_CONNECTING));
-      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-      if (!btMgr.isEnabled()) {
-        btMgr.enable();
+
+      // 2b) Bluetooth quick-action. Same deferred flow as the No Images
+      // variant above, minus image suppression.
+      {
+        Item bt;
+        bt.nameId = StrId::STR_BT_QUICK_CONNECT;
+        bt.isAction = true;
+        bt.activate = [this]() {
+          const bool hasBonded = SETTINGS.bleBondedDeviceAddr[0] != '\0';
+          MenuResult result;
+          result.settingsChanged = settingsChanged;
+          if (!hasBonded) {
+            result.requestBluetoothFlow = true;
+          } else {
+            result.bleConnectRequested = true;
+            result.bleConnectNoImages = false;
+          }
+          setResult(ActivityResult{result});
+          finish();
+        };
+        items.push_back(std::move(bt));
       }
-      btMgr.connectToDevice(SETTINGS.bleBondedDeviceAddr);
-      // Whether connect succeeded or not, close the drawer. (If it failed,
-      // the BT stack stays enabled — auto-reconnect will retry on next
-      // button press.) Drawer dismissal mirrors the existing Back path.
-      MenuResult result;
-      result.settingsChanged = settingsChanged;
-      setResult(ActivityResult{result});
-      finish();
-    };
-    items.push_back(std::move(bt));
+    }
   }
 }
 
@@ -252,10 +312,7 @@ void BookSettingsDrawerActivity::changeSelected(int delta) {
     if (delta > 0 && item.activate) item.activate();
     return;
   }
-  if (item.change) {
-    item.change(delta);
-    settingsChanged = true;
-  }
+  attemptSettingChange(selectedIndex, delta);
 }
 
 void BookSettingsDrawerActivity::activateSelected() {
@@ -265,10 +322,155 @@ void BookSettingsDrawerActivity::activateSelected() {
     if (item.activate) item.activate();
     return;
   }
-  if (item.change) {
-    item.change(+1);
-    settingsChanged = true;
+  attemptSettingChange(selectedIndex, +1);
+}
+
+namespace {
+// CrumBLE: Resolve a SettingInfo's enum value to a user-visible label string.
+// Returns empty if the value is out of range.
+std::string enumLabelOf(const SettingInfo& info, uint8_t value) {
+  if (value < info.enumValues.size()) {
+    return std::string(I18N.get(info.enumValues[value]));
   }
+  return std::string{};
+}
+
+// Find a reader-category SettingInfo by nameId; nullptr if absent.
+const SettingInfo* findSetting(const std::vector<SettingInfo>& settings, StrId nameId) {
+  for (const auto& s : settings) {
+    if (s.nameId == nameId) return &s;
+  }
+  return nullptr;
+}
+
+// Format a font "Family (Size)" label from raw fields. SD font takes priority
+// (its name string is what the user sees in the font picker); otherwise
+// resolve the built-in family enum and the size enum (STR_TINY/SMALL/MEDIUM
+// /etc. -- raw fontSize is an INDEX into the compiled-in size list, not a
+// point size, so printing it as an integer reads as "1" or "2" rather than
+// "14" -- we resolve via the live SettingInfo's enumValues).
+std::string fontLabel(const std::vector<SettingInfo>& settings, uint8_t fontFamily, uint8_t fontSize,
+                      uint8_t sdSizeRange, const std::string& sdName) {
+  if (!sdName.empty()) {
+    static const char* range[] = {"S", "M", "L"};
+    const char* r = sdSizeRange < 3 ? range[sdSizeRange] : "?";
+    return sdName + " (" + r + ")";
+  }
+  std::string name = "Font " + std::to_string(static_cast<unsigned>(fontFamily));
+  if (const auto* ff = findSetting(settings, StrId::STR_FONT_FAMILY)) {
+    const auto label = enumLabelOf(*ff, fontFamily);
+    if (!label.empty()) name = label;
+  }
+  std::string sizeStr;
+  if (const auto* fs = findSetting(settings, StrId::STR_FONT_SIZE)) {
+    sizeStr = enumLabelOf(*fs, fontSize);
+  }
+  if (sizeStr.empty()) sizeStr = std::to_string(static_cast<unsigned>(fontSize));
+  return name + " (" + sizeStr + ")";
+}
+
+// CrumBLE: build the side-by-side comparison body shown in the .pxc manifest
+// mismatch prompt. Lists the four viewport-affecting fields with the prepared
+// value first, the user's current value second. Used by both the toggle-time
+// prompt (drawer) and the BLE-connect prompts (reader) -- but each owns its
+// own copy of this helper because the dependencies (SettingInfo, I18N, etc.)
+// would otherwise force a heavy include into PxcManifest.h. ~30 lines is OK
+// to duplicate; the alternative is a new utility file for one function.
+//
+// Output is plain text with '\n' between lines; ConfirmationActivity respects
+// hard newlines as section breaks (centered-per-line drop the indent visual,
+// so we avoid leading spaces).
+std::string buildManifestComparisonBody(const PxcManifest& m, const std::vector<SettingInfo>& settings,
+                                         const std::string& leadIn) {
+  const auto* oriInfo = findSetting(settings, StrId::STR_ORIENTATION);
+  const auto* imgInfo = findSetting(settings, StrId::STR_IMAGES);
+  std::string out = leadIn;
+  if (!out.empty()) out += "\n\n";
+  out += "Prepared:\n";
+  out += "Font: " + fontLabel(settings, m.fontFamily, m.fontSize, m.sdFontSizeRange, m.sdFontFamilyName) + "\n";
+  out += "Margin: " + std::to_string(static_cast<unsigned>(m.screenMargin)) + "\n";
+  out += "Orientation: " + (oriInfo ? enumLabelOf(*oriInfo, m.orientation) : std::to_string(m.orientation)) + "\n";
+  out += "Images: " + (imgInfo ? enumLabelOf(*imgInfo, m.imageRendering) : std::to_string(m.imageRendering)) + "\n";
+  out += "\nYours:\n";
+  out += "Font: " +
+         fontLabel(settings, SETTINGS.fontFamily, SETTINGS.fontSize, SETTINGS.sdFontSizeRange,
+                   SETTINGS.sdFontFamilyName) +
+         "\n";
+  out += "Margin: " + std::to_string(static_cast<unsigned>(SETTINGS.screenMargin)) + "\n";
+  out += "Orientation: " +
+         (oriInfo ? enumLabelOf(*oriInfo, SETTINGS.orientation) : std::to_string(SETTINGS.orientation)) + "\n";
+  out += "Images: " +
+         (imgInfo ? enumLabelOf(*imgInfo, SETTINGS.imageRendering) : std::to_string(SETTINGS.imageRendering));
+  return out;
+}
+
+// CrumBLE: compute the would-be new value for a setting given an applyDelta
+// call, WITHOUT mutating SETTINGS. Used to predict whether a toggle moves us
+// off the .pxc manifest's layout before we commit. Mirrors the branch
+// structure of applyDeltaToSetting (TOGGLE / ENUM / VALUE).
+uint8_t previewDeltaValue(const SettingInfo& info, int delta) {
+  if (info.valuePtr == nullptr) return 0;
+  const uint8_t cur = SETTINGS.*(info.valuePtr);
+  if (info.type == SettingType::TOGGLE) return cur == 0 ? 1 : 0;
+  if (info.type == SettingType::ENUM) {
+    if (info.enumValues.empty()) return cur;
+    const int count = static_cast<int>(info.enumValues.size());
+    int next = static_cast<int>(cur) + delta;
+    next = ((next % count) + count) % count;
+    return static_cast<uint8_t>(next);
+  }
+  if (info.type == SettingType::VALUE) {
+    const int step = std::max<int>(1, info.valueRange.step);
+    int next = static_cast<int>(cur) + delta * step;
+    if (next < info.valueRange.min) next = info.valueRange.max;
+    if (next > info.valueRange.max) next = info.valueRange.min;
+    return static_cast<uint8_t>(next);
+  }
+  return cur;
+}
+}  // namespace
+
+void BookSettingsDrawerActivity::attemptSettingChange(int itemIndex, int delta) {
+  if (itemIndex < 0 || itemIndex >= static_cast<int>(items.size())) return;
+  const auto& item = items[itemIndex];
+  if (item.settingIndex < 0 || item.settingIndex >= static_cast<int>(currentSettings().size())) return;
+  const SettingInfo& info = currentSettings()[item.settingIndex];
+
+  // CrumBLE: silent layout-change flow. The previous "Turn off Bluetooth?"
+  // prompt is gone -- the BLE disconnect is a side-effect of the layout
+  // change, not a user choice, so we just do it. BLE comes back via
+  // requestEnableLater() drained in onExit (if it was on at entry).
+  //
+  // The only prompt we keep is the .pxc manifest mismatch check: when the
+  // user toggles one of the four viewport-affecting settings and the new
+  // value would move them off the prepared layout, that's a meaningful
+  // choice (images may render badly over BLE) and worth asking about.
+  auto applyChangeSilent = [this, itemIndex, delta]() {
+    auto& mgr = BluetoothHIDManager::getInstance();
+    if (mgr.isEnabled()) {
+      GUI.drawPopup(renderer, "Updating layout...");
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+      mgr.disable();
+    }
+    // Re-validate in case the drawer state mutated while the prompt activity
+    // was open (e.g. a rebuild trimmed items).
+    if (itemIndex < 0 || itemIndex >= static_cast<int>(items.size())) return;
+    const auto& it = items[itemIndex];
+    const auto& src = currentSettings();
+    if (it.settingIndex < 0 || it.settingIndex >= static_cast<int>(src.size())) return;
+    applyDeltaToSetting(src[it.settingIndex], delta);
+    settingsChanged = true;
+  };
+
+  // CrumBLE: the drawer NEVER prompts on toggle. User must be free to scrub
+  // through values to find what they want without a confirmation dialog
+  // blocking each step. The .pxc manifest mismatch check only fires at BT
+  // connect time -- the user finds out then whether they need to switch back
+  // to the prepared layout for image rendering. Bluetooth-disable for layout
+  // changes is also silent (no prompt); the disconnect is a forced
+  // consequence of the heap pressure, not a user choice.
+  applyChangeSilent();
+  requestUpdate();
 }
 
 void BookSettingsDrawerActivity::loop() {
@@ -422,8 +624,12 @@ void BookSettingsDrawerActivity::renderDrawer() {
     if (selected) {
       renderer.fillRect(drawerX + 1, rowY, drawerW - 2, itemHeight, true);
     }
-    const char* name = I18N.get(item.nameId);
-    const std::string value = item.getValueText ? item.getValueText() : std::string{};
+    const char* name = !item.customName.empty() ? item.customName.c_str() : I18N.get(item.nameId);
+    const auto& src = currentSettings();
+    const std::string value =
+        (item.settingIndex >= 0 && item.settingIndex < static_cast<int>(src.size()))
+            ? valueTextForSetting(src[item.settingIndex])
+            : std::string{};
     const bool textBlack = !selected;
     renderer.drawText(UI_12_FONT_ID, drawerX + leftPad, rowY + rowTextY, name, textBlack);
     if (!value.empty()) {

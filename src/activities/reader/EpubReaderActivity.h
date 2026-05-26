@@ -13,7 +13,9 @@
 #include "BookmarkStore.h"
 #include "EpubReaderMenuActivity.h"
 #include "GlobalReadingStats.h"
+#include "PxcManifest.h"  // shared with BookSettingsDrawerActivity
 #include "activities/Activity.h"
+#include "activities/settings/SettingsActivity.h"  // for SettingInfo (drawer cache)
 
 class EpubReaderActivity final : public Activity {
   std::shared_ptr<Epub> epub;
@@ -80,6 +82,12 @@ class EpubReaderActivity final : public Activity {
   // renderContents() once a page renders cleanly AND has no images, so the
   // bonded remote reconnects only after we're past the un-decodable page(s).
   bool bleReEnableHeldForImagePage = false;
+  // CrumBLE: a chapter layout aborted under BLE pressure; we requested a BLE
+  // disable and must retry the build only AFTER it's actually off. Set here and
+  // drained in loop() once !isEnabled(), instead of requestUpdate()'ing inline --
+  // the render task would otherwise re-attempt the build before the deferred
+  // disable drained, burning the one-shot retry while NimBLE still held ~58 KB.
+  bool pendingLayoutRetryAfterBleOff = false;
   // CrumBLE: set once per book open when a page can't render with a BLE remote
   // connected (image decode or glyphs starved by NimBLE's ~58 KB). We drop
   // Bluetooth so the full heap renders the page (images AND text), and show the
@@ -140,6 +148,60 @@ class EpubReaderActivity final : public Activity {
   // Set when the reader is left at end-of-book and SETTINGS.moveFinishedToReadFolder is on.
   // Consumed in onExit() to relocate the finished book into /Read/.
   bool pendingReadFolderMove = false;
+
+  // CrumBLE: reader-category settings list cached at book-open, when heap
+  // is healthy and BLE typically hasn't connected yet. Lifetime is the
+  // reader's. Passed into BookSettingsDrawerActivity by const-pointer so
+  // the drawer never has to rebuild getSettingsList() under BLE pressure
+  // (which crashed-OOMd it). ~3 KB across reader lifetime. Empty if the
+  // build itself was gated out (BLE on AND heap already fragmented at
+  // reader entry); the drawer falls back to its own gated build.
+  std::vector<SettingInfo> readerSettingsCache_;
+
+  // CrumBLE: parsed manifest from META-INF/crumble-pxc.json, if present in
+  // the EPUB. Optional (most books won't have one). Used by the BLE-link
+  // edge detector below to decide whether to prompt the user to switch to
+  // the prepared layout when they connect a remote.
+  std::optional<PxcManifest> pxcManifest_;
+  // Edge tracker: set true when a remote actually links (NimBLE handshake
+  // completes), false when it drops. Manifest mismatch check fires on the
+  // 0 -> 1 transition + stability window. Distinct from btWasEnabled --
+  // that one tracks the stack, this one tracks whether a remote is paired
+  // up RIGHT NOW.
+  bool btWasLinked_ = false;
+  // Earliest ms timestamp at which we may fire the manifest mismatch prompt
+  // after observing a fresh link. NimBLE's connect handshake briefly toggles
+  // the linked state and we'd rather not race that; gating on a few seconds
+  // of continuous linked-ness avoids ghost prompts during the connect spike.
+  unsigned long btManifestPromptEarliestMs_ = 0UL;
+  // Session-scoped: once the user has answered the manifest prompt (either
+  // applied the prepared layout or kept their current settings), don't ask
+  // again for this book open. The previous "per-link" semantics re-fired the
+  // prompt whenever the controller briefly dropped link and re-established,
+  // which was confusing -- if the user said "keep mine", they meant it.
+  // Cleared on book entry (onEnter) so a fresh book gets a fresh decision.
+  bool btManifestPromptAnsweredThisSession_ = false;
+  // CrumBLE: drawer BT-Quick-Connect deferred-execution state. When the
+  // drawer's QC row is tapped, the drawer just sets MenuResult flags and
+  // finishes -- the reader runs the .pxc mismatch prompt FIRST (so the user
+  // chooses whether to keep their settings or use the prepared layout
+  // BEFORE any re-layout), THEN drains a section rebuild + the actual
+  // bt.enable() + connectToDevice(). Doing the connect inline from the
+  // drawer's lambda used to race the NimBLE handshake against a
+  // heap-heavy section rebuild and brick the link.
+  bool pendingBleQuickConnect_ = false;
+  bool pendingBleQuickConnectNoImages_ = false;
+  // True when the drawer reported settingsChanged alongside the QC request.
+  // The reader's result handler defers the section.reset() until the user
+  // answers the manifest prompt (if any), so the prompt fires BEFORE the
+  // re-layout, not after.
+  bool pendingBleQuickConnectSettingsChanged_ = false;
+  // Tracks the prompt's lifecycle within a single QC attempt. -1 = not yet
+  // shown; 0 = shown, user picked "Use mine" (drop section if needed, then
+  // connect); 1 = shown, user picked "Use prepared" (apply manifest, drop
+  // section, then connect). On Back, we clear pendingBleQuickConnect_
+  // entirely so this never advances.
+  int pendingBleQuickConnectPromptStage_ = -1;
 
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;

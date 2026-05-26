@@ -30,6 +30,17 @@ struct MenuResult {
   // result handler treats it as a signal to also finish itself so the user
   // lands directly back in the book instead of in the reader menu.
   bool autoExitParent = false;
+  // CrumBLE: BookSettingsDrawer's BT Quick Connect sets this so the reader
+  // can do the connect AFTER any pending re-layout drains, instead of
+  // racing the NimBLE handshake against a heap-heavy section rebuild
+  // (which OOM'd the connect on the way out). Reader's drawer result
+  // handler reads it, finishes any pending re-layout, runs the .pxc
+  // manifest-mismatch check (if applicable), then enables and connects.
+  bool bleConnectRequested = false;
+  // Paired with bleConnectRequested: true when the BT No Images variant
+  // was tapped (the reader will arm renderer.setSuppressImages() before
+  // the actual connect lands).
+  bool bleConnectNoImages = false;
 };
 
 struct ChapterResult {
@@ -81,9 +92,16 @@ struct FilePathResult {
   std::string path;
 };
 
+// CrumBLE: result from ChoicePromptActivity. choice == -1 means the user hit
+// Back (cancel); choice >= 0 is the index of the picked option.
+struct ChoicePromptResult {
+  int choice = -1;
+};
+
 using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,
                                    IntervalResult, PageResult, SyncResult, NetworkModeResult, FootnoteResult,
-                                   BookmarkResult, FileBrowserActionResult, FilePathResult, SortPickerResult>;
+                                   BookmarkResult, FileBrowserActionResult, FilePathResult, SortPickerResult,
+                                   ChoicePromptResult>;
 
 struct ActivityResult {
   bool isCancelled = false;

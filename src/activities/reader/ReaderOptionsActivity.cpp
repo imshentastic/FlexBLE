@@ -2,6 +2,8 @@
 
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <Logging.h>
+#include <MemoryBudget.h>
 
 #include <algorithm>
 #include <iterator>
@@ -49,6 +51,27 @@ void ReaderOptionsActivity::onEnter() {
 
 void ReaderOptionsActivity::rebuildSettingsList() {
   settings.clear();
+  settingsCount = 0;
+  selectedIndex = 0;
+  lowHeap_ = false;
+
+  // CrumBLE: getSettingsList() returns a full std::vector<SettingInfo> -- every
+  // category, each row carrying nested enumRawValues vectors and std::function
+  // getter/setter slots. The temporary plus the std::copy_if into our member
+  // vector add up to several KB of churn. Opening Reader Options mid-BLE-read
+  // (after image-heavy pages, when free heap is ~25 KB and maxAlloc has
+  // collapsed to a few KB) bad_alloc'd inside that build and abort-rebooted
+  // the device. Same shape as BookSettingsDrawerActivity's onEnter OOM. Gate
+  // matches the drawer's 28 KB free / 14 KB maxAlloc floor; on fail, leave
+  // settingsCount=0 and let render() draw an explanatory message instead.
+  const auto heap = MemoryBudget::snapshot();
+  if (!MemoryBudget::hasHeap(heap, 28u * 1024u, 14u * 1024u)) {
+    lowHeap_ = true;
+    LOG_INF("ROA", "Low heap (free=%u maxAlloc=%u); refusing to build settings list",
+            heap.freeHeap, heap.maxAllocHeap);
+    return;
+  }
+
   sdFontSystem.refreshIfDirty();
   const auto allSettings = getSettingsList(&sdFontSystem.registry());
   settings.reserve(allSettings.size() + 2);
@@ -134,6 +157,17 @@ void ReaderOptionsActivity::loop() {
     requestUpdate();
   });
 
+  // CrumBLE: low-heap fallback path has no list to toggle. Ignore Confirm so
+  // toggleCurrentSetting() doesn't index settings[0] on an empty vector. Back
+  // still works (and we don't call SETTINGS.saveToFile() either, since nothing
+  // was changed -- save itself is hardened but skipping is cheaper still).
+  if (lowHeap_) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      finish();
+    }
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     toggleCurrentSetting();
     requestUpdate();
@@ -164,35 +198,62 @@ void ReaderOptionsActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect{contentX, metrics.topPadding, contentWidth, metrics.headerHeight},
                  tr(STR_READER_OPTIONS), nullptr);
 
-  GUI.drawList(
-      renderer,
-      Rect{contentX, metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing, contentWidth,
-           pageHeight -
-               (metrics.topPadding + metrics.headerHeight + metrics.buttonHintsHeight + metrics.verticalSpacing * 2)},
-      settingsCount, selectedIndex, [this](int i) { return std::string(I18N.get(settings[i].nameId)); }, nullptr,
-      nullptr,
-      [this](int i) {
-        const auto& setting = settings[i];
-        std::string valueText;
-        if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
-          valueText = SETTINGS.*(setting.valuePtr) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
-        } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
-          const uint8_t value = SETTINGS.*(setting.valuePtr);
-          const uint8_t displayValue = enumDisplayIndexForRawValue(setting, value);
-          const size_t optionCount = settingEnumOptionCount(setting);
-          const uint8_t safeValue = displayValue < optionCount ? displayValue : 0;
-          valueText = settingEnumOptionLabel(setting, safeValue);
-        } else if (setting.type == SettingType::ENUM && setting.valueGetter) {
-          const uint8_t value = setting.valueGetter();
-          valueText = settingEnumOptionLabel(setting, value);
-        } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
-          valueText = std::to_string(SETTINGS.*(setting.valuePtr));
-        }
-        return valueText;
-      },
-      true);
+  if (lowHeap_) {
+    // CrumBLE: low-heap fallback. We didn't build the settings list, so don't
+    // call GUI.drawList (its label getter indexes settings[i]). Show a brief
+    // hardcoded message in the body area instead. Hardcoded English -- this
+    // is a rare degradation path; wiring i18n for it isn't worth the 25
+    // translation files. Header + Back button hint remain intact so the user
+    // knows what they tried to open and how to leave.
+    const int listTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+    const int listHeight = pageHeight - (metrics.topPadding + metrics.headerHeight + metrics.buttonHintsHeight +
+                                         metrics.verticalSpacing * 2);
+    const int lineHeight = renderer.getFontAscenderSize(UI_10_FONT_ID) + 4;
+    const char* lines[] = {
+        "Memory low.",
+        "Close Bluetooth from the reader menu",
+        "or read further to free memory,",
+        "then reopen Reader Options.",
+    };
+    constexpr int lineCount = sizeof(lines) / sizeof(lines[0]);
+    const int blockHeight = lineHeight * lineCount;
+    int currentY = listTop + std::max(0, (listHeight - blockHeight) / 2);
+    for (int i = 0; i < lineCount; ++i) {
+      renderer.drawCenteredText(UI_10_FONT_ID, currentY, lines[i]);
+      currentY += lineHeight;
+    }
+  } else {
+    GUI.drawList(
+        renderer,
+        Rect{contentX, metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing, contentWidth,
+             pageHeight -
+                 (metrics.topPadding + metrics.headerHeight + metrics.buttonHintsHeight + metrics.verticalSpacing * 2)},
+        settingsCount, selectedIndex, [this](int i) { return std::string(I18N.get(settings[i].nameId)); }, nullptr,
+        nullptr,
+        [this](int i) {
+          const auto& setting = settings[i];
+          std::string valueText;
+          if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
+            valueText = SETTINGS.*(setting.valuePtr) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+          } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
+            const uint8_t value = SETTINGS.*(setting.valuePtr);
+            const uint8_t displayValue = enumDisplayIndexForRawValue(setting, value);
+            const size_t optionCount = settingEnumOptionCount(setting);
+            const uint8_t safeValue = displayValue < optionCount ? displayValue : 0;
+            valueText = settingEnumOptionLabel(setting, safeValue);
+          } else if (setting.type == SettingType::ENUM && setting.valueGetter) {
+            const uint8_t value = setting.valueGetter();
+            valueText = settingEnumOptionLabel(setting, value);
+          } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
+            valueText = std::to_string(SETTINGS.*(setting.valuePtr));
+          }
+          return valueText;
+        },
+        true);
+  }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_TOGGLE), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), lowHeap_ ? "" : tr(STR_TOGGLE),
+                                            lowHeap_ ? "" : tr(STR_DIR_UP), lowHeap_ ? "" : tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4, true);
 
   renderer.displayBuffer();

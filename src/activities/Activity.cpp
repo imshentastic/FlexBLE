@@ -1,5 +1,6 @@
 #include "Activity.h"
 
+#include <BluetoothHIDManager.h>
 #include <I18n.h>
 
 #include "ActivityManager.h"
@@ -30,6 +31,17 @@ void Activity::exitToHomeWithPopup() {
   // activity replace, carousel render) leaves the panel frozen on
   // the last reader page for ~700 ms.
   GUI.drawPopup(renderer, tr(STR_GOING_HOME));
+  // CrumBLE: tear NimBLE down synchronously BEFORE the Home transition. Home's
+  // Flow shelf renders on a separate task and would otherwise race the reader's
+  // deferred BLE disable -- rendering while NimBLE still holds ~58 KB, which
+  // OOM-crashed the shelf's vector/string allocations on a fragmented heap. Doing
+  // it here frees that heap first so Home renders cleanly. No-op when BLE is off
+  // (the common non-reader case); drawPopup above already gave instant feedback,
+  // mirroring the drawer's drawPopup-then-BLE-op pattern (safe outside a render lock).
+  auto& bt = BluetoothHIDManager::getInstance();
+  if (bt.isEnabled()) {
+    bt.disable();
+  }
   activityManager.goHome();
 }
 

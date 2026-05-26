@@ -40,8 +40,12 @@
 #include "QrDisplayActivity.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
+#include <ArduinoJson.h>  // for .pxc manifest parse
+
 #include "SdCardFontSystem.h"
+#include "SettingsList.h"  // for getSettingsList (drawer cache build)
 #include "activities/boot_sleep/SleepCoverAssets.h"
+#include "activities/util/ChoicePromptActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
@@ -55,6 +59,66 @@ constexpr uint16_t DEFAULT_AUTO_PAGE_TURN_INTERVAL_S = 30;
 constexpr uint16_t MIN_AUTO_PAGE_TURN_INTERVAL_S = 5;
 constexpr uint16_t MAX_AUTO_PAGE_TURN_INTERVAL_S = 120;
 constexpr int MAX_PAGE_LOAD_RETRIES = 3;
+
+// CrumBLE: .pxc manifest comparison body helper (duplicated from
+// BookSettingsDrawerActivity.cpp because the alternative -- shared header --
+// would force settings/I18n includes into PxcManifest.h, polluting every
+// translation unit that touches the manifest struct). Keep the two copies
+// behaviourally identical if you change one.
+std::string enumLabelOf(const SettingInfo& info, uint8_t value) {
+  if (value < info.enumValues.size()) {
+    return std::string(I18N.get(info.enumValues[value]));
+  }
+  return std::string{};
+}
+const SettingInfo* findSetting(const std::vector<SettingInfo>& settings, StrId nameId) {
+  for (const auto& s : settings) {
+    if (s.nameId == nameId) return &s;
+  }
+  return nullptr;
+}
+std::string fontLabel(const std::vector<SettingInfo>& settings, uint8_t fontFamily, uint8_t fontSize,
+                      uint8_t sdSizeRange, const std::string& sdName) {
+  if (!sdName.empty()) {
+    static const char* range[] = {"S", "M", "L"};
+    const char* r = sdSizeRange < 3 ? range[sdSizeRange] : "?";
+    return sdName + " (" + r + ")";
+  }
+  std::string name = "Font " + std::to_string(static_cast<unsigned>(fontFamily));
+  if (const auto* ff = findSetting(settings, StrId::STR_FONT_FAMILY)) {
+    const auto label = enumLabelOf(*ff, fontFamily);
+    if (!label.empty()) name = label;
+  }
+  std::string sizeStr;
+  if (const auto* fs = findSetting(settings, StrId::STR_FONT_SIZE)) {
+    sizeStr = enumLabelOf(*fs, fontSize);
+  }
+  if (sizeStr.empty()) sizeStr = std::to_string(static_cast<unsigned>(fontSize));
+  return name + " (" + sizeStr + ")";
+}
+std::string buildManifestComparisonBody(const PxcManifest& m, const std::vector<SettingInfo>& settings,
+                                         const std::string& leadIn) {
+  const auto* oriInfo = findSetting(settings, StrId::STR_ORIENTATION);
+  const auto* imgInfo = findSetting(settings, StrId::STR_IMAGES);
+  std::string out = leadIn;
+  if (!out.empty()) out += "\n\n";
+  out += "Prepared:\n";
+  out += "Font: " + fontLabel(settings, m.fontFamily, m.fontSize, m.sdFontSizeRange, m.sdFontFamilyName) + "\n";
+  out += "Margin: " + std::to_string(static_cast<unsigned>(m.screenMargin)) + "\n";
+  out += "Orientation: " + (oriInfo ? enumLabelOf(*oriInfo, m.orientation) : std::to_string(m.orientation)) + "\n";
+  out += "Images: " + (imgInfo ? enumLabelOf(*imgInfo, m.imageRendering) : std::to_string(m.imageRendering)) + "\n";
+  out += "\nYours:\n";
+  out += "Font: " +
+         fontLabel(settings, SETTINGS.fontFamily, SETTINGS.fontSize, SETTINGS.sdFontSizeRange,
+                   SETTINGS.sdFontFamilyName) +
+         "\n";
+  out += "Margin: " + std::to_string(static_cast<unsigned>(SETTINGS.screenMargin)) + "\n";
+  out += "Orientation: " +
+         (oriInfo ? enumLabelOf(*oriInfo, SETTINGS.orientation) : std::to_string(SETTINGS.orientation)) + "\n";
+  out += "Images: " +
+         (imgInfo ? enumLabelOf(*imgInfo, SETTINGS.imageRendering) : std::to_string(SETTINGS.imageRendering));
+  return out;
+}
 
 void drawToastBuffer(const GfxRenderer& renderer, const char* msg) {
   constexpr int toastPadX = 20;
@@ -278,6 +342,107 @@ void EpubReaderActivity::onEnter() {
   // NOTE: This affects layout math and must be applied before any render calls.
   ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
 
+  // CrumBLE: pre-grow the glyph decompression buffer to its high-water mark now,
+  // while BLE is off and the heap is unfragmented. The buffer is held across
+  // pages, but it only grows when a group is first decompressed -- so opening on a
+  // cover/image page (no text) and connecting a BT remote before the first text
+  // page leaves it ungrown, and under NimBLE's fragmentation the first text page
+  // then can't allocate the ~6 KB group buffer, starving glyphs and dropping the
+  // link within a page or two. Decompressing a sample of common glyphs across the
+  // four styles here makes the buffer ready no matter which page BT connects on.
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    fcm->prewarmCache(SETTINGS.getReaderFontId(),
+                      "etaoinshrdlucmfwypvbgkjqxzETAOINSHRDLUCMFWYP.,;:'\"!?-0123456789", 0x0F);
+    // Drop the prewarm's page-slot buffers immediately. We only need this prewarm
+    // to grow the *shared glyph-group buffer* to its high-water mark -- clearCache
+    // keeps that capacity via invalidateHotGroup. Leaving the four sample-string
+    // slot.buffers held (~10-15 KB total) would fragment the heap right before the
+    // first chapter's image extraction, dropping maxAlloc below the JPEG decoder
+    // threshold and suppressing images at book-open even with BT off.
+    fcm->clearCache();
+  }
+
+  // CrumBLE: build the reader-category settings list once now, while heap is
+  // unfragmented (same window the prewarm depends on -- BLE not yet eating
+  // 58 KB, no chapter decoded yet). The drawer references this cache instead
+  // of rebuilding under BLE pressure, which used to OOM-crash on a fragmented
+  // heap. Skip if heap is already tight -- the drawer's own local gate will
+  // fall back to its actions-only list, same as before. Tracking BLE state
+  // too because mid-book Reader Activity re-entry (e.g. returning from a
+  // settings sub-activity) can hit this with BLE already connected; in that
+  // rare case we prefer the safe skip over a doomed build.
+  readerSettingsCache_.clear();
+  {
+    const auto heap = MemoryBudget::snapshot();
+    if (MemoryBudget::hasHeap(heap, 40u * 1024u, 20u * 1024u)) {
+      auto all = getSettingsList(&sdFontSystem.registry());
+      readerSettingsCache_.reserve(20);
+      for (auto& s : all) {
+        if (s.category == StrId::STR_CAT_READER) {
+          readerSettingsCache_.push_back(std::move(s));
+        }
+      }
+      readerSettingsCache_.shrink_to_fit();
+      LOG_INF("ERA", "Cached %u reader settings (heap free=%u maxAlloc=%u)",
+              static_cast<unsigned>(readerSettingsCache_.size()), heap.freeHeap, heap.maxAllocHeap);
+    } else {
+      LOG_INF("ERA", "Skipping reader-settings cache build; heap too tight (free=%u maxAlloc=%u)",
+              heap.freeHeap, heap.maxAllocHeap);
+    }
+  }
+
+  // CrumBLE: parse the optimizer's .pxc manifest if the book has one. Path is
+  // META-INF/crumble-pxc.json (standard EPUB metadata directory). Contents
+  // mirror the /api/reader-render-info snapshot the optimizer used at bake
+  // time. We hold the parsed fields until book close so the BLE-link edge
+  // detector in loop() can prompt the user to switch layouts when needed.
+  pxcManifest_.reset();
+  {
+    const std::string manifestPath = "META-INF/crumble-pxc.json";
+    size_t manifestSize = 0;
+    if (epub->getItemSize(manifestPath, &manifestSize) && manifestSize > 0 && manifestSize < 2048) {
+      uint8_t* manifestBytes = epub->readItemContentsToBytes(manifestPath, &manifestSize);
+      if (manifestBytes) {
+        JsonDocument doc;
+        const DeserializationError err = deserializeJson(doc, manifestBytes, manifestSize);
+        if (!err) {
+          PxcManifest m;
+          m.orientation = doc["orientation"] | 0;
+          m.screenMargin = doc["screenMargin"] | 0;
+          m.imageRendering = doc["imageRendering"] | 0;
+          m.fontId = doc["fontId"] | 0;
+          m.viewportW = doc["viewportWidth"] | 0;
+          m.viewportH = doc["viewportHeight"] | 0;
+          m.screenW = doc["screenWidth"] | 0;
+          m.screenH = doc["screenHeight"] | 0;
+          m.pxcCount = doc["pxcCount"] | 0;
+          m.fontFamily = doc["fontFamily"] | 0;
+          m.fontSize = doc["fontSize"] | 0;
+          m.sdFontSizeRange = doc["sdFontSizeRange"] | 0;
+          if (doc["sdFontFamilyName"].is<const char*>()) {
+            m.sdFontFamilyName = doc["sdFontFamilyName"].as<const char*>();
+          }
+          pxcManifest_ = m;
+          LOG_INF("ERA", "Loaded .pxc manifest: %u images, viewport %ux%u, fontId=%ld",
+                  static_cast<unsigned>(m.pxcCount), static_cast<unsigned>(m.viewportW),
+                  static_cast<unsigned>(m.viewportH), static_cast<long>(m.fontId));
+        } else {
+          LOG_INF("ERA", "Failed to parse .pxc manifest: %s", err.c_str());
+        }
+        free(manifestBytes);
+      }
+    }
+  }
+  // Reset BLE-link edge state on every book open: a fresh book may have a
+  // different manifest (or none), and any prior link tracking is stale.
+  btWasLinked_ = false;
+  btManifestPromptEarliestMs_ = 0UL;
+  btManifestPromptAnsweredThisSession_ = false;
+  pendingBleQuickConnect_ = false;
+  pendingBleQuickConnectNoImages_ = false;
+  pendingBleQuickConnectSettingsChanged_ = false;
+  pendingBleQuickConnectPromptStage_ = -1;
+
   // Activate reader-specific front button mapping (if configured).
   mappedInput.setReaderMode(true);
 
@@ -447,6 +612,16 @@ void EpubReaderActivity::loop() {
     return;
   }
 
+  // A chapter layout aborted under BLE pressure and we requested a BLE disable.
+  // Now that the main loop has actually torn the stack down (full heap), fire the
+  // one retry build -- so it sees the freed heap instead of racing the deferred
+  // disable on the render task.
+  if (pendingLayoutRetryAfterBleOff && !BluetoothHIDManager::getInstance().isEnabled()) {
+    pendingLayoutRetryAfterBleOff = false;
+    requestUpdate();
+    return;
+  }
+
   // BT No Images Quick Connect auto-restore. The no-images flag exists only to
   // keep the contiguous heap free for NimBLE's ~58 KB, so restore images the
   // moment Bluetooth stops holding that heap. Two distinct drop signals:
@@ -471,6 +646,201 @@ void EpubReaderActivity::loop() {
       requestUpdate();
       return;
     }
+  }
+
+  // CrumBLE: .pxc-manifest mismatch prompt on Bluetooth connect.
+  //
+  // When a remote actually links AND the book has a .pxc manifest AND the four
+  // viewport-affecting fields (fontId, orientation, screenMargin, imageRendering)
+  // don't match what the optimizer baked against, the user's images won't render
+  // over the link (the device's renderFromCache rejects mismatched dims). Prompt
+  // the user to switch to the baked layout. Wait ~3s after first observing the
+  // link to dodge NimBLE's connect-handshake transient, and skip if we've
+  // already prompted this link.
+  {
+    auto& btMgr = BluetoothHIDManager::getInstance();
+    const bool stackUp = btMgr.isEnabled();
+    const bool linkedNow = stackUp && SETTINGS.bleBondedDeviceAddr[0] != '\0' &&
+                           btMgr.isConnected(SETTINGS.bleBondedDeviceAddr);
+    constexpr unsigned long kManifestPromptStabilityMs = 3000;
+    if (linkedNow && !btWasLinked_) {
+      // Fresh link. Arm the prompt; we'll fire once the stability window passes.
+      btManifestPromptEarliestMs_ = millis() + kManifestPromptStabilityMs;
+    } else if (!linkedNow && btWasLinked_) {
+      // Link dropped. Don't clear btManifestPromptAnsweredThisSession_ here --
+      // if the user already answered, brief controller drops shouldn't re-prompt.
+      btManifestPromptEarliestMs_ = 0UL;
+    }
+    btWasLinked_ = linkedNow;
+
+    if (linkedNow && pxcManifest_.has_value() && !btManifestPromptAnsweredThisSession_ &&
+        btManifestPromptEarliestMs_ != 0UL && millis() >= btManifestPromptEarliestMs_) {
+      const PxcManifest& m = *pxcManifest_;
+      const int32_t curFontId = SETTINGS.getReaderFontId();
+      const bool mismatch = (m.fontId != curFontId) ||
+                            (m.orientation != SETTINGS.orientation) ||
+                            (m.screenMargin != SETTINGS.screenMargin) ||
+                            (m.imageRendering != SETTINGS.imageRendering);
+      btManifestPromptAnsweredThisSession_ = true;  // one-shot per book, regardless of branch below
+      if (mismatch) {
+        LOG_INF("ERA",
+                ".pxc manifest mismatch on BLE connect: cur fontId=%ld ori=%u marg=%u img=%u vs mfst fontId=%ld ori=%u marg=%u img=%u",
+                static_cast<long>(curFontId), static_cast<unsigned>(SETTINGS.orientation),
+                static_cast<unsigned>(SETTINGS.screenMargin), static_cast<unsigned>(SETTINGS.imageRendering),
+                static_cast<long>(m.fontId), static_cast<unsigned>(m.orientation),
+                static_cast<unsigned>(m.screenMargin), static_cast<unsigned>(m.imageRendering));
+        // Field-by-field comparison body so the user sees exactly which
+        // settings differ. Hardcoded English -- rare prompt, layman wording.
+        const std::string promptBody = buildManifestComparisonBody(
+            *pxcManifest_, readerSettingsCache_,
+            "This book was prepared for clearer images over Bluetooth. Your current layout doesn't "
+            "match. Switch to the prepared layout?");
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(
+                renderer, mappedInput, "Use prepared layout?", promptBody,
+                /*ignoreInitialConfirmRelease=*/true),
+            [this](const ActivityResult& result) {
+              if (result.isCancelled) {
+                requestUpdate();
+                return;
+              }
+              // Apply the manifest's viewport-affecting settings, save, and trigger
+              // a re-layout. Font is the trickiest -- SETTINGS doesn't store fontId
+              // directly; it derives it from fontFamily + fontSize. We can't fully
+              // invert that here without the registry, so for now we only apply the
+              // three raw settings and accept that fontId may still differ if the
+              // bake used a font we can't currently recreate (e.g. an SD font that's
+              // since been deleted). The renderFromCache fallback then re-decodes
+              // the JPEG -- not free over BLE, but not a crash either. Reverse
+              // fontId->family mapping is a follow-up.
+              if (pxcManifest_.has_value()) {
+                const PxcManifest& mm = *pxcManifest_;
+                SETTINGS.orientation = mm.orientation;
+                SETTINGS.screenMargin = mm.screenMargin;
+                SETTINGS.imageRendering = mm.imageRendering;
+                SETTINGS.saveToFile();
+                // Force a fresh layout next render -- screen orientation may have
+                // changed, so re-apply at the renderer level too.
+                ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+                if (section) {
+                  section.reset();  // drop cached section so render() rebuilds
+                }
+                requestUpdate();
+              }
+            });
+        return;
+      }
+    }
+  }
+
+  // CrumBLE: drain the drawer's deferred BT Quick Connect. The drawer left
+  // pending flags; we sequence the operations:
+  //
+  //   1. If the prompt hasn't been shown yet (stage == -1) AND there's a
+  //      manifest mismatch (current SETTINGS differ from the .pxc bake),
+  //      push the 3-option ChoicePromptActivity. Options:
+  //        0 = Use my settings    -> stage=0
+  //        1 = Use prepared        -> stage=1 (also reverts SETTINGS to manifest)
+  //        Back (cancel)           -> clear all pending; no re-layout, no
+  //                                   connect
+  //      The prompt fires BEFORE any re-layout: the previous design
+  //      indexed first then prompted, which (a) wasted the indexing if
+  //      the user picked "Use prepared" and (b) confused the user about
+  //      sequencing. Stage flag survives across loop ticks.
+  //
+  //   2. If no mismatch OR the prompt has been answered (stage >= 0):
+  //        - If pendingBleQuickConnectSettingsChanged_, drop the section
+  //          (triggers re-layout next render). Wait for it to rebuild.
+  //        - Once section is non-null (or never needed dropping), connect.
+  //
+  //   3. Connecting: enable() + connectToDevice(). Latch the session flag so
+  //      the edge-detect prompt doesn't fire a duplicate later.
+  if (pendingBleQuickConnect_) {
+    auto& btMgr = BluetoothHIDManager::getInstance();
+    const bool mismatch = pxcManifest_.has_value() &&
+                          ((pxcManifest_->fontId != SETTINGS.getReaderFontId()) ||
+                           (pxcManifest_->orientation != SETTINGS.orientation) ||
+                           (pxcManifest_->screenMargin != SETTINGS.screenMargin) ||
+                           (pxcManifest_->imageRendering != SETTINGS.imageRendering));
+
+    // Step 1: prompt if needed and not yet shown.
+    if (mismatch && pendingBleQuickConnectPromptStage_ == -1) {
+      const std::string promptBody = buildManifestComparisonBody(
+          *pxcManifest_, readerSettingsCache_,
+          "This book was prepared for clearer images over Bluetooth.");
+      std::vector<std::string> options = {"Use my settings", "Use prepared"};
+      startActivityForResult(
+          std::make_unique<ChoicePromptActivity>(renderer, mappedInput, "Use prepared layout?", promptBody,
+                                                 std::move(options),
+                                                 /*ignoreInitialConfirmRelease=*/true),
+          [this](const ActivityResult& result) {
+            // Back/Cancel -> drop everything. No re-layout, no connect. The
+            // user's earlier setting toggle stays in SETTINGS but the next
+            // natural re-layout (page turn, chapter boundary) will apply it.
+            if (result.isCancelled) {
+              pendingBleQuickConnect_ = false;
+              pendingBleQuickConnectNoImages_ = false;
+              pendingBleQuickConnectSettingsChanged_ = false;
+              pendingBleQuickConnectPromptStage_ = -1;
+              requestUpdate();
+              return;
+            }
+            const auto* cr = std::get_if<ChoicePromptResult>(&result.data);
+            const int pick = cr ? cr->choice : 0;
+            pendingBleQuickConnectPromptStage_ = pick;
+            btManifestPromptAnsweredThisSession_ = true;  // suppress edge-detect prompt later
+            if (pick == 1 && pxcManifest_.has_value()) {
+              // Use prepared: revert SETTINGS to manifest values. If those
+              // already match the section's built layout (e.g. user toggled
+              // away from prepared and is now reverting), the section drop
+              // below may not be strictly needed -- but we always drop when
+              // settingsChanged was true to keep the bookkeeping simple.
+              const PxcManifest& mm = *pxcManifest_;
+              SETTINGS.orientation = mm.orientation;
+              SETTINGS.screenMargin = mm.screenMargin;
+              SETTINGS.imageRendering = mm.imageRendering;
+              SETTINGS.saveToFile();
+              ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+              // Force a re-layout: SETTINGS may now differ from what the
+              // section was built with.
+              pendingBleQuickConnectSettingsChanged_ = true;
+            }
+            requestUpdate();
+          });
+      return;
+    }
+
+    // Step 2: drop section if a re-layout is needed, then wait for it.
+    if (pendingBleQuickConnectSettingsChanged_ && section) {
+      RenderLock lock(*this);
+      if (section) {
+        cachedSpineIndex = currentSpineIndex;
+        cachedChapterTotalPageCount = section->pageCount;
+        nextPageNumber = section->currentPage;
+      }
+      section.reset();
+      pendingBleQuickConnectSettingsChanged_ = false;
+      requestUpdate();  // kick the render task to rebuild
+      return;
+    }
+    // If section is still null (mid re-layout), wait. Loop will re-enter
+    // next tick once the render task has built the new section.
+    if (!section) {
+      return;
+    }
+
+    // Step 3: section is ready. Connect.
+    const bool noImages = pendingBleQuickConnectNoImages_;
+    pendingBleQuickConnect_ = false;
+    pendingBleQuickConnectNoImages_ = false;
+    pendingBleQuickConnectPromptStage_ = -1;
+    if (noImages) renderer.setSuppressImages(true);
+    // No drawPopup here -- see task #76 for the persistent connect popup.
+    if (!btMgr.isEnabled()) btMgr.enable();
+    btMgr.connectToDevice(SETTINGS.bleBondedDeviceAddr);
+    btManifestPromptAnsweredThisSession_ = true;  // we handled the manifest decision
+    requestUpdate();
+    return;
   }
 
   // #48: a render starved inside the BLE connect grace window and we suppressed
@@ -1253,7 +1623,8 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
       openFileTransfer();
       break;
     case CrossPointSettings::LONG_MENU_BOOK_SETTINGS:
-      startActivityForResult(std::make_unique<BookSettingsDrawerActivity>(renderer, mappedInput),
+      startActivityForResult(std::make_unique<BookSettingsDrawerActivity>(renderer, mappedInput,
+                                                                          &readerSettingsCache_, &pxcManifest_),
                              [this](const ActivityResult& result) {
                                // Drawer consumed the Confirm release that closed it, so the reader's
                                // own long-press-handled cleanup (line ~391) never fired. Clear the
@@ -1261,11 +1632,19 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
                                // menu instead of being silently swallowed.
                                longPressMenuHandled = false;
 
-                               // Only re-layout if the user actually changed something. The drawer
-                               // reports this via MenuResult.settingsChanged so a no-op visit
-                               // doesn't trigger a wasteful section rebuild.
+                               // Re-layout policy:
+                               //   - If BT QC was requested, defer section.reset() until after
+                               //     the manifest-mismatch prompt resolves (loop drain). The
+                               //     prompt fires BEFORE any re-layout so the user can choose
+                               //     to use the prepared layout instead -- and "Use prepared"
+                               //     may end up not needing a re-layout at all (if current
+                               //     section was built from the same settings the manifest
+                               //     captures).
+                               //   - Otherwise (no BT request), re-layout immediately on
+                               //     settingsChanged as before.
                                const auto* menu = std::get_if<MenuResult>(&result.data);
-                               if (menu && menu->settingsChanged) {
+                               const bool bleQc = menu && menu->bleConnectRequested;
+                               if (menu && menu->settingsChanged && !bleQc) {
                                  // BLE handling for the re-layout is centralized in render()'s
                                  // cache-miss path (search for "Cache miss with BLE up"). We
                                  // don't drop BLE here because (a) inline disable() can
@@ -1282,6 +1661,21 @@ void EpubReaderActivity::executeReaderQuickAction(CrossPointSettings::LONG_PRESS
                                  }
                                  section.reset();
                                }
+                               // CrumBLE: drawer asked to connect via QC. Stash the request +
+                               // the settings-changed flag so loop() can run the manifest
+                               // mismatch prompt FIRST (before any indexing), then sequence
+                               // section.reset() + re-layout + connect based on the user's
+                               // pick. Doing all of this inline used to (a) race the
+                               // re-layout against the NimBLE handshake and (b) show the
+                               // mismatch prompt AFTER the indexing already finished,
+                               // wasting that indexing if the user picked "Use prepared".
+                               if (bleQc) {
+                                 pendingBleQuickConnect_ = true;
+                                 pendingBleQuickConnectNoImages_ = menu->bleConnectNoImages;
+                                 pendingBleQuickConnectSettingsChanged_ = menu->settingsChanged;
+                                 pendingBleQuickConnectPromptStage_ = -1;  // not yet shown
+                               }
+
                                // If the drawer's Bluetooth entry asked us to launch BT settings
                                // (user had no bonded remote), do it now via the same mechanism the
                                // reader menu's BLUETOOTH action uses — exit-on-success so the user
@@ -1760,14 +2154,22 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         // cost is a ~2-3 s delay during this one cold-cache parse.
         if (layoutAbortedForLowMemory && BluetoothHIDManager::getInstance().isEnabled() &&
             !layoutBleRetryAttempted) {
-          LOG_INF("ERS", "Layout aborted under BLE pressure; dropping BLE and retrying chapter load");
+          LOG_INF("ERS", "Layout aborted under BLE pressure; dropping BLE, retrying once it's off");
           layoutBleRetryAttempted = true;
           BluetoothHIDManager::getInstance().requestDisableLater();
           // Same re-enable hook the drawer path uses — once this retry's
           // section build succeeds, bring BLE back up so the bonded
           // remote reconnects on the user's next press.
           bleAutoReEnableAfterReindex = true;
-          requestUpdate();
+          // Do NOT requestUpdate() here. requestDisableLater() is drained on the
+          // main task, but render() runs on the render task -- an inline
+          // requestUpdate() re-attempts the build before the disable lands, so the
+          // one-shot retry runs with NimBLE still holding ~58 KB (maxAlloc stays
+          // tiny) and is wasted, even though the heap recovers seconds later.
+          // Let loop() fire the retry once BLE is actually off (see
+          // pendingLayoutRetryAfterBleOff), giving the chapter one genuine
+          // full-heap build attempt before we'd show the low-memory error.
+          pendingLayoutRetryAfterBleOff = true;
           return;
         }
         // Build failed and we already retried (or BLE wasn't the culprit).

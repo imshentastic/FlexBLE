@@ -4,6 +4,7 @@
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
 #include <WiFi.h>
+#include <esp_system.h>  // esp_get_free_heap_size (NimBLE-enable heap gate)
 
 #if defined(ARDUINO) && __has_include(<esp32-hal-bt-mem.h>)
 // Arduino-ESP32 3.x releases BT controller memory during startup unless a
@@ -206,7 +207,22 @@ bool BluetoothHIDManager::enable() {
     LOG_DBG("BT", "Already enabled");
     return true;
   }
-  
+
+  // Refuse to bring NimBLE up without enough free heap for it (controller + host
+  // are ~58 KB). Initializing below that threshold previously HUNG the device:
+  // esp_bt_controller_init() can't get its memory and the task blocks (seen after
+  // a low-memory chapter rebuild re-enabled BLE at ~56 KB free). Callers treat a
+  // false return as "stayed off"; the user can retry once heap recovers (e.g. on
+  // a lighter page or from the reader's Bluetooth menu).
+  constexpr uint32_t kMinFreeHeapForEnable = 66 * 1024;
+  const uint32_t freeHeap = esp_get_free_heap_size();
+  if (freeHeap < kMinFreeHeapForEnable) {
+    LOG_ERR("BT", "Refusing to enable Bluetooth: free heap %u < %u needed for NimBLE", freeHeap,
+            static_cast<unsigned>(kMinFreeHeapForEnable));
+    lastError = "Not enough memory to enable Bluetooth";
+    return false;
+  }
+
   LOG_INF("BT", "Enabling Bluetooth...");
   
   // CRITICAL: Disable WiFi when enabling Bluetooth
@@ -234,13 +250,22 @@ bool BluetoothHIDManager::enable() {
 
 bool BluetoothHIDManager::tryEnableIfRequested() {
   if (!_enableLaterRequested) return false;
-  _enableLaterRequested = false;
-  if (_enabled) return false;  // someone else already brought it back up
-
-  if (!enable()) {
-    LOG_ERR("BT", "tryEnableIfRequested: enable() failed (%s)", lastError.c_str());
+  if (_enabled) {
+    _enableLaterRequested = false;  // someone else already brought it back up
     return false;
   }
+
+  if (!enable()) {
+    // enable() refused -- typically free heap is just below the NimBLE threshold
+    // right after a heap-heavy chapter build. KEEP _enableLaterRequested set so we
+    // retry on a later tick once the heap recovers (it usually does within a
+    // second as the build's transient memory frees). Clearing it here -- as we
+    // used to -- left the bonded remote permanently off after a borderline miss,
+    // so the user appeared unable to reconnect.
+    LOG_DBG("BT", "tryEnableIfRequested: enable() deferred (%s); will retry when heap recovers", lastError.c_str());
+    return false;
+  }
+  _enableLaterRequested = false;  // enabled successfully
 
   // checkAutoReconnect() gates on a local button press because in its usual
   // "remote got out of range / disconnected on its own" scenario the

@@ -36,7 +36,32 @@ void ConfirmationActivity::onEnter() {
     const int bodyGap = headingLines.empty() ? 0 : spacing;
     const int bodyHeight = std::max(lineHeight, contentHeight - totalHeight - bodyGap);
     const int bodyLineCap = std::max(1, bodyHeight / lineHeight);
-    bodyLines = renderer.wrappedText(fontId, body.c_str(), maxWidth, bodyLineCap, EpdFontFamily::REGULAR);
+    // CrumBLE: honor hard newlines in the body. wrappedText doesn't recognise
+    // '\n' (any character outside its font falls back to the missing-glyph
+    // diamond), so we pre-split into segments and wrap each. An empty segment
+    // (two consecutive '\n's) becomes a blank spacer line. Without this, a
+    // multi-line body like the .pxc manifest comparison rendered as junk
+    // glyphs strung together.
+    bodyLines.clear();
+    int remainingCap = bodyLineCap;
+    size_t start = 0;
+    while (start <= body.size() && remainingCap > 0) {
+      size_t nl = body.find('\n', start);
+      const std::string segment = body.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+      if (segment.empty()) {
+        bodyLines.push_back("");  // blank spacer
+        remainingCap--;
+      } else {
+        auto wrapped = renderer.wrappedText(fontId, segment.c_str(), maxWidth, remainingCap, EpdFontFamily::REGULAR);
+        for (auto& l : wrapped) {
+          if (remainingCap <= 0) break;
+          bodyLines.push_back(std::move(l));
+          remainingCap--;
+        }
+      }
+      if (nl == std::string::npos) break;
+      start = nl + 1;
+    }
     if (!bodyLines.empty()) {
       totalHeight += bodyGap + static_cast<int>(bodyLines.size()) * lineHeight;
     }

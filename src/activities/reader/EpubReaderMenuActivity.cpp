@@ -1,11 +1,14 @@
 #include "EpubReaderMenuActivity.h"
 
+#include <BluetoothHIDManager.h>
 #include <GfxRenderer.h>
+#include <HalDisplay.h>
 #include <I18n.h>
 
 #include <cstring>
 
 #include "../settings/BluetoothSettingsActivity.h"
+#include "../util/ConfirmationActivity.h"
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -154,10 +157,31 @@ void EpubReaderMenuActivity::loop() {
 
     if (selectedAction == MenuAction::READER_OPTIONS) {
       const auto before = captureReaderLayoutSettings();
+      auto& bt = BluetoothHIDManager::getInstance();
+      const bool bleWasOn = bt.isEnabled();
+
+      // CrumBLE: silent BLE drop on entry. The previous "Turn off Bluetooth?"
+      // prompt is gone -- the disconnect is a forced consequence of the heap
+      // pressure (Reader Options' settings-list build OOM-crashes under BLE),
+      // not a user choice. Just do it. Auto-reconnect via requestEnableLater()
+      // when the user exits Reader Options, so they don't have to manually
+      // re-enable from the BT menu afterwards.
+      if (bleWasOn) {
+        GUI.drawPopup(renderer, "Updating layout...");
+        renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+        bt.disable();
+      }
+
       startActivityForResult(std::make_unique<ReaderOptionsActivity>(renderer, mappedInput),
-                             [this, before](const ActivityResult&) {
+                             [this, before, bleWasOn](const ActivityResult&) {
                                settingsChanged = settingsChanged || haveReaderLayoutSettingsChanged(before);
                                pendingOrientation = SETTINGS.orientation;  // sync in case orientation changed
+                               if (bleWasOn) {
+                                 // Deferred: drained on the main loop AFTER any pending
+                                 // re-layout from settings changes finishes. Prevents
+                                 // NimBLE init from racing the section rebuild.
+                                 BluetoothHIDManager::getInstance().requestEnableLater();
+                               }
                                requestUpdate();
                              });
       return;

@@ -69,7 +69,10 @@ public:
   // disable() inline from onExit trips an assertion because NimBLE teardown
   // can fire callbacks that call requestUpdateAndWait() while the lock is
   // still held.
-  void requestDisableLater() { _disableLaterRequested = true; }
+  void requestDisableLater() {
+    _disableLaterRequested = true;
+    _enableLaterRequested = false;  // a fresh disable cancels any pending (retrying) enable
+  }
   bool isDisableLaterRequested() const { return _disableLaterRequested; }
   bool tryDisableIfRequested() {
     if (!_disableLaterRequested) return false;
@@ -88,7 +91,10 @@ public:
   // doesn't have to press a local button to wake checkAutoReconnect. NimBLE
   // init plus connect can block ~2-3 s; safe to call from main loop
   // outside any RenderLock.
-  void requestEnableLater() { _enableLaterRequested = true; }
+  void requestEnableLater() {
+    _enableLaterRequested = true;
+    _disableLaterRequested = false;  // a fresh enable cancels any pending disable
+  }
   bool tryEnableIfRequested();
 
   // Scanning

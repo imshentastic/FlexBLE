@@ -12,6 +12,12 @@ class ReaderOptionsActivity final : public Activity {
   int selectedIndex = 0;
   int settingsCount = 0;
   std::vector<SettingInfo> settings;
+  // CrumBLE: set when onEnter could not build the settings list because the
+  // heap was too fragmented (typical mid-BLE-read, after image-heavy pages).
+  // render() draws an explanatory message instead of an empty list, and
+  // loop() ignores Confirm so we don't index into an empty vector. Same
+  // shape as BookSettingsDrawerActivity's low-heap fallback.
+  bool lowHeap_ = false;
 
   void rebuildSettingsList();
   void toggleCurrentSetting();
