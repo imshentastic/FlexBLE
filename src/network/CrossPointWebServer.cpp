@@ -6,6 +6,7 @@
 #endif
 #include <Epub.h>
 #include <FsHelpers.h>
+#include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -24,6 +25,7 @@
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
 #include "WebDAVHandler.h"
+#include "components/UITheme.h"
 #include "WifiCredentialStore.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/FontsPageHtml.generated.h"
@@ -205,6 +207,7 @@ void CrossPointWebServer::begin() {
   server->on("/settings", HTTP_GET, [this] { handleSettingsPage(); });
   server->on("/api/settings", HTTP_GET, [this] { handleGetSettings(); });
   server->on("/api/settings", HTTP_POST, [this] { handlePostSettings(); });
+  server->on("/api/reader-render-info", HTTP_GET, [this] { handleReaderRenderInfo(); });
 
   // Font management endpoints
   server->on("/fonts", HTTP_GET, [this] { handleFontsPage(); });
@@ -1316,6 +1319,90 @@ void CrossPointWebServer::handlePostSettings() {
 
   LOG_DBG("WEB", "Applied %d setting(s)", applied);
   server->send(200, "text/plain", String("Applied ") + String(applied) + " setting(s)");
+}
+
+// ---- Reader render-info (for optimizer .pxc baking) ----
+
+void CrossPointWebServer::handleReaderRenderInfo() const {
+  if (!renderer_) {
+    server->send(503, "application/json", "{\"error\":\"renderer unavailable\"}");
+    return;
+  }
+  GfxRenderer& r = *renderer_;
+
+  // Compute the reader's viewport exactly as EpubReaderActivity::render() does, by
+  // briefly switching the renderer to the reader's orientation -- a pure setter
+  // (no buffer realloc, no panel push), restored before returning -- and reusing
+  // the same instance methods. This guarantees the optimizer's fitted-image
+  // dimensions match the device's, so baked .pxc files pass the on-device
+  // dimension check. The handler runs synchronously on the main task, so nothing
+  // else renders while the orientation is temporarily changed.
+  const GfxRenderer::Orientation savedOrientation = r.getOrientation();
+
+  GfxRenderer::Orientation readerOrientation = GfxRenderer::Orientation::Portrait;
+  switch (SETTINGS.orientation) {
+    case CrossPointSettings::ORIENTATION::PORTRAIT:
+      readerOrientation = GfxRenderer::Orientation::Portrait;
+      break;
+    case CrossPointSettings::ORIENTATION::LANDSCAPE_CW:
+      readerOrientation = GfxRenderer::Orientation::LandscapeClockwise;
+      break;
+    case CrossPointSettings::ORIENTATION::INVERTED:
+      readerOrientation = GfxRenderer::Orientation::PortraitInverted;
+      break;
+    case CrossPointSettings::ORIENTATION::LANDSCAPE_CCW:
+      readerOrientation = GfxRenderer::Orientation::LandscapeCounterClockwise;
+      break;
+    default:
+      readerOrientation = GfxRenderer::Orientation::Portrait;
+      break;
+  }
+  r.setOrientation(readerOrientation);
+
+  int marginTop, marginRight, marginBottom, marginLeft;
+  r.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
+  marginTop += SETTINGS.screenMargin;
+  marginLeft += SETTINGS.screenMargin;
+  marginRight += SETTINGS.screenMargin;
+  const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
+  constexpr uint8_t STATUS_BAR_TEXT_PADDING = 3;
+  // Match render()'s non-auto-page-turn branch (the bake targets normal reading).
+  marginBottom += std::max<int>(SETTINGS.screenMargin, statusBarHeight + STATUS_BAR_TEXT_PADDING);
+
+  const int fontId = SETTINGS.getReaderFontId();
+  const int screenW = r.getScreenWidth();
+  const int screenH = r.getScreenHeight();
+  const int viewportWidth = screenW - marginLeft - marginRight;
+  const int viewportHeight = screenH - marginTop - marginBottom;
+  const float emSize = r.getFontAscenderSize(fontId);
+
+  r.setOrientation(savedOrientation);  // restore; no panel push happened in between
+
+  JsonDocument doc;
+  doc["fitVersion"] = 1;  // bump if the device image-fit math changes
+  doc["device"] = "X4";
+  doc["orientation"] = static_cast<int>(SETTINGS.orientation);
+  doc["screenMargin"] = static_cast<int>(SETTINGS.screenMargin);
+  doc["imageRendering"] = static_cast<int>(SETTINGS.imageRendering);
+  doc["fontId"] = fontId;
+  // CrumBLE: raw font selection fields. Manifest carries these so the device
+  // can show human-readable font names in the .pxc mismatch prompt without
+  // having to reverse-engineer fontId -> (family, size). For SD fonts, the
+  // family name string is the user-visible label and sdFontSizeRange is the
+  // S/M/L choice; for built-in fonts, fontFamily is the enum index and
+  // fontSize is the point size.
+  doc["fontFamily"] = static_cast<int>(SETTINGS.fontFamily);
+  doc["fontSize"] = static_cast<int>(SETTINGS.fontSize);
+  doc["sdFontSizeRange"] = static_cast<int>(SETTINGS.sdFontSizeRange);
+  doc["sdFontFamilyName"] = SETTINGS.sdFontFamilyName;
+  doc["screenWidth"] = screenW;
+  doc["screenHeight"] = screenH;
+  doc["viewportWidth"] = viewportWidth;
+  doc["viewportHeight"] = viewportHeight;
+  doc["emSize"] = emSize;
+  String json;
+  serializeJson(doc, json);
+  server->send(200, "application/json", json);
 }
 
 // ---- OPDS Server API ----

@@ -1771,6 +1771,93 @@ async function processImage(data, imageState = 0, imagePath = '') {
 }
 
 // Convert EPUB file - returns converted blob
+// CrumBLE: bake a .pxc pixel cache from JPEG bytes at the device's fitted display
+// dimensions, matching the on-device format: uint16 LE width, uint16 LE height,
+// then 2-bit pixels (4 per byte, MSB-first; 0=black .. 3=white, Floyd-Steinberg
+// dithered to 4 levels to match the device decoder's shading quality). The
+// device only accepts a .pxc whose dimensions match its own scale-to-fit within
+// 1px, so we reproduce that exact formula (integer truncation, scale never > 1).
+// Returns a Uint8Array, or null if the image can't be baked.
+async function bakePxc(jpegBytes, viewportW, viewportH) {
+  const url = URL.createObjectURL(new Blob([jpegBytes], { type: 'image/jpeg' }));
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = () => reject(new Error('decode failed'));
+      im.src = url;
+    });
+    const iw = img.naturalWidth || img.width;
+    const ih = img.naturalHeight || img.height;
+    if (!iw || !ih) return null;
+    let scaleX = (iw > viewportW) ? viewportW / iw : 1.0;
+    let scaleY = (ih > viewportH) ? viewportH / ih : 1.0;
+    let scale = Math.min(scaleX, scaleY);
+    if (scale > 1.0) scale = 1.0;
+    const dw = Math.trunc(iw * scale);
+    const dh = Math.trunc(ih * scale);
+    if (dw < 1 || dh < 1) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = dw;
+    canvas.height = dh;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, dw, dh);
+    const px = ctx.getImageData(0, 0, dw, dh).data;  // RGBA
+    const bytesPerRow = (dw + 3) >> 2;
+    const out = new Uint8Array(4 + bytesPerRow * dh);
+    out[0] = dw & 0xFF; out[1] = (dw >> 8) & 0xFF;
+    out[2] = dh & 0xFF; out[3] = (dh >> 8) & 0xFF;
+
+    // Floyd-Steinberg dither to 4 levels (0=black .. 3=white, same convention the
+    // device decoder uses). Plain gray/85 quantization made mid-grays collapse to
+    // flat black/white blocks -- baked images looked far harsher than the device's
+    // own dithered decode. Error diffusion spreads the quantization error so
+    // gradients/shading render as smooth 4-level dither (and even in 1-bit BW mode
+    // it reads as a halftone instead of solid black).
+    const grayBuf = new Float32Array(dw * dh);
+    for (let i = 0, p = 0; i < dw * dh; i++, p += 4) {
+      grayBuf[i] = (px[p] * 77 + px[p + 1] * 150 + px[p + 2] * 29) / 256;  // device luma weights
+    }
+    const levels = new Uint8Array(dw * dh);
+    for (let y = 0; y < dh; y++) {
+      for (let x = 0; x < dw; x++) {
+        const idx = y * dw + x;
+        let g = grayBuf[idx];
+        if (g < 0) g = 0; else if (g > 255) g = 255;
+        let level = Math.round(g / 85);  // nearest of 0,85,170,255
+        if (level > 3) level = 3;
+        levels[idx] = level;
+        const err = g - level * 85;
+        if (x + 1 < dw) grayBuf[idx + 1] += err * (7 / 16);
+        if (y + 1 < dh) {
+          if (x > 0) grayBuf[idx + dw - 1] += err * (3 / 16);
+          grayBuf[idx + dw] += err * (5 / 16);
+          if (x + 1 < dw) grayBuf[idx + dw + 1] += err * (1 / 16);
+        }
+      }
+    }
+
+    let o = 4;
+    for (let y = 0; y < dh; y++) {
+      const rowBase = y * dw;
+      for (let xb = 0; xb < bytesPerRow; xb++) {
+        let b = 0;
+        for (let k = 0; k < 4; k++) {
+          const x = xb * 4 + k;
+          const level = (x < dw) ? levels[rowBase + x] : 3;  // padding -> white (ignored beyond width)
+          b |= (level & 3) << (6 - k * 2);  // MSB-first: pixel 0 in bits 6-7
+        }
+        out[o++] = b;
+      }
+    }
+    return out;
+  } catch (e) {
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 async function convertEpubFile(file, progressCallback) {
   const startTime = Date.now();
   const originalSize = file.size;
@@ -1804,6 +1891,26 @@ async function convertEpubFile(file, progressCallback) {
   const xhtmlFileOpts = bluetoothTextMode
     ? { compression: 'STORE', createFolders: false }
     : { compression: 'DEFLATE', compressionOptions: { level: 8 }, createFolders: false };
+  // CrumBLE: fetch the device's reader render-info so we can pre-render each image
+  // to its .pxc pixel cache at the exact dimensions the device will use. The
+  // optimizer is served by the device, so this returns the live viewport. If we're
+  // not running on-device (standalone), the fetch fails and we skip baking.
+  let renderInfo = null;
+  try {
+    const resp = await fetch('/api/reader-render-info');
+    if (resp.ok) renderInfo = await resp.json();
+  } catch (e) { renderInfo = null; }
+  if (!renderInfo || !(renderInfo.viewportWidth > 0) || !(renderInfo.viewportHeight > 0)) {
+    renderInfo = null;
+  } else {
+    log(`Bluetooth image cache: baking .pxc for ${renderInfo.device} viewport ${renderInfo.viewportWidth}x${renderInfo.viewportHeight}`, '', 'INFO');
+  }
+  // CrumBLE: track how many .pxc files we actually wrote. We only emit the
+  // manifest (META-INF/crumble-pxc.json) if at least one image got a .pxc --
+  // otherwise the device would see a manifest but no cache files and prompt
+  // the user about a layout it can't actually deliver.
+  let pxcBakedCount = 0;
+
   const entries = Object.entries(zip.files);
   const splitImages = {};
   const xhtmlFiles = {};
@@ -1873,6 +1980,19 @@ async function convertEpubFile(file, progressCallback) {
       if (parts.length === 1 && parts[0].suffix === '') {
         const newPath = renamed[path] || path.replace(/\.[^.]+$/, newExt);
         out.file(newPath, parts[0].data, { compression: 'STORE', createFolders: false });
+        // CrumBLE: bake a .pxc pixel cache alongside (same path, .pxc ext) so the
+        // device can render this image decoder-free over a Bluetooth remote. Only
+        // the common single-image (non-split) case for now; split parts fall back
+        // to on-device decode. A dimension mismatch on-device just falls back too.
+        if (renderInfo) {
+          try {
+            const pxc = await bakePxc(parts[0].data, renderInfo.viewportWidth, renderInfo.viewportHeight);
+            if (pxc) {
+              out.file(newPath.replace(/\.[^.]+$/, '.pxc'), pxc, { compression: 'STORE', createFolders: false });
+              pxcBakedCount++;
+            }
+          } catch (e) { /* skip this image's cache; not fatal */ }
+        }
       } else {
         // Store with full path for collision prevention, but also keep original filename
         const origName = path.split('/').pop();
@@ -2135,6 +2255,41 @@ async function convertEpubFile(file, progressCallback) {
       data = new TextEncoder().encode(t);
     }
     out.file(path, data, { compression: 'DEFLATE', compressionOptions: { level: 8 }, createFolders: false });
+  }
+
+  // CrumBLE: emit the .pxc manifest only if we actually wrote pxc files. The
+  // device reads this on book open and, when the user connects a Bluetooth
+  // remote, compares the four viewport-affecting fields (fontId, orientation,
+  // screenMargin, imageRendering) to current SETTINGS. On mismatch it asks
+  // the user to switch to the baked layout so the .pxc images render. The
+  // schema mirrors /api/reader-render-info exactly -- forward-compatibility
+  // is easier if the manifest is just a snapshot of that contract.
+  if (renderInfo && pxcBakedCount > 0) {
+    const manifest = {
+      v: 1,
+      device: renderInfo.device || 'X4',
+      fitVersion: renderInfo.fitVersion || 1,
+      orientation: renderInfo.orientation,
+      screenMargin: renderInfo.screenMargin,
+      imageRendering: renderInfo.imageRendering,
+      fontId: renderInfo.fontId,
+      // CrumBLE: raw font fields for human-readable display on the device.
+      // Optional in older builds -- the device parser tolerates missing keys.
+      fontFamily: renderInfo.fontFamily,
+      fontSize: renderInfo.fontSize,
+      sdFontSizeRange: renderInfo.sdFontSizeRange,
+      sdFontFamilyName: renderInfo.sdFontFamilyName,
+      screenWidth: renderInfo.screenWidth,
+      screenHeight: renderInfo.screenHeight,
+      viewportWidth: renderInfo.viewportWidth,
+      viewportHeight: renderInfo.viewportHeight,
+      emSize: renderInfo.emSize,
+      pxcCount: pxcBakedCount,
+    };
+    out.file('META-INF/crumble-pxc.json',
+             new TextEncoder().encode(JSON.stringify(manifest)),
+             { compression: 'STORE', createFolders: false });
+    log(`Wrote .pxc manifest for ${pxcBakedCount} image(s)`, '', 'INFO');
   }
 
   if (progressCallback) progressCallback(100);

@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+class GfxRenderer;
+
 // Structure to hold file information
 struct FileInfo {
   String name;
@@ -68,11 +70,17 @@ class CrossPointWebServer {
   // Get the port number
   uint16_t getPort() const { return port; }
 
+  // Renderer used by /api/reader-render-info to compute the reader's viewport and
+  // emSize (so the optimizer can reproduce fitted image dimensions for .pxc
+  // baking). Set by CrossPointWebServerActivity before begin().
+  void setRenderer(GfxRenderer* r) { renderer_ = r; }
+
  private:
   std::unique_ptr<WebServer> server = nullptr;
   std::unique_ptr<WebSocketsServer> wsServer = nullptr;
   bool running = false;
   bool apMode = false;  // true when running in AP mode, false for STA mode
+  GfxRenderer* renderer_ = nullptr;
   uint16_t port = 80;
   uint16_t wsPort = 81;  // WebSocket port
   NetworkUDP udp;
@@ -108,6 +116,9 @@ class CrossPointWebServer {
   void handleSettingsPage() const;
   void handleGetSettings() const;
   void handlePostSettings();
+
+  // Reader render-info (for optimizer .pxc baking): reader viewport + emSize.
+  void handleReaderRenderInfo() const;
 
   // Font management handlers
   void handleFontsPage() const;

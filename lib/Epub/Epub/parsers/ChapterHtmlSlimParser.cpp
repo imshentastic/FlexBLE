@@ -872,18 +872,36 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
           const auto heapBeforeImage = MemoryBudget::snapshot();
           LOG_DBG("EHP", "Heap before image extraction: free=%u maxAlloc=%u src=%s", heapBeforeImage.freeHeap,
                   heapBeforeImage.maxAllocHeap, src.c_str());
-          if (!self->lowMemoryImageFallback && !MemoryBudget::hasHeapForEpubInlineImage("EHP", src.c_str())) {
+
+          // Resolve the image path relative to the HTML file.
+          std::string resolvedPath = FsHelpers::normalisePath(self->contentBase + src);
+
+          // CrumBLE: does the optimizer bundle a pre-rendered .pxc next to this
+          // image? If so the image renders from that pixel cache and is NEVER
+          // decoded, so the decode-heap pre-checks (sized for a JPEG/PNG decode)
+          // don't apply -- skip them, and don't let a sticky low-memory fallback
+          // suppress a cached image either. Without this, an image that would have
+          // rendered fine from .pxc gets dropped under memory pressure and its .pxc
+          // never gets carried over.
+          bool hasBundledPxc = false;
+          {
+            const size_t dot = resolvedPath.rfind('.');
+            if (dot != std::string::npos) {
+              size_t pxcSize = 0;
+              hasBundledPxc = self->epub->getItemSize(resolvedPath.substr(0, dot) + ".pxc", &pxcSize) && pxcSize > 0;
+            }
+          }
+
+          if (!hasBundledPxc && !self->lowMemoryImageFallback &&
+              !MemoryBudget::hasHeapForEpubInlineImage("EHP", src.c_str())) {
             self->lowMemoryImageFallback = true;
           }
 
-          if (self->lowMemoryImageFallback) {
+          if (!hasBundledPxc && self->lowMemoryImageFallback) {
             self->skipUntilDepth = self->depth;
             self->depth += 1;
             return;
           } else {
-            // Resolve the image path relative to the HTML file
-            std::string resolvedPath = FsHelpers::normalisePath(self->contentBase + src);
-
             if (ImageDecoderFactory::isFormatSupported(resolvedPath)) {
               // Create a unique filename for the cached image
               std::string ext;
@@ -907,13 +925,40 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
               if (extractSuccess) {
                 LOG_DBG("EHP", "Heap after image extraction: free=%u maxAlloc=%u path=%s", ESP.getFreeHeap(),
                         ESP.getMaxAllocHeap(), cachedImagePath.c_str());
+
+                // CrumBLE: if the optimizer bundled a pre-rendered .pxc pixel cache
+                // next to this image (same path, .pxc extension), carry it over to
+                // the device-named cache path so ImageBlock::renderFromCache uses it
+                // (decoder-free -> a Bluetooth remote survives image pages). The
+                // .pxc is validated against the fitted dimensions at render time, so
+                // a stale/mismatched one simply falls back to decoding.
+                if (hasBundledPxc) {
+                  const size_t rdot = resolvedPath.rfind('.');
+                  const size_t cdot = cachedImagePath.rfind('.');
+                  if (rdot != std::string::npos && cdot != std::string::npos) {
+                    const std::string bundledPxc = resolvedPath.substr(0, rdot) + ".pxc";
+                    const std::string cachedPxc = cachedImagePath.substr(0, cdot) + ".pxc";
+                    FsFile pxcFile;
+                    if (Storage.openFileForWrite("EHP", cachedPxc, pxcFile)) {
+                      const bool pxcOk =
+                          self->epub->readItemContentsToStream(bundledPxc, pxcFile, IMAGE_EXTRACT_CHUNK_SIZE);
+                      pxcFile.flush();
+                      pxcFile.close();
+                      if (pxcOk) {
+                        LOG_DBG("EHP", "Carried over bundled .pxc -> %s", cachedPxc.c_str());
+                      } else {
+                        Storage.remove(cachedPxc.c_str());
+                      }
+                    }
+                  }
+                }
                 // Get image dimensions
                 ImageDimensions dims = {0, 0};
                 ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(cachedImagePath);
                 if (decoder && decoder->getDimensions(cachedImagePath, dims)) {
                   LOG_DBG("EHP", "Image dimensions: %dx%d", dims.width, dims.height);
 
-                  if (!MemoryBudget::hasHeapForEpubInlineImage("EHP", cachedImagePath.c_str())) {
+                  if (!hasBundledPxc && !MemoryBudget::hasHeapForEpubInlineImage("EHP", cachedImagePath.c_str())) {
                     self->lowMemoryImageFallback = true;
                     Storage.remove(cachedImagePath.c_str());
                     self->skipUntilDepth = self->depth;

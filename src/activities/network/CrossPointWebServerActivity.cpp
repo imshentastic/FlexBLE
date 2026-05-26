@@ -268,6 +268,9 @@ void CrossPointWebServerActivity::startWebServer() {
 
   // Create the web server instance
   webServer.reset(new CrossPointWebServer());
+  // Give it the renderer so /api/reader-render-info can compute the reader's
+  // viewport + emSize for the optimizer's .pxc baking.
+  webServer->setRenderer(&renderer);
   webServer->begin();
 
   if (webServer->isRunning()) {
