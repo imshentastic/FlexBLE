@@ -1893,17 +1893,28 @@ async function convertEpubFile(file, progressCallback) {
     : { compression: 'DEFLATE', compressionOptions: { level: 8 }, createFolders: false };
   // CrumBLE: fetch the device's reader render-info so we can pre-render each image
   // to its .pxc pixel cache at the exact dimensions the device will use. The
-  // optimizer is served by the device, so this returns the live viewport. If we're
-  // not running on-device (standalone), the fetch fails and we skip baking.
+  // optimizer is served by the device, so this returns the live viewport.
+  //
+  // Two gates:
+  //   1. User toggle: "Bake images for Bluetooth". Default on. Lets users
+  //      opt out of the bake (and the size growth) when they don't read with
+  //      a BT remote.
+  //   2. Render-info fetch must succeed (fails when the optimizer runs
+  //      standalone off-device).
+  const bakePxcEnabled = document.getElementById('bake-pxc-checkbox')?.checked !== false;
   let renderInfo = null;
-  try {
-    const resp = await fetch('/api/reader-render-info');
-    if (resp.ok) renderInfo = await resp.json();
-  } catch (e) { renderInfo = null; }
-  if (!renderInfo || !(renderInfo.viewportWidth > 0) || !(renderInfo.viewportHeight > 0)) {
-    renderInfo = null;
+  if (bakePxcEnabled) {
+    try {
+      const resp = await fetch('/api/reader-render-info');
+      if (resp.ok) renderInfo = await resp.json();
+    } catch (e) { renderInfo = null; }
+    if (!renderInfo || !(renderInfo.viewportWidth > 0) || !(renderInfo.viewportHeight > 0)) {
+      renderInfo = null;
+    } else {
+      log(`Bluetooth image cache: baking .pxc for ${renderInfo.device} viewport ${renderInfo.viewportWidth}x${renderInfo.viewportHeight}`, '', 'INFO');
+    }
   } else {
-    log(`Bluetooth image cache: baking .pxc for ${renderInfo.device} viewport ${renderInfo.viewportWidth}x${renderInfo.viewportHeight}`, '', 'INFO');
+    log('Bluetooth image cache: skipped (user opted out)', '', 'INFO');
   }
   // CrumBLE: track how many .pxc files we actually wrote. We only emit the
   // manifest (META-INF/crumble-pxc.json) if at least one image got a .pxc --

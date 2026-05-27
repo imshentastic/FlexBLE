@@ -1673,6 +1673,23 @@
               </label>
             </div>
           </div>
+          <!-- CrumBLE: opt-out for the .pxc image bake. Default ON.
+               Off skips pre-rendering each image to a screen-sized pixel
+               cache, leaving the EPUB smaller but slowing image-heavy
+               chapters that get loaded over Bluetooth (the reader has to
+               JPEG-decode each image at runtime, which fragments heap). -->
+          <div class="advanced-setting-row">
+            <div class="setting-label">
+              <div class="setting-title">🖼️ Generate .pxc image cache</div>
+              <div class="setting-desc">Pre-render each image for the device's screen — speeds up indexing on image-heavy chapters<br>Note: increases EPUB size; turn off if you never read with a Bluetooth remote</div>
+            </div>
+            <div class="setting-controls">
+              <label class="toggle-switch">
+                <input type="checkbox" id="bake-pxc-checkbox" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
           </div><!-- advanced-settings-content -->
       </div><!-- end convert-options -->
       <!-- Image Picker Section - in picker-columns for two-column layout -->
