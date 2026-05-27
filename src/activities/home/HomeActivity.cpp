@@ -2922,10 +2922,11 @@ void HomeActivity::render(RenderLock&&) {
   const int menuEndY = pageHeight - metrics.buttonHintsHeight;
   const int menuHeight = std::max(0, menuEndY - menuStartY);
 
-  if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
-    // Insert Continue Reading at the top if enabled in theme
-    menuItems.insert(menuItems.begin(), {tr(STR_CONTINUE_READING), Book, HomeMenuAction::ContinueReading});
-  }
+  // NOTE: do NOT manually insert "Continue Reading" here -- buildSelectableHomeMenuItems
+  // already inserts it at items.begin() when the includeContinueReading flag is true.
+  // Inserting it again duplicated the entry in any theme with
+  // homeContinueReadingInMenu = true (RoundedRaff), shifting every other action by
+  // one slot (File Transfer fired Settings, last item became a silent no-op).
 
   // CrumBLE Flow bookshelf — render strip between cover footer and icon bar,
   // and offset the menu's selected-index calculation so the icon-bar
