@@ -170,7 +170,15 @@ private:
   unsigned long _lastConnectMillis = 0;        // when a link was last established
   bool _intentionalDisconnect = false;         // suppress the alert for disconnects we initiate
   bool _connectionLostAlertPending = false;    // one-shot: a link dropped unexpectedly soon after connecting
-  static constexpr unsigned long EARLY_DISCONNECT_MS = 10000;  // a drop within this of connect = unstable/low heap
+  // A drop in the first SETTLE_MS after connect is almost always benign bonding/
+  // encryption renegotiation -- the link is then re-established cleanly and the
+  // user never notices unless we surface a (spurious) alert. Drops in
+  // [SETTLE_MS, EARLY_DISCONNECT_MS] are the real "controller timed the link out
+  // under heap pressure" case (HCI 0x08 / reason 520) and DO warrant the alert.
+  // Drops past EARLY_DISCONNECT_MS are treated as a stable link that later
+  // dropped for an unrelated reason (idle, range, remote off) -- no alert.
+  static constexpr unsigned long SETTLE_MS = 3000;
+  static constexpr unsigned long EARLY_DISCONNECT_MS = 10000;
   std::vector<BluetoothDevice> _discoveredDevices;
   std::vector<ConnectedDevice> _connectedDevices;
   std::function<void(uint16_t)> _inputCallback;

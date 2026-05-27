@@ -707,13 +707,22 @@ void BluetoothHIDManager::noteClientDisconnect(int reason) {
     _intentionalDisconnect = false;
     return;
   }
-  // A link that drops on its own within seconds of connecting almost always
-  // means the connect spike left too little free heap for NimBLE to service the
-  // link, so the controller times it out (HCI 0x08 / reason 520). Surface it so
-  // the user isn't left wondering why Bluetooth silently went away.
-  if (_lastConnectMillis != 0 && (millis() - _lastConnectMillis) < EARLY_DISCONNECT_MS) {
+  if (_lastConnectMillis == 0) return;
+  const unsigned long since = millis() - _lastConnectMillis;
+  // A drop in the first SETTLE_MS is almost always bonding/encryption renegotiation
+  // on the first connect (the link comes back on its own within a second). Earlier
+  // this fired a false "BT couldn't stay connected" alert every first connect.
+  if (since < SETTLE_MS) {
+    LOG_DBG("BT", "Link dropped %lums after connect (reason %d); within settle window, no alert",
+            since, reason);
+    return;
+  }
+  // A drop in [SETTLE_MS, EARLY_DISCONNECT_MS] is the real "controller timed the
+  // link out under heap pressure" case (HCI 0x08 / reason 520). Surface it so the
+  // user isn't left wondering why Bluetooth silently went away.
+  if (since < EARLY_DISCONNECT_MS) {
     LOG_INF("BT", "Link dropped %lums after connect (reason %d); flagging low-memory connect alert",
-            millis() - _lastConnectMillis, reason);
+            since, reason);
     _connectionLostAlertPending = true;
   }
 }
