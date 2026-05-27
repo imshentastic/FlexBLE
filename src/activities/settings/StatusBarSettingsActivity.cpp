@@ -215,8 +215,8 @@ void StatusBarSettingsActivity::render(RenderLock&&) {
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
   GUI.drawList(
       renderer, Rect{contentX, contentTop, contentWidth, contentHeight}, visibleItemCount,
-      static_cast<int>(selectedIndex), [](int index) { return std::string(I18N.get(menuNames[index])); }, nullptr,
-      nullptr,
+      static_cast<int>(selectedIndex),
+      [](int index) { return std::string(I18N.get(menuNames[index])); }, nullptr, nullptr,
       [](int index) -> std::string {
         switch (index) {
           case ITEM_CHAPTER_PAGE_COUNT:

@@ -253,4 +253,20 @@ class BaseTheme {
   static constexpr int batteryPercentSpacing = 4;
   static void drawBatteryOutline(const GfxRenderer& renderer, int x, int y, int battWidth, int rectHeight);
   static void drawBatteryLightningBolt(const GfxRenderer& renderer, int boltX, int boltY);
+
+  // CrumBLE: stylized BT rune drawn in the reader's status bar. When
+  // `linked` is true, two small diamond dots flank the rune horizontally
+  // to indicate an active remote link -- matches the visual the user
+  // wanted (BT-with-two-dots when paired and connected). No icon is
+  // drawn when the stack is off (caller checks first). Dots sit
+  // immediately adjacent to the rune body so the overall icon stays
+  // roughly portrait-shaped (taller than wide).
+  static void drawBluetoothIcon(const GfxRenderer& renderer, int x, int y, int w, int h, bool linked);
+  // Reserved horizontal slot the status bar layout always carves out for
+  // the BT icon (whether or not the stack is on), so the battery + number
+  // don't shift when BLE toggles. Sized to fit body + tight side dots.
+  static constexpr int btIconBodyWidth = 9;
+  static constexpr int btIconBodyHeight = 14;
+  static constexpr int btIconReservedWidth = 17;  // body 9 + 3-px dots both sides + 2 px margin
+  static constexpr int btIconBatterySpacing = 5;  // tighter -- "100" has no '%' suffix now
 };

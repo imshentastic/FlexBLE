@@ -99,6 +99,17 @@ class LyraFlowTheme : public LyraTheme {
   // because drawRecentBookCover is const.
   mutable bool skipCarouselCoverLoads = false;
 
+  // CrumBLE: when a book is focused on the Collections shelf (no icon is
+  // active in the icon bar), HomeActivity sets this to the focused book's
+  // author. drawButtonMenu then uses it as the label text shown above the
+  // icons -- same physical slot the selected icon's name normally occupies,
+  // since the user can never be focused on both a book AND an icon at
+  // once. Drawn from drawBookshelfStrip's old author position into the
+  // icon bar's label band fixed the bug where the author was being wiped
+  // by drawButtonMenu's pre-render clear. One-shot: drawButtonMenu resets
+  // it before returning so a stale value can't leak into the next frame.
+  mutable std::string focusedBookAuthorForLabel;
+
  private:
   // Tracks "is page 2 currently shown" across renders. mutable because
   // drawButtonMenu is a const method (theme contract). State is purely

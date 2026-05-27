@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 #include <Bitmap.h>
+#include <BluetoothHIDManager.h>
+#include <CrossPointSettings.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>

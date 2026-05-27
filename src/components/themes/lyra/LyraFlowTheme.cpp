@@ -94,7 +94,12 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   }
 
   const int pageWidth = renderer.getScreenWidth();
-  const int centerY = rect.y + 40;
+  // CrumBLE: cover starts 58 px below the carousel rect's top. Half-way
+  // between the original 52 (before the title + author block went above)
+  // and the previous 64 (which left too much air between author and
+  // cover). Author bottom sits ~rect.y + 22; cover top at rect.y + 58
+  // gives ~36 px of breathing room.
+  const int centerY = rect.y + 58;
   const int centerX = pageWidth / 2;
   const int count = static_cast<int>(recentBooks.size());
 
@@ -129,7 +134,12 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
     const int hL = isLeft ? sideInnerHeight : sideOuterHeight;
     const int hR = isLeft ? sideOuterHeight : sideInnerHeight;
     const int hMax = std::max(hL, hR);
-    const int drawX = isLeft ? (isFar ? 30 : 80) : (isFar ? 385 : 335);
+    // CrumBLE: tightened from (30/80 left, 385/335 right) -- pulls the
+    // side covers ~16 px closer toward the center book on each side so
+    // the adjacent books read as a clustered "row of books" rather than
+    // floating off near the screen edges. Near covers move inward more
+    // than far so the perspective stagger stays balanced.
+    const int drawX = isLeft ? (isFar ? 46 : 96) : (isFar ? 368 : 318);
     const int drawY = centerY + (centerCoverHeight / 2) - (hMax / 2);
 
     const std::string coverPath = UITheme::getCoverThumbPath(recentBooks[idx].coverBmpPath, centerCoverHeight);
@@ -330,25 +340,43 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   const std::string truncatedTitle =
       renderer.truncatedText(UI_12_FONT_ID, filename.c_str(), pageWidth - 40, EpdFontFamily::BOLD);
   const int titleWidth = renderer.getTextWidth(UI_12_FONT_ID, truncatedTitle.c_str(), EpdFontFamily::BOLD);
-  // Pre-clear the title strip. HomeActivity now snapshots the framebuffer
-  // at end-of-render and restores it at the start of the next render
-  // (lets the shelf paint be skipped when its state is unchanged). The
-  // restored buffer has the PRIOR render's title in it — if the new
-  // title is shorter or differently-positioned, the leftover characters
-  // would show through. drawText is top-anchored (y = top of the text
-  // bbox, not baseline), so the strip extends DOWN from the title's y,
-  // not up.
+  // Pre-clear the title + author strip. HomeActivity now snapshots the
+  // framebuffer at end-of-render and restores it at the start of the next
+  // render (lets the shelf paint be skipped when its state is unchanged).
+  // The restored buffer has the PRIOR render's title/author in it — if the
+  // new title is shorter or differently-positioned, the leftover characters
+  // would show through.
+  constexpr int kAuthorFontId = UI_10_FONT_ID;
+  constexpr int kTitleAuthorGap = 2;
+  // Title sits at rect.y - 12 (was -5): pulls the title + author block UP
+  // ~7 px so there's a clearer visual gap between the author line bottom
+  // and the cover's top edge. Cover correspondingly drops to rect.y + 64
+  // (above), keeping both ends of the gap comfortable.
+  constexpr int kTitleTopY = -12;
   const int titleLineH = renderer.getLineHeight(UI_12_FONT_ID);
-  renderer.fillRect(0, rect.y - 5, pageWidth, titleLineH + 4, false);
-  renderer.drawText(UI_12_FONT_ID, centerX - titleWidth / 2, rect.y - 5, truncatedTitle.c_str(), true,
+  const int authorLineH = renderer.getLineHeight(kAuthorFontId);
+  const int titleAuthorStripHeight = titleLineH + kTitleAuthorGap + authorLineH + 4;
+  renderer.fillRect(0, rect.y + kTitleTopY, pageWidth, titleAuthorStripHeight, false);
+  renderer.drawText(UI_12_FONT_ID, centerX - titleWidth / 2, rect.y + kTitleTopY, truncatedTitle.c_str(), true,
                     EpdFontFamily::BOLD);
+
+  // --- Author line directly under the title (above the cover). ---
+  const std::string& authorRaw = recentBooks[curIdx].author;
+  if (!authorRaw.empty()) {
+    const std::string truncatedAuthor =
+        renderer.truncatedText(kAuthorFontId, authorRaw.c_str(), pageWidth - 40, EpdFontFamily::REGULAR);
+    const int aw = renderer.getTextWidth(kAuthorFontId, truncatedAuthor.c_str(), EpdFontFamily::REGULAR);
+    const int authorY = rect.y + kTitleTopY + titleLineH + kTitleAuthorGap;
+    renderer.drawText(kAuthorFontId, centerX - aw / 2, authorY, truncatedAuthor.c_str(), true,
+                      EpdFontFamily::REGULAR);
+  }
 
   // --- Reading-progress footer below the center cover. Modelled on the
   //     LyraCarousel footer: compact elapsed-time label on the top-left,
   //     a 5-px dithered-track progress bar across the cover width, and a
   //     right-aligned percentage below the bar. ---
   constexpr int kFooterFontId = UI_10_FONT_ID;
-  constexpr int kFooterTopGap = 8;             // gap below the center cover
+  constexpr int kFooterTopGap = 8;
   constexpr int kFooterProgressBarHeight = 5;
   constexpr int kFooterBarToLabelGap = 2;      // gap between bar and time/percent row
 
@@ -608,28 +636,28 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
   // a few px below the shadow's extent so it doesn't crowd the cells.
   // The strip rect is sized to JUST the tab + cells, so this drops into
   // the small breathing-room band between the strip and the icon bar.
+  //
+  // CrumBLE: dropped the author second-line from this function. The author
+  // (when a book is focused) is now rendered into the icon bar's label
+  // band by drawButtonMenu via focusedBookAuthorForLabel -- HomeActivity
+  // sets that pointer when a shelf book is focused. The previous author
+  // position here was being wiped by drawButtonMenu's pre-render clear,
+  // making it invisible.
   if (selectedSpineIndex >= 0 && focusedBookTitle != nullptr && *focusedBookTitle != '\0') {
     constexpr int kTitleFontId = UI_10_FONT_ID;
-    // Title gap from the cell-row bottom (including shadow). Tightened
-    // from 6 → 3 so the title sits closer under the row and leaves more
-    // headroom for descenders before the icon bar.
-    constexpr int kTitleTopGap = 3;
+    // Tightened from +3 to 0 (halfway between the original +3 and the
+    // -3 we tried before): keeps the descender area (g, p, q, y) above
+    // the icon-bar's pre-render fillRect band so the bottom row of
+    // those letters renders intact, while leaving a small visible gap
+    // between the cell-row shadow and the title.
+    constexpr int kTitleTopGap = 0;
     const int titleY = shelfRowY + kCellHeight + kShadowDepth + kTitleTopGap;
     const auto truncated = renderer.truncatedText(kTitleFontId, focusedBookTitle, rect.width - 2 * kSidePad);
     const int tw = renderer.getTextWidth(kTitleFontId, truncated.c_str(), EpdFontFamily::REGULAR);
     renderer.drawText(kTitleFontId, rect.x + (rect.width - tw) / 2, titleY, truncated.c_str(), true,
                       EpdFontFamily::REGULAR);
-
-    // Author on a smaller second line under the title (metadata only).
-    if (focusedBookAuthor != nullptr && *focusedBookAuthor != '\0') {
-      constexpr int kAuthorFontId = SMALL_FONT_ID;
-      const int authorY = titleY + renderer.getLineHeight(kTitleFontId);
-      const auto authTrunc = renderer.truncatedText(kAuthorFontId, focusedBookAuthor, rect.width - 2 * kSidePad);
-      const int aw = renderer.getTextWidth(kAuthorFontId, authTrunc.c_str(), EpdFontFamily::ITALIC);
-      renderer.drawText(kAuthorFontId, rect.x + (rect.width - aw) / 2, authorY, authTrunc.c_str(), true,
-                        EpdFontFamily::ITALIC);
-    }
   }
+  (void)focusedBookAuthor;  // intentionally unused; consumed by drawButtonMenu via focusedBookAuthorForLabel
 }
 
 void LyraFlowTheme::drawButtonMenu(GfxRenderer& renderer, Rect /*rect*/, int buttonCount, int selectedIndex,
@@ -705,12 +733,26 @@ void LyraFlowTheme::drawButtonMenu(GfxRenderer& renderer, Rect /*rect*/, int but
     }
   }
 
-  // Centered label above the row, showing only the selected item's name.
+  // Centered label above the icon row. Dual-purpose:
+  //   - When an icon is focused: shows that icon's name (existing behavior).
+  //   - When no icon is focused BUT a Collections book is focused:
+  //     HomeActivity has set focusedBookAuthorForLabel to that book's
+  //     author; we use it as the label text. Same physical slot, so the
+  //     user always sees ONE contextual label adjacent to the icon bar.
+  //
+  // One-shot: focusedBookAuthorForLabel is cleared at the end so a stale
+  // value can't leak into a subsequent frame.
+  std::string labelStr;
   if (selectedIndex >= 0 && selectedIndex < buttonCount && buttonLabel != nullptr) {
-    const std::string labelStr = buttonLabel(selectedIndex);
+    labelStr = buttonLabel(selectedIndex);
+  } else if (!focusedBookAuthorForLabel.empty()) {
+    labelStr = focusedBookAuthorForLabel;
+  }
+  if (!labelStr.empty()) {
     const auto centered = renderer.truncatedText(SMALL_FONT_ID, labelStr.c_str(), screenW - 40);
     const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, centered.c_str(), EpdFontFamily::REGULAR);
     renderer.drawText(SMALL_FONT_ID, (screenW - labelWidth) / 2, labelY + 2, centered.c_str(), true,
                       EpdFontFamily::REGULAR);
   }
+  focusedBookAuthorForLabel.clear();
 }

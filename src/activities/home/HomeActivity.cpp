@@ -3000,12 +3000,13 @@ void HomeActivity::render(RenderLock&&) {
     // band between cover tile bottom (~y=401) and icon-bar label top (~y=686).
     // Re-tuned in iter 5 to make room for the focused-book title under the
     // row: previous value (240) clipped the title's bottom ~1/3 against
-    // the icon bar's label area. 260 raises the strip ~20px so the title
-    // sits with comfortable headroom above the icons.
-    // 260: keeps the collection-name tab clear of the carousel above (raising
-    // it clipped "Favorites"). The author caption line still fits in the band
-    // below the title before the icon bar at this position.
-    constexpr int kEmptySpaceMidpointFromBottom = 260;
+    // the icon bar's label area.
+    // CrumBLE: dropped from 260 to 242 to push the shelf strip ~18 px lower
+    // (one text line worth). The carousel now stacks title -> author above
+    // the center cover (LyraFlowTheme), so the cover + footer block sits
+    // visually lower; without dropping the shelf, the collection-name tab
+    // crowded the author caption above it.
+    constexpr int kEmptySpaceMidpointFromBottom = 242;
     const int shelfStripY = pageHeight - kEmptySpaceMidpointFromBottom - (kShelfStripHeight / 2);
     const Rect shelfRect{0, shelfStripY, pageWidth, kShelfStripHeight};
 
@@ -3102,6 +3103,20 @@ void HomeActivity::render(RenderLock&&) {
       shelfSnapshotFocusedSpine = shelfSelectedSpine;
       shelfSnapshotHeaderFocused = shelfHeaderFocused;
       shelfSnapshotValid = true;
+    }
+
+    // CrumBLE Flow: route the focused book's author into the icon bar's
+    // label slot (consumed by drawButtonMenu below). Same physical spot
+    // the selected icon's name normally occupies, so the user always sees
+    // ONE contextual label adjacent to the icon row -- author when a
+    // book is hovered, icon name when an icon is hovered. The old author
+    // position under the shelf cells was being wiped by drawButtonMenu's
+    // pre-render clear, so this re-routes it to a slot the clear leaves
+    // alone (and re-paints with our text).
+    auto& flowTheme = const_cast<LyraFlowTheme&>(static_cast<const LyraFlowTheme&>(GUI));
+    flowTheme.focusedBookAuthorForLabel.clear();
+    if (!shelfHeaderFocused && shelfSelectedSpine >= 0 && focusedAuthor != nullptr && *focusedAuthor != '\0') {
+      flowTheme.focusedBookAuthorForLabel = focusedAuthor;
     }
   }
 

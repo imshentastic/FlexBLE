@@ -1,5 +1,7 @@
 #include "BaseTheme.h"
 
+#include <BluetoothHIDManager.h>
+#include <CrossPointSettings.h>
 #include <GfxRenderer.h>
 #include <HalClock.h>
 #include <HalPowerManager.h>
@@ -79,12 +81,14 @@ void BaseTheme::fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t
 }
 
 void BaseTheme::drawBatteryLeft(const GfxRenderer& renderer, Rect rect, const bool showPercentage) const {
-  // Left aligned: icon on left, percentage on right (reader mode)
+  // Left aligned: icon on left, percentage number on right (reader mode).
+  // CrumBLE: dropped the "%" suffix per user preference -- number alone
+  // reads cleaner in the bottom-left status corner.
   const uint16_t percentage = powerManager.getBatteryPercentage();
   const int y = rect.y + 6;
 
   if (showPercentage) {
-    const auto percentageText = std::to_string(percentage) + "%";
+    const auto percentageText = std::to_string(percentage);
     renderer.drawText(SMALL_FONT_ID, rect.x + batteryPercentSpacing + rect.width, rect.y, percentageText.c_str());
   }
 
@@ -108,6 +112,57 @@ void BaseTheme::drawBatteryRight(const GfxRenderer& renderer, Rect rect, const b
   const Rect iconRect{rect.x, y, rect.width, rect.height};
   drawBatteryOutline(renderer, rect.x, y, rect.width, rect.height);
   fillBatteryIcon(renderer, iconRect, percentage);
+}
+
+void BaseTheme::drawBluetoothIcon(const GfxRenderer& renderer, int x, int y, int w, int h, bool linked) {
+  // Classic stylized Bluetooth rune in an `w x h` bounding box. Geometry:
+  //   - vertical spine at the horizontal middle
+  //   - top-right wedge:    (mid,top)    -> (right,q1) -> (mid,middle)
+  //   - bottom-right wedge: (mid,middle) -> (right,q3) -> (mid,bot)
+  //   - left arms (the X):  (left,q1) -> (mid,middle), (left,q3) -> (mid,middle)
+  // The left arms are essential to the rune -- without them the icon reads
+  // as a half-symbol with only the right-side wedges. They cross at the
+  // spine's mid-height where the wedges' returning vertices also meet.
+  //
+  // When `linked` is true, two small filled-square dots flank the rune
+  // horizontally (touching the spine envelope) to signal "remote
+  // connected". Dots match the rune lines' visual weight.
+  //
+  // CrumBLE: lines drawn at width 2. Width-1 looked grey on the e-ink
+  // panel because diagonal lines get anti-aliased to soft pixels; width
+  // 2 forces solid black.
+  constexpr int kLineWidth = 2;
+  const int mx = x + w / 2;
+  const int top = y;
+  const int bot = y + h - 1;
+  const int mid = y + h / 2;
+  const int q1 = y + h / 4;
+  const int q3 = y + (3 * h) / 4;
+  const int lx = x;
+  const int rx = x + w - 1;
+  // Top-right wedge -- two diagonal lines
+  renderer.drawLine(mx, top, rx, q1, kLineWidth, true);
+  renderer.drawLine(rx, q1, mx, mid, kLineWidth, true);
+  // Bottom-right wedge -- two diagonal lines
+  renderer.drawLine(mx, mid, rx, q3, kLineWidth, true);
+  renderer.drawLine(rx, q3, mx, bot, kLineWidth, true);
+  // Left arms -- the X-pattern crossing at the spine midpoint
+  renderer.drawLine(lx, q1, mx, mid, kLineWidth, true);
+  renderer.drawLine(lx, q3, mx, mid, kLineWidth, true);
+  // Spine: drawLine ignores the lineWidth arg for purely vertical strokes
+  // (x1 == x2), so use fillRect to get a 2 px wide stroke matching the
+  // diagonals' thickness.
+  renderer.fillRect(mx, top, kLineWidth, h, true);
+
+  if (linked) {
+    // Side dots at mid-height. 3x3 filled squares with no gap (touching
+    // the rune body). Larger than the original 2x2 so they render as
+    // solidly black as the rune itself on e-ink (smaller squares were
+    // mid-gray due to anti-aliasing on the small panel).
+    constexpr int dotSize = 3;
+    renderer.fillRect(lx - dotSize, mid - dotSize / 2, dotSize, dotSize, true);
+    renderer.fillRect(rx + 1, mid - dotSize / 2, dotSize, dotSize, true);
+  }
 }
 
 void BaseTheme::drawProgressBar(const GfxRenderer& renderer, Rect rect, const size_t current,
@@ -787,14 +842,36 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     renderer.fillPolygon(xNotch, yNotch, 3, false);
   }
 
-  // Draw Battery
+  // Draw Battery (in the leftmost slot of the status bar, right after the
+  // bookmark icon if any).
   const bool showBatteryPercentage =
       SETTINGS.hideBatteryPercentage == CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_NEVER;
+  const int batteryX = metrics.statusBarHorizontalMargin + orientedMarginLeft + 1 + bmTotalWidth;
   if (SETTINGS.statusBarBattery) {
-    GUI.drawBatteryLeft(renderer,
-                        Rect{metrics.statusBarHorizontalMargin + orientedMarginLeft + 1 + bmTotalWidth, textY,
-                             metrics.batteryWidth, metrics.batteryHeight},
+    GUI.drawBatteryLeft(renderer, Rect{batteryX, textY, metrics.batteryWidth, metrics.batteryHeight},
                         showBatteryPercentage);
+  }
+
+  // CrumBLE: Bluetooth status icon. Painted whenever the BLE stack is on
+  // (and the user has Show enabled in Customise Status Bar). Always the
+  // linked-variant glyph (rune + side dots), since stack-on virtually
+  // always implies an active or about-to-be-active remote. The earlier
+  // approach of strictly requiring btMgr.isConnected() made the icon
+  // flicker out during brief controller drops and the post-Reader-Options
+  // reconnect window -- users see "icon vanished" and think the indicator
+  // is broken. Stack-on is a more reliable proxy for "the user is using
+  // BLE right now".
+  auto& btMgr = BluetoothHIDManager::getInstance();
+  const bool btOn = btMgr.isEnabled();
+  if (btOn && SETTINGS.statusBarBattery) {
+    // Battery footprint: icon + (number text if shown). 1-3 digits without
+    // a "%" suffix fits in ~38 px (battery icon 22 + small gap + 3-digit
+    // number 14). BT icon body offset by 3 (the linked-state dot width)
+    // so its left dot stays inside the reserved slot.
+    const int batteryFootprint = showBatteryPercentage ? 38 : 20;
+    const int btIconX = batteryX + batteryFootprint + btIconBatterySpacing + 3;
+    const int btY = textY + (metrics.batteryHeight - btIconBodyHeight) / 2 + 5;
+    drawBluetoothIcon(renderer, btIconX, btY, btIconBodyWidth, btIconBodyHeight, /*linked=*/true);
   }
 
   // Draw Clock (X3 only — DS3231 RTC)
@@ -818,8 +895,14 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     const int rendererableScreenWidth =
         renderer.getScreenWidth() - (metrics.statusBarHorizontalMargin * 2) - orientedMarginLeft - orientedMarginRight;
 
-    const int batterySize = SETTINGS.statusBarBattery ? (showBatteryPercentage ? 50 : 20) : 0;
-    const int titleMarginLeft = batterySize + bmTotalWidth + 30;
+    // batterySize: 20 (icon-only) or ~38 (icon + 1-3 digit number, no '%'
+    // suffix). BT slot to the right is reserved whenever the user has the
+    // BT indicator enabled (regardless of current BLE stack state), so the
+    // title's center is stable as BLE toggles on/off. When the user hides
+    // the BT indicator in Status Bar settings, the slot collapses.
+    const int batterySize = SETTINGS.statusBarBattery ? (showBatteryPercentage ? 38 : 20) : 0;
+    const int btReserve = SETTINGS.statusBarBattery ? (btIconReservedWidth + btIconBatterySpacing) : 0;
+    const int titleMarginLeft = batterySize + btReserve + bmTotalWidth + 30;
     const int clockReserve = clockTextWidth > 0 ? (clockTextWidth + 10) : 0;
     const int titleMarginRight = progressTextWidth + clockReserve + 30;
 
