@@ -268,5 +268,5 @@ class BaseTheme {
   static constexpr int btIconBodyWidth = 9;
   static constexpr int btIconBodyHeight = 14;
   static constexpr int btIconReservedWidth = 17;  // body 9 + 3-px dots both sides + 2 px margin
-  static constexpr int btIconBatterySpacing = 5;  // tighter -- "100" has no '%' suffix now
+  static constexpr int btIconBatterySpacing = 11;  // tighter -- "100" has no '%' suffix now
 };
