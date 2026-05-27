@@ -134,12 +134,11 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
     const int hL = isLeft ? sideInnerHeight : sideOuterHeight;
     const int hR = isLeft ? sideOuterHeight : sideInnerHeight;
     const int hMax = std::max(hL, hR);
-    // CrumBLE: tightened from (30/80 left, 385/335 right) -- pulls the
-    // side covers ~16 px closer toward the center book on each side so
-    // the adjacent books read as a clustered "row of books" rather than
-    // floating off near the screen edges. Near covers move inward more
-    // than far so the perspective stagger stays balanced.
-    const int drawX = isLeft ? (isFar ? 46 : 96) : (isFar ? 368 : 318);
+    // CrumBLE: looser positioning -- side covers sit further out so
+    // each adjacent book shows more of its content. The (separately-
+    // tuned) 7 px white border around the center cover gives a clean
+    // framed look between center and adjacent books.
+    const int drawX = isLeft ? (isFar ? 24 : 74) : (isFar ? 390 : 340);
     const int drawY = centerY + (centerCoverHeight / 2) - (hMax / 2);
 
     const std::string coverPath = UITheme::getCoverThumbPath(recentBooks[idx].coverBmpPath, centerCoverHeight);
@@ -164,10 +163,10 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
       renderer.fillRect(drawX, drawY, sideCoverWidth, hMax, true);
       return;  // outline would be invisible against solid black anyway
     }
-    // 2px trapezoidal outline matching the perspective shape — keeps every
-    // side book visibly framed so the center book reads as part of a row of
-    // books, not a single floating cover. The trapezoid is column-centered
-    // vertically inside the (sideCoverWidth × hMax) bbox.
+    // 2px trapezoidal outline matching the perspective shape -- traces
+    // the cover content rather than a bounding box. The trapezoid is
+    // column-centered vertically inside the (sideCoverWidth × hMax)
+    // bbox.
     const int topL = (hMax - hL) / 2;
     const int topR = (hMax - hR) / 2;
     const int botL = topL + hL - 1;
@@ -175,17 +174,14 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
     const int rightX = drawX + sideCoverWidth - 1;
     renderer.drawLine(drawX, drawY + topL, rightX, drawY + topR, 2, true);    // top edge (slanted)
     renderer.drawLine(drawX, drawY + botL, rightX, drawY + botR, 2, true);    // bottom edge (slanted)
-    // Verticals use fillRect, not drawLine — drawLine ignores its thickness
-    // arg for purely vertical strokes (x1 == x2), so the previous 4 px width
-    // was rendering as 1 px regardless. fillRect gives explicit control.
+    // Verticals use fillRect, not drawLine -- drawLine ignores its thickness
+    // arg for purely vertical strokes (x1 == x2).
     constexpr int verticalEdgeWidth = 2;
     renderer.fillRect(drawX, drawY + topL, verticalEdgeWidth, hL, true);                    // left edge
     renderer.fillRect(rightX - verticalEdgeWidth + 1, drawY + topR, verticalEdgeWidth, hR,  // right edge
                       true);
     // The bottom slant's perpendicular thickness leaks pixels into the two
-    // rows starting just below the bbox bottom (the row at drawY + hMax
-    // is part of the visible outline, so we leave it). Wipe rows hMax+1
-    // and hMax+2 to catch the hangnail wherever it lands.
+    // rows starting just below the bbox bottom. Wipe rows hMax+1 / hMax+2.
     renderer.fillRect(drawX, drawY + hMax + 1, sideCoverWidth, 2, false);
   };
 
@@ -242,20 +238,20 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
     if (count >= 2) drawStackedCover(idx2, true, false);
     if (count >= 3) drawStackedCover(idx4, false, false);
 
-    // Clear the MAX possible center-cover slot, not just the current
-    // cover's bbox. When the previous render was a wider book, its
-    // selection border (+1 px outside the cover) extended past the
-    // current cover's edges; the narrow per-cover clear left those
-    // outer pixels intact, producing the "ghost hooks" effect at
-    // each corner. A fixed-size slot clear sized to the maximum
-    // possible cover + 3 px of selection-border safety wipes every
-    // previous frame's border pixels regardless of dimensions.
-    constexpr int kSelBorderPad = 3;
-    const int slotW = centerCoverWidth + 2 * kSelBorderPad;
-    const int slotH = centerCoverHeight + 2 * kSelBorderPad;
-    const int slotX = centerX - slotW / 2;
-    const int slotY = centerY - kSelBorderPad;
-    renderer.fillRect(slotX, slotY, slotW, slotH, false);
+    // Clear behind the cover so side-cover overlap doesn't bleed
+    // through. CrumBLE used to clear the FULL slot (centerCoverWidth +
+    // 6) regardless of the actual cover width -- meant a narrower cover
+    // left a wide band of white extending ~13 px past the side covers'
+    // inner edge, visibly "cutting into" the adjacent books. Now we
+    // clear actual cover dims + a 7 px white "frame" border per user
+    // preference: a small visible gap between the center cover and the
+    // adjacent books reads as intentional matting, not a clipped book.
+    constexpr int kSelBorderPad = 7;
+    const int clearX = cX - kSelBorderPad;
+    const int clearY = actualY - kSelBorderPad;
+    const int clearW = actualCoverWidth + 2 * kSelBorderPad;
+    const int clearH = actualCoverHeight + 2 * kSelBorderPad;
+    renderer.fillRect(clearX, clearY, clearW, clearH, false);
 
     if (centerParsed) {
       renderer.drawBitmap(centerBitmap, cX, actualY, actualCoverWidth, actualCoverHeight);
@@ -309,14 +305,12 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
     // last visible source of corner-hook artifacts.
 
     if (hasSelection) {
-      // Selection border: thinned from 4 px to 2 px and pulled in
-      // (offset 1 px instead of 2 px). The 4 px-stroke + 8 px radius
-      // combo was the dominant source of the "corner hook" artifact —
-      // each corner's arc occupied ~6 px of stroke width which read
-      // as a bracket at panel resolution. A 2 px outline at radius 7
-      // looks like a single intentional frame.
-      renderer.drawRoundedRect(cX - 1, actualY - 1, actualCoverWidth + 2, actualCoverHeight + 2, 2,
-                               bookCornerRadius + 1, true);
+      // CrumBLE: rounded-corner selection border (radius 5, stroke 2)
+      // sitting 2 px outside the cover -- floats inside the 7 px
+      // white frame around the center cover. Tighter radius than the
+      // previous 7 px keeps the corner arcs crisp at panel resolution
+      // without the bracket-hook artifact the larger radius produced.
+      renderer.drawRoundedRect(cX - 2, actualY - 2, actualCoverWidth + 4, actualCoverHeight + 4, 2, 5, true);
     }
 
   }  // end of if (!skipCarouselCoverLoads)
