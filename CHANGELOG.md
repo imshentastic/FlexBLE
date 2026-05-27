@@ -1,5 +1,27 @@
 # Changelog
 
+## [crumble-v3.3.0] - 2026-05-27
+
+### Added
+- The web optimizer pre-renders each EPUB image to a per-device pixel cache (`.pxc`) at the device's exact screen viewport and emits a small manifest of the settings the bake was made against. Image-heavy chapters now render over Bluetooth without thrashing the link or needing the JPEG decoder.
+- When opening a baked book with different font, margin, image rendering, or orientation than the bake assumed, the reader now prompts on Quick Connect: switch back to the baked layout, keep your settings and reflow, or cancel. Previously it would silently rebuild under heap pressure.
+- Bluetooth status icon in the reader's status bar (to the right of the battery), with side dots when a remote is currently linked.
+- New optimizer Advanced toggle (default on) for the `.pxc` image bake, so users who never read with a Bluetooth remote can skip it and keep the EPUB smaller.
+- Author shown under each book in the Flow carousel.
+
+### Fixed
+- Spurious "Bluetooth couldn't stay connected" alert on every first connect. The bonding/encryption renegotiation that happens in the first few seconds is no longer treated as a real disconnect; genuine heap-pressure drops in the rest of the early window still surface as before.
+- RoundedRaff theme: "Continue Reading" was listed twice in the home menu, shifting every other action by one slot — selecting "File Transfer" opened Settings, and the last menu item became a silent no-op. Now lists once and actions land on the right item.
+- Flow carousel center book had a wide white background that visually cut into the adjacent covers. The white frame is now sized to the cover itself, not the whole slot, and the side covers regain the strip you could see in older releases.
+- Flow carousel side covers are no longer clipped at the screen edges.
+- Bluetooth status icon now has visible breathing room from the battery number.
+
+### Changed
+- Book Settings drawer (and Reader Options) always show the full settings list now, even with a Bluetooth remote linked. Toggling a font, margin, or other layout setting silently drops the link around the chapter rebuild and restores it after, instead of presenting a "Bluetooth is on, turn it off first" prompt on every toggle. Settings are cached at book open so the drawer remains responsive even when heap is tight.
+- The drawer's "BT Quick Connect" entry becomes "BT Disconnect" while a remote is already linked.
+- BT Quick Connect now resolves the baked-layout manifest mismatch BEFORE running the chapter rebuild, so the rebuild matches whatever you picked instead of running once with the wrong layout and rebuilding again.
+- Selection border around the focused Flow carousel book uses rounded corners with a slightly tighter radius, matching the cover thumb.
+
 ## [crumble-v3.2.0] - 2026-05-25
 
 ### Added
