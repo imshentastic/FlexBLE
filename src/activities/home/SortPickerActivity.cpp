@@ -19,6 +19,10 @@ const char* SortPickerActivity::labelFor(CollectionSort mode) {
       return tr(STR_SORT_DATE_ADDED_ASC);
     case CollectionSort::DateLastReadDesc:
       return tr(STR_SORT_DATE_LAST_READ_DESC);
+    case CollectionSort::AuthorAlpha:
+      return tr(STR_SORT_AUTHOR_LAST_ALPHA);
+    case CollectionSort::AuthorAlphaDesc:
+      return tr(STR_SORT_AUTHOR_LAST_ALPHA_DESC);
   }
   return "";
 }

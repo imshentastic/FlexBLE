@@ -16,6 +16,12 @@ enum class CollectionSort : uint8_t {
   DateAddedAsc = 3,     // oldest first
   TitleAlphaDesc = 4,   // basename Z→A
   DateLastReadDesc = 5, // most recently opened first (by RECENT_BOOKS position; non-recents sort to end)
+  // CrumBLE: sort by author last name (extracted heuristically from the
+  // EPUB metadata's <dc:creator> -- handles "First Last", "Last, First",
+  // and falls back to the whole author string if no split point is
+  // found). Books with no cached metadata or no author sort to the end.
+  AuthorAlpha = 6,      // author last name A→Z
+  AuthorAlphaDesc = 7,  // author last name Z→A
 };
 
 // CrumBLE Collections — user-defined tag groups that live on top of the

@@ -27,6 +27,8 @@ class SortPickerActivity final : public Activity {
     if (allowManual) options.push_back(CollectionSort::Manual);
     options.push_back(CollectionSort::TitleAlpha);
     options.push_back(CollectionSort::TitleAlphaDesc);
+    options.push_back(CollectionSort::AuthorAlpha);
+    options.push_back(CollectionSort::AuthorAlphaDesc);
     options.push_back(CollectionSort::DateAddedDesc);
     options.push_back(CollectionSort::DateAddedAsc);
     options.push_back(CollectionSort::DateLastReadDesc);

@@ -2,6 +2,7 @@
 
 #include <Arduino.h>  // millis() for createCollection
 #include <ArduinoJson.h>
+#include <FsHelpers.h>
 #include <HalStorage.h>
 #include <Logging.h>
 
@@ -134,6 +135,38 @@ bool basenameLess(const std::string& a, const std::string& b) {
   return *aBase == 0 && *bBase != 0;
 }
 
+// CrumBLE: heuristic "last name" extraction from a free-form author string.
+// Handles the two common dc:creator formats:
+//   "Last, First"  -> "Last"      (comma form)
+//   "First Last"   -> "Last"      (space form, last whitespace-token wins)
+//   "J. R. R. Tolkien" -> "Tolkien" (last whitespace-token still works)
+//   "Plato"        -> "Plato"     (single-word author)
+// Returns lowercase for case-insensitive comparison. Returns an empty
+// string for empty input -- caller can use that as a "sort to end" sentinel.
+std::string lastNameLower(const std::string& author) {
+  // Trim leading/trailing whitespace.
+  size_t l = author.find_first_not_of(" \t\r\n");
+  if (l == std::string::npos) return {};
+  size_t r = author.find_last_not_of(" \t\r\n");
+  std::string s = author.substr(l, r - l + 1);
+  // "Last, First" form -- everything before the first comma.
+  const size_t comma = s.find(',');
+  if (comma != std::string::npos) {
+    s = s.substr(0, comma);
+    // Re-trim in case the comma had leading spaces.
+    size_t rr = s.find_last_not_of(" \t\r\n");
+    if (rr != std::string::npos) s = s.substr(0, rr + 1);
+  } else {
+    // "First Last" form -- last whitespace-separated token.
+    const size_t sp = s.find_last_of(" \t");
+    if (sp != std::string::npos) s = s.substr(sp + 1);
+  }
+  // Lowercase for case-insensitive sort.
+  std::transform(s.begin(), s.end(), s.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return s;
+}
+
 void applySort(std::vector<std::string>& paths, CollectionSort mode) {
   switch (mode) {
     case CollectionSort::Manual:
@@ -188,6 +221,39 @@ void applySort(std::vector<std::string>& paths, CollectionSort mode) {
       // Stable sort by rank ASC (so RECENT_BOOKS[0] comes first). Ties
       // (both unread) preserve input order.
       std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return rank[a] < rank[b]; });
+      std::vector<std::string> sorted;
+      sorted.reserve(paths.size());
+      for (size_t i : order) sorted.push_back(std::move(paths[i]));
+      paths = std::move(sorted);
+      return;
+    }
+    case CollectionSort::AuthorAlpha:
+    case CollectionSort::AuthorAlphaDesc: {
+      // Per-path: load the EPUB's cached metadata (no full index build) and
+      // extract the author's heuristic last name. Books with no metadata
+      // cache yet OR no author tag end up with an empty key and sort to
+      // the END of the list regardless of asc/desc, so they don't litter
+      // the top of an A-Z view. .xtc / .txt currently have no author
+      // metadata path here -- they also fall to the end.
+      std::vector<std::string> keys(paths.size());
+      for (size_t i = 0; i < paths.size(); ++i) {
+        if (!FsHelpers::hasEpubExtension(paths[i])) continue;
+        Epub epub(paths[i], "/.crosspoint");
+        epub.load(/*buildIfMissing=*/false, /*skipLoadingCss=*/true);
+        keys[i] = lastNameLower(epub.getAuthor());
+      }
+      std::vector<size_t> order(paths.size());
+      for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+      const bool desc = mode == CollectionSort::AuthorAlphaDesc;
+      std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        // Empty keys (no author / no metadata) always sort last regardless
+        // of direction.
+        const bool aEmpty = keys[a].empty();
+        const bool bEmpty = keys[b].empty();
+        if (aEmpty != bEmpty) return !aEmpty;
+        if (aEmpty) return false;  // both empty -- input order wins (stable)
+        return desc ? keys[a] > keys[b] : keys[a] < keys[b];
+      });
       std::vector<std::string> sorted;
       sorted.reserve(paths.size());
       for (size_t i : order) sorted.push_back(std::move(paths[i]));
@@ -533,7 +599,7 @@ bool CollectionsStore::loadFromFile() {
       // Backwards compat: missing "sort" key (older JSON) defaults to
       // Manual — same as before sort-mode existed.
       const unsigned sortRaw = entry["sort"] | 0u;
-      if (sortRaw <= static_cast<unsigned>(CollectionSort::DateLastReadDesc)) {
+      if (sortRaw <= static_cast<unsigned>(CollectionSort::AuthorAlphaDesc)) {
         c.sortMode = static_cast<CollectionSort>(sortRaw);
       }
       // collapseSeries defaults to true (matches struct default). Older
