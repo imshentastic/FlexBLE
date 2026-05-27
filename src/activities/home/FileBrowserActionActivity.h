@@ -71,6 +71,17 @@ enum class FileBrowserAction : int {
   // to scan the library first. Label flips Show/Hide with current state.
   ToggleShowRecentlyAdded = 17,
   ToggleShowAllBooks = 18,
+  // CrumBLE: shelf-header toggles for the completion-derived virtual
+  // collections. Finished is books the user marked complete; New is
+  // books that exist in the library but have never been opened. Like the
+  // other virtuals above, they're opt-in -- turning one ON triggers the
+  // library walk and an additional pass over each book's BookReadingStats.
+  ToggleShowFinished = 19,
+  ToggleShowNew = 20,
+  // CrumBLE: opens RearrangeCollectionsActivity. User taps Confirm on each
+  // collection in the order they want them displayed; the new order is
+  // saved and becomes the L/R cycle on Home.
+  RearrangeCollections = 21,
 };
 
 class FileBrowserActionActivity final : public Activity {
@@ -78,6 +89,15 @@ class FileBrowserActionActivity final : public Activity {
   struct MenuItem {
     FileBrowserAction action;
     StrId labelId;
+    // CrumBLE: optional right-justified value (rendered after the label using
+    // the existing drawList rowValue slot). Used by the shelf-header menu's
+    // Show/Hide toggles to make state visible at a glance --
+    //   "Recently Added                              Show"
+    //   "All Books                                   Hide"
+    // -- instead of baking the verb into the label ("Show Recently Added" /
+    // "Hide Recently Added") which crowds the text and is less scannable
+    // when there are several toggles in a row.
+    std::string rightValue;
   };
 
   FileBrowserActionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string title,

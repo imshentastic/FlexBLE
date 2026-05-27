@@ -24,6 +24,7 @@
 #include "../settings/KOReaderSettingsActivity.h"
 #include "BookSettingsDrawerActivity.h"
 #include "BookStatsActivity.h"
+#include "CollectionsStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "EpubReaderBookmarkListActivity.h"
@@ -495,7 +496,19 @@ void EpubReaderActivity::onEnter() {
 
   // Load reading stats and record session start time.
   // Session count and reading time are committed on exit once thresholds are met.
+  //
+  // CrumBLE: also persist a zeroed stats.bin on FIRST open so the file exists
+  // from this moment forward. The "Unopened" virtual collection uses
+  // stats.bin presence as its membership gate -- any book the reader has been
+  // entered into, even briefly, should drop out of Unopened immediately. The
+  // periodic save would eventually create the file, but only after enough
+  // reading time accumulates to enter the save path.
+  const bool statsExistedAtOpen = BookReadingStats::exists(epub->getCachePath());
   stats = BookReadingStats::load(epub->getCachePath());
+  if (!statsExistedAtOpen) {
+    stats.save(epub->getCachePath());
+    CollectionsStore::getInstance().invalidateScannedVirtuals();
+  }
   sessionStartMs = millis();
   sessionSegmentStartMs = sessionStartMs;
   totalSessionMsThisOpen = 0UL;

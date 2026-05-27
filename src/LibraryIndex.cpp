@@ -5,9 +5,13 @@
 #include <HalStorage.h>
 #include <Logging.h>
 
+#include "CollectionsStore.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <strings.h>  // strcasecmp
 #include <unordered_map>
 
 namespace {
@@ -179,6 +183,10 @@ void LibraryIndex::rescan(const std::function<void(int)>& progress) {
   walkPerformed = true;
   saveToFile();
   LOG_INF("LIB", "Library index now has %zu entries (walked %zu files)", entries.size(), walkedCount);
+  // CrumBLE: a re-walk can add/remove books, so the BookReadingStats-derived
+  // virtuals (Finished, New) might be stale relative to the new path set.
+  // Invalidate so the next access rescans.
+  CollectionsStore::getInstance().invalidateScannedVirtuals();
   if (progress) progress(100);
 }
 
@@ -251,6 +259,28 @@ void LibraryIndex::walkRecursive(const std::string& dirPath, int depth, std::vec
     childPath += name;
 
     if (entry.isDirectory()) {
+      // CrumBLE: also skip well-known non-library folders by name
+      // (case-insensitive). These hold derived/cache data that the user
+      // sometimes parks at the SD root next to actual books -- we don't
+      // want them surfaced in Recently Added / All Books / Unopened.
+      //
+      //   XTcache  -- companion XT reader's cache directory
+      //
+      // Add new entries here when a new "looks-like-a-book-but-isn't"
+      // folder shows up in user libraries.
+      static const char* const kBlacklistedDirs[] = {"XTcache"};
+      bool skip = false;
+      for (const char* bad : kBlacklistedDirs) {
+        if (strcasecmp(name.c_str(), bad) == 0) {
+          skip = true;
+          break;
+        }
+      }
+      if (skip) {
+        LOG_DBG("LIB", "Skipping blacklisted directory: %s", childPath.c_str());
+        entry.close();
+        continue;
+      }
       entry.close();  // close before recursing so we don't pile open file handles.
       walkRecursive(childPath, depth + 1, outPaths, outSizes);
     } else {

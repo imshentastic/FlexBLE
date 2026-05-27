@@ -12,6 +12,8 @@
 #include "LibraryIndex.h"
 #include "RecentBooksStore.h"
 #include "SeriesIndex.h"
+#include "activities/reader/BookReadingStats.h"
+#include <Epub.h>
 
 #include <unordered_set>
 
@@ -53,6 +55,13 @@ void CollectionsStore::begin() {
   // removes them via setVirtualCollectionVisible().
   if (SETTINGS.showRecentlyAddedCollection) seedVirtual(RECENTLY_ADDED_ID, RECENTLY_ADDED_NAME);
   if (SETTINGS.showAllBooksCollection) seedVirtual(ALL_BOOKS_ID, ALL_BOOKS_NAME);
+  if (SETTINGS.showFinishedCollection) seedVirtual(FINISHED_ID, FINISHED_NAME);
+  if (SETTINGS.showNewCollection) seedVirtual(NEW_ID, NEW_NAME);
+  // CrumBLE: apply the user's saved L/R cycle order (if any). Loaded by
+  // loadFromFile() into displayOrderIds_; honoring it here means virtuals
+  // get their rearrange position back even though their entries themselves
+  // are reseeded each begin().
+  applyDisplayOrder();
 
   if (activeId.empty() || findCollection(activeId) == nullptr) {
     activeId = FAVORITES_ID;
@@ -67,6 +76,9 @@ void CollectionsStore::setVirtualCollectionVisible(const char* id, const char* n
     v.name = name;
     v.isVirtual = true;
     collections.push_back(std::move(v));
+    // Re-apply the saved display order so a previously-rearranged virtual
+    // returns to its saved slot rather than always landing at the end.
+    applyDisplayOrder();
   } else if (!visible && present) {
     collections.erase(std::remove_if(collections.begin(), collections.end(),
                                      [&](const Collection& c) { return c.id == id; }),
@@ -208,10 +220,35 @@ std::vector<std::string> CollectionsStore::resolveBookPaths(const std::string& c
       // prefer.
       paths = LibraryIndex::getInstance().getAllBookPaths();
     }
+    // CrumBLE: completion-derived virtuals. Both read each book's
+    // BookReadingStats once per session (cached in
+    // {finished,new}PathsCache_) and re-scan lazily after the next
+    // invalidateScannedVirtuals() call. We then apply a sensible default
+    // sort below (Unopened = newest first, Finished = newest finished first).
+    if (collectionId == FINISHED_ID) {
+      rebuildScannedVirtualsIfNeeded();
+      paths = finishedPathsCache_;
+    } else if (collectionId == NEW_ID) {
+      rebuildScannedVirtualsIfNeeded();
+      paths = newPathsCache_;
+    }
   }
-  // Apply user-chosen sort. Manual mode is a no-op so the stored
-  // order survives for user collections.
-  applySort(paths, c->sortMode);
+  // Apply sort. For virtuals we synthesise a default that matches the
+  // collection's semantic intent unless the user explicitly picked something
+  // else (sortMode != Manual). For user collections, Manual preserves the
+  // stored insertion order.
+  CollectionSort effectiveMode = c->sortMode;
+  if (c->isVirtual && effectiveMode == CollectionSort::Manual) {
+    if (collectionId == NEW_ID) {
+      effectiveMode = CollectionSort::DateAddedDesc;  // newest unopened first
+    } else if (collectionId == FINISHED_ID) {
+      effectiveMode = CollectionSort::DateLastReadDesc;  // most recently finished first
+    } else if (collectionId == ALL_BOOKS_ID) {
+      effectiveMode = CollectionSort::TitleAlpha;  // alphabetic (existing default)
+    }
+    // RECENTLY_ADDED_ID returns early above; never reaches this path.
+  }
+  applySort(paths, effectiveMode);
   return paths;
 }
 
@@ -474,6 +511,18 @@ bool CollectionsStore::loadFromFile() {
   collections.clear();
   activeId = doc["active"] | std::string(FAVORITES_ID);
 
+  // CrumBLE: optional saved L/R cycle order. Applied later in begin() once
+  // all virtuals have been seeded. Empty when the JSON predates rearrange.
+  displayOrderIds_.clear();
+  JsonArrayConst orderArr = doc["displayOrder"];
+  if (!orderArr.isNull()) {
+    displayOrderIds_.reserve(orderArr.size());
+    for (JsonVariantConst id : orderArr) {
+      const std::string s = id | std::string("");
+      if (!s.empty()) displayOrderIds_.push_back(s);
+    }
+  }
+
   JsonArrayConst arr = doc["collections"];
   if (!arr.isNull()) {
     for (JsonObjectConst entry : arr) {
@@ -506,12 +555,84 @@ bool CollectionsStore::loadFromFile() {
   return true;
 }
 
+void CollectionsStore::applyDisplayOrder() {
+  if (displayOrderIds_.empty()) return;
+  // Stable-sort collections so that:
+  //   - any collection listed in displayOrderIds_ takes the position the
+  //     order specifies (collections.indexOf in the saved order),
+  //   - any collection NOT listed (e.g. a freshly-created user collection
+  //     since the last rearrange) keeps its natural position relative to
+  //     other unlisted entries, after all the ordered ones.
+  std::stable_sort(collections.begin(), collections.end(),
+                   [this](const Collection& a, const Collection& b) {
+                     const auto ia = std::find(displayOrderIds_.begin(), displayOrderIds_.end(), a.id);
+                     const auto ib = std::find(displayOrderIds_.begin(), displayOrderIds_.end(), b.id);
+                     // Listed entries always come before unlisted ones; among
+                     // listed entries, the earlier displayOrder index wins.
+                     const bool aListed = ia != displayOrderIds_.end();
+                     const bool bListed = ib != displayOrderIds_.end();
+                     if (aListed != bListed) return aListed;
+                     if (!aListed) return false;  // stable-sort handles ties
+                     return ia < ib;
+                   });
+}
+
+void CollectionsStore::setDisplayOrder(const std::vector<std::string>& orderedIds) {
+  // Refresh the saved order from the user's choice, then re-apply against the
+  // live `collections` vector. Save unconditionally -- the user explicitly
+  // confirmed this layout via the Rearrange UI, so we want it to stick.
+  displayOrderIds_ = orderedIds;
+  applyDisplayOrder();
+  saveToFile();
+}
+
+void CollectionsStore::invalidateScannedVirtuals() const {
+  scannedVirtualsValid_ = false;
+  finishedPathsCache_.clear();
+  newPathsCache_.clear();
+}
+
+void CollectionsStore::rebuildScannedVirtualsIfNeeded() const {
+  if (scannedVirtualsValid_) return;
+  finishedPathsCache_.clear();
+  newPathsCache_.clear();
+  // LibraryIndex::getAllBookPaths() returns every EPUB the library walk saw.
+  // Membership rules:
+  //   Finished  = stats.bin exists AND isCompleted == true
+  //   Unopened  = stats.bin does NOT exist (the reader writes one on first
+  //               onEnter, so any book the reader has been into -- even
+  //               briefly -- drops out immediately)
+  // Books opened-but-not-finished are in neither set.
+  const auto& allPaths = LibraryIndex::getInstance().getAllBookPaths();
+  finishedPathsCache_.reserve(allPaths.size() / 4);
+  newPathsCache_.reserve(allPaths.size() / 4);
+  for (const auto& path : allPaths) {
+    const Epub epub(path, "/.crosspoint");
+    const std::string cachePath = epub.getCachePath();
+    if (!BookReadingStats::exists(cachePath)) {
+      newPathsCache_.push_back(path);
+    } else if (BookReadingStats::load(cachePath).isCompleted) {
+      finishedPathsCache_.push_back(path);
+    }
+  }
+  LOG_INF("CLN", "Scanned virtuals: %u total -> %u finished, %u unopened", static_cast<unsigned>(allPaths.size()),
+          static_cast<unsigned>(finishedPathsCache_.size()), static_cast<unsigned>(newPathsCache_.size()));
+  scannedVirtualsValid_ = true;
+}
+
 bool CollectionsStore::saveToFile() const {
   Storage.mkdir("/.crosspoint");
 
   JsonDocument doc;
   doc["version"] = COLLECTIONS_FILE_VERSION;
   doc["active"] = activeId;
+  // CrumBLE: persist the full L/R cycle order so virtuals (which aren't
+  // serialised as collection entries) keep their position after a reboot.
+  // Always written -- on first save it's just the natural seeding order,
+  // which is fine because applyDisplayOrder() degrades gracefully when the
+  // saved order matches the natural one.
+  JsonArray order = doc["displayOrder"].to<JsonArray>();
+  for (const auto& c : collections) order.add(c.id);
   JsonArray arr = doc["collections"].to<JsonArray>();
   for (const auto& c : collections) {
     if (c.isVirtual) continue;  // virtuals are rebuilt every begin() — don't waste SD space persisting them.

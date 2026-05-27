@@ -361,6 +361,13 @@ class CrossPointSettings {
   // migrated to 1 on the first boot after this update; fresh installs stay 0.
   uint8_t showRecentlyAddedCollection = 0;
   uint8_t showAllBooksCollection = 0;
+  // CrumBLE: opt-in toggles for the completion-derived virtual collections.
+  // Finished = books marked complete. New = books that exist on the SD card
+  // but have never been opened (sessionCount == 0). Both are hidden by
+  // default; turning one ON triggers the library walk plus a per-book
+  // BookReadingStats read, which CollectionsStore caches in-memory.
+  uint8_t showFinishedCollection = 0;
+  uint8_t showNewCollection = 0;
   // Transient (NOT persisted): true until loadSettings() sees either of the two
   // keys above in the JSON. main.cpp uses it to apply the one-time existing-user
   // migration default (index present -> show them), then clears it.

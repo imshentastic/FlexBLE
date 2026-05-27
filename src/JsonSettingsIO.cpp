@@ -193,9 +193,12 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["bleBondedDeviceName"] = s.bleBondedDeviceName;
   doc["bleBondedDeviceAddrType"] = s.bleBondedDeviceAddrType;
 
-  // CrumBLE: opt-in virtual-collection visibility (Recently Added / All Books).
+  // CrumBLE: opt-in virtual-collection visibility (Recently Added / All Books /
+  // Finished / New). All persist with the same JSON keys to survive reboots.
   doc["showRecentlyAdded"] = s.showRecentlyAddedCollection;
   doc["showAllBooks"] = s.showAllBooksCollection;
+  doc["showFinished"] = s.showFinishedCollection;
+  doc["showNew"] = s.showNewCollection;
 
   // Language -- managed by LanguageSelectActivity, not in SettingsList.
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
@@ -338,6 +341,12 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
   }
   s.showRecentlyAddedCollection = doc["showRecentlyAdded"] | s.showRecentlyAddedCollection;
   s.showAllBooksCollection = doc["showAllBooks"] | s.showAllBooksCollection;
+  // Finished / New default to OFF for everyone (including upgrading users) --
+  // they're new-feature opt-ins and never had a "previously seen" state to
+  // migrate. Their cache also costs an extra SD pass per book, so opt-in by
+  // explicit toggle is the right policy.
+  s.showFinishedCollection = doc["showFinished"] | s.showFinishedCollection;
+  s.showNewCollection = doc["showNew"] | s.showNewCollection;
 
   // Font family — uses dynamic getter/setter in SettingsList so the generic loop skips it.
   s.fontFamily = clamp(doc["fontFamily"] | (uint8_t)0, CrossPointSettings::BUILTIN_FONT_COUNT, 0);

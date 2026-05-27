@@ -37,6 +37,7 @@
 #include "FileBrowserActionActivity.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
+#include "RearrangeCollectionsActivity.h"
 #include "RecentBookProgress.h"
 #include "RecentBooksStore.h"
 #include "SortPickerActivity.h"
@@ -1360,9 +1361,11 @@ void HomeActivity::showShelfHeaderActionMenu() {
   const Collection* active = CollectionsStore::getInstance().getActiveCollection();
   const bool isRecentlyAdded =
       active != nullptr && active->id == CollectionsStore::RECENTLY_ADDED_ID;
-  if (active != nullptr && !isRecentlyAdded) {
-    items.push_back({FileBrowserAction::SortBy, StrId::STR_SORT_BY});
-  }
+  // Rename / Delete only apply to user collections. Virtuals are
+  // auto-managed; Favorites is seeded and would reappear on next
+  // boot if deleted (so we only allow rename for it, not delete).
+  const bool isUserCollection = active != nullptr && !active->isVirtual;
+  const bool isFavorites = active != nullptr && active->id == CollectionsStore::FAVORITES_ID;
   // Per-collection collapse toggle is only meaningful when the global
   // series-detection setting is on. Hiding it otherwise avoids the
   // confusion of "Series collapse: ON" not actually collapsing
@@ -1371,11 +1374,6 @@ void HomeActivity::showShelfHeaderActionMenu() {
     items.push_back({FileBrowserAction::ToggleCollapseSeries,
                      active->collapseSeries ? StrId::STR_COLLAPSE_SERIES_ON : StrId::STR_COLLAPSE_SERIES_OFF});
   }
-  // Rename / Delete only apply to user collections. Virtuals are
-  // auto-managed; Favorites is seeded and would reappear on next
-  // boot if deleted (so we only allow rename for it, not delete).
-  const bool isUserCollection = active != nullptr && !active->isVirtual;
-  const bool isFavorites = active != nullptr && active->id == CollectionsStore::FAVORITES_ID;
   // Bulk add: only for user collections. Virtuals are auto-managed
   // so explicit add doesn't make sense there.
   if (isUserCollection) {
@@ -1387,19 +1385,35 @@ void HomeActivity::showShelfHeaderActionMenu() {
   if (isUserCollection && !isFavorites) {
     items.push_back({FileBrowserAction::DeleteCollection, StrId::STR_DELETE_COLLECTION});
   }
-  // "+ New collection..." offered on every header so users on a
-  // virtual collection (where Rename/Delete don't apply) still have
-  // a quick path to create.
+  // CrumBLE: standard ordering for the always-shown collection-management
+  // actions. Top-of-list = creating + arranging (most common actions);
+  // bottom = library-scoped maintenance (Rescan).
+  //   1. + New collection
+  //   2. Sort by (hidden on Recently Added -- its sort is intrinsic)
+  //   3-6. Show/Hide toggles for the virtual collections (right-justified
+  //        value so the toggle state is scannable at a glance)
+  //   7. Rescan library
   items.push_back({FileBrowserAction::CreateNewCollectionFromHeader, StrId::STR_HEADER_NEW_COLLECTION});
+  if (active != nullptr && !isRecentlyAdded) {
+    items.push_back({FileBrowserAction::SortBy, StrId::STR_SORT_BY});
+  }
+  // Rearrange is only meaningful when there's more than one visible
+  // collection. Hidden otherwise to avoid a one-item picker.
+  if (CollectionsStore::getInstance().getCollections().size() > 1) {
+    items.push_back({FileBrowserAction::RearrangeCollections, StrId::STR_REARRANGE});
+  }
+  auto showHideValue = [](bool on) -> std::string {
+    return std::string(I18N.get(on ? StrId::STR_HIDE : StrId::STR_SHOW));
+  };
+  items.push_back({FileBrowserAction::ToggleShowAllBooks, StrId::STR_COL_ALL_BOOKS,
+                   showHideValue(SETTINGS.showAllBooksCollection)});
+  items.push_back({FileBrowserAction::ToggleShowRecentlyAdded, StrId::STR_COL_RECENTLY_ADDED,
+                   showHideValue(SETTINGS.showRecentlyAddedCollection)});
+  items.push_back({FileBrowserAction::ToggleShowNew, StrId::STR_COL_UNOPENED,
+                   showHideValue(SETTINGS.showNewCollection)});
+  items.push_back({FileBrowserAction::ToggleShowFinished, StrId::STR_COL_FINISHED,
+                   showHideValue(SETTINGS.showFinishedCollection)});
   items.push_back({FileBrowserAction::RescanLibrary, StrId::STR_RESCAN_LIBRARY});
-  // CrumBLE: opt-in toggles for the index-backed virtual collections. Hidden by
-  // default so a fresh device never auto-indexes; turning one on prompts to scan.
-  // Label flips Show/Hide to match the current visibility.
-  items.push_back({FileBrowserAction::ToggleShowRecentlyAdded,
-                   SETTINGS.showRecentlyAddedCollection ? StrId::STR_HIDE_RECENTLY_ADDED
-                                                        : StrId::STR_SHOW_RECENTLY_ADDED});
-  items.push_back({FileBrowserAction::ToggleShowAllBooks,
-                   SETTINGS.showAllBooksCollection ? StrId::STR_HIDE_ALL_BOOKS : StrId::STR_SHOW_ALL_BOOKS});
 
   const std::string title = (active != nullptr) ? active->name : std::string();
 
@@ -1427,19 +1441,42 @@ void HomeActivity::showShelfHeaderActionMenu() {
           delay(800);
           requestUpdate();
         } else if (action == FileBrowserAction::ToggleShowRecentlyAdded ||
-                   action == FileBrowserAction::ToggleShowAllBooks) {
-          const bool isRecently = (action == FileBrowserAction::ToggleShowRecentlyAdded);
-          const bool currentlyOn =
-              isRecently ? SETTINGS.showRecentlyAddedCollection : SETTINGS.showAllBooksCollection;
-          const char* vid = isRecently ? CollectionsStore::RECENTLY_ADDED_ID : CollectionsStore::ALL_BOOKS_ID;
-          const char* vname = isRecently ? CollectionsStore::RECENTLY_ADDED_NAME : CollectionsStore::ALL_BOOKS_NAME;
+                   action == FileBrowserAction::ToggleShowAllBooks ||
+                   action == FileBrowserAction::ToggleShowFinished ||
+                   action == FileBrowserAction::ToggleShowNew) {
+          // Resolve the toggle target (id/name/settings byte pointer) in one
+          // place so the on/off branches don't repeat the same 4-way fan-out.
+          uint8_t* settingsByte = nullptr;
+          const char* vid = nullptr;
+          const char* vname = nullptr;
+          switch (action) {
+            case FileBrowserAction::ToggleShowRecentlyAdded:
+              settingsByte = &SETTINGS.showRecentlyAddedCollection;
+              vid = CollectionsStore::RECENTLY_ADDED_ID;
+              vname = CollectionsStore::RECENTLY_ADDED_NAME;
+              break;
+            case FileBrowserAction::ToggleShowAllBooks:
+              settingsByte = &SETTINGS.showAllBooksCollection;
+              vid = CollectionsStore::ALL_BOOKS_ID;
+              vname = CollectionsStore::ALL_BOOKS_NAME;
+              break;
+            case FileBrowserAction::ToggleShowFinished:
+              settingsByte = &SETTINGS.showFinishedCollection;
+              vid = CollectionsStore::FINISHED_ID;
+              vname = CollectionsStore::FINISHED_NAME;
+              break;
+            case FileBrowserAction::ToggleShowNew:
+              settingsByte = &SETTINGS.showNewCollection;
+              vid = CollectionsStore::NEW_ID;
+              vname = CollectionsStore::NEW_NAME;
+              break;
+            default:
+              return;
+          }
+          const bool currentlyOn = *settingsByte != 0;
           if (currentlyOn) {
             // Turn OFF — just hide it; no scan needed.
-            if (isRecently) {
-              SETTINGS.showRecentlyAddedCollection = 0;
-            } else {
-              SETTINGS.showAllBooksCollection = 0;
-            }
+            *settingsByte = 0;
             SETTINGS.saveToFile();
             CollectionsStore::getInstance().setVirtualCollectionVisible(vid, vname, false);
             invalidateShelfPathsCache();
@@ -1451,21 +1488,21 @@ void HomeActivity::showShelfHeaderActionMenu() {
             // Turn ON — confirm the (possibly first) library scan before walking SD.
             startActivityForResult(
                 std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_SCAN_LIBRARY_PROMPT), vname),
-                [this, isRecently, vid, vname](const ActivityResult& confirm) {
+                [this, settingsByte, vid, vname](const ActivityResult& confirm) {
                   if (confirm.isCancelled) return;  // declined — stay hidden
-                  if (isRecently) {
-                    SETTINGS.showRecentlyAddedCollection = 1;
-                  } else {
-                    SETTINGS.showAllBooksCollection = 1;
-                  }
+                  *settingsByte = 1;
                   SETTINGS.saveToFile();
                   CollectionsStore::getInstance().setVirtualCollectionVisible(vid, vname, true);
                   // ensureWalked self-skips if a walk already ran this session
-                  // (e.g. the other virtual is already on), so this only costs
+                  // (e.g. another virtual is already on), so this only costs
                   // the SD walk the first time.
                   const Rect popupRect = GUI.drawPopup(renderer, tr(STR_RESCAN_LIBRARY));
                   LibraryIndex::getInstance().ensureWalked(
                       [&](int pct) { GUI.fillPopupProgress(renderer, popupRect, pct); });
+                  // Finished / New also need the per-book BookReadingStats
+                  // pass -- invalidate so resolveBookPaths rebuilds against
+                  // the freshly-walked library.
+                  CollectionsStore::getInstance().invalidateScannedVirtuals();
                   invalidateShelfPathsCache();
                   shelfSnapshotValid = false;
                   lastRenderedCoverSelectorValid = false;
@@ -1509,6 +1546,36 @@ void HomeActivity::showShelfHeaderActionMenu() {
                 shelfSnapshotValid = false;
                 shelfCoversLoaded = false;  // thumbs themselves are unchanged, but the visible window shifts.
                 shelfScrollOffset = 0;       // jump back to the top of the freshly-sorted list.
+                requestUpdate();
+              });
+        } else if (action == FileBrowserAction::RearrangeCollections) {
+          // Snapshot the current collection list (in present order) and hand
+          // it to the rearrange UI. The user assigns Mark 1..N via Confirm;
+          // on completion the new order is persisted and the first
+          // collection becomes the active one (per spec).
+          std::vector<RearrangeCollectionsActivity::Item> snapshot;
+          for (const auto& c : CollectionsStore::getInstance().getCollections()) {
+            snapshot.push_back({c.id, c.name});
+          }
+          if (snapshot.size() < 2) {
+            requestUpdate();
+            return;
+          }
+          startActivityForResult(
+              std::make_unique<RearrangeCollectionsActivity>(renderer, mappedInput, std::move(snapshot)),
+              [this](const ActivityResult& res) {
+                if (res.isCancelled) return;
+                const auto& rr = std::get<RearrangeCollectionsResult>(res.data);
+                if (rr.orderedIds.empty()) return;
+                CollectionsStore::getInstance().setDisplayOrder(rr.orderedIds);
+                // Per spec: returning to Home should land on the first
+                // collection in the new order.
+                CollectionsStore::getInstance().setActiveId(rr.orderedIds.front());
+                invalidateShelfPathsCache();
+                shelfSnapshotValid = false;
+                lastRenderedCoverSelectorValid = false;
+                shelfCoversLoaded = false;
+                shelfScrollOffset = 0;
                 requestUpdate();
               });
         } else if (action == FileBrowserAction::RenameCollection) {

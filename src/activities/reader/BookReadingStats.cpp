@@ -23,6 +23,17 @@ static constexpr int STATS_FILE_SIZE_V1 = 11;
 static constexpr int STATS_FILE_SIZE = 12;
 }  // namespace
 
+bool BookReadingStats::exists(const std::string& cachePath) {
+  // Use the existing "open for read; close if successful" idiom -- there's no
+  // dedicated existence API on HalStorage, but a failed open is a fast no-op.
+  FsFile f;
+  if (!Storage.openFileForRead("STATS", cachePath + "/stats.bin", f)) {
+    return false;
+  }
+  f.close();
+  return true;
+}
+
 BookReadingStats BookReadingStats::load(const std::string& cachePath) {
   BookReadingStats stats;
   FsFile f;

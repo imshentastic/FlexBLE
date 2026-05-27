@@ -76,6 +76,17 @@ class CollectionsStore {
   static constexpr const char* RECENTLY_ADDED_NAME = "Recently Added";
   static constexpr const char* ALL_BOOKS_ID = "all_books";
   static constexpr const char* ALL_BOOKS_NAME = "All Books";
+  // CrumBLE: completion-derived virtuals. Both walk LibraryIndex AND read
+  // each book's BookReadingStats (1 file open per book) the first time
+  // they're resolved this session; subsequent calls hit an in-memory cache
+  // until invalidateScannedVirtuals() flips it.
+  static constexpr const char* FINISHED_ID = "finished";
+  static constexpr const char* FINISHED_NAME = "Finished";
+  // ID stays "new" for any persisted reference (e.g. activeId in collections.json).
+  // Display name renamed to "Unopened" -- clearer about WHY the books are there
+  // (haven't been opened in the reader yet) than the ambiguous "New".
+  static constexpr const char* NEW_ID = "new";
+  static constexpr const char* NEW_NAME = "Unopened";
 
   ~CollectionsStore() = default;
 
@@ -150,6 +161,22 @@ class CollectionsStore {
   // first access. Use sparingly — pulls fresh data each call.
   int countBooksInCollection(const std::string& collectionId) const;
 
+  // CrumBLE: invalidate the in-memory cache of the Finished / New virtual
+  // collections. Call this whenever a book's completion state or
+  // sessionCount changes (BookActions::toggleEpubCompleted, the reader's
+  // first 60s-session bump), or when the underlying library walk re-runs
+  // (LibraryIndex::rescan). Cheap -- just flips a bool; the next resolve
+  // re-scans lazily.
+  void invalidateScannedVirtuals() const;
+
+  // CrumBLE: re-sort the in-memory collections vector to match the given id
+  // sequence and persist the new order. IDs present in the vector but not
+  // in `orderedIds` are kept at the end in their current relative order
+  // (covers the "user rearranges only some of N collections" edge case,
+  // although the rearrange UI always passes the complete list). Unknown
+  // IDs in `orderedIds` are ignored. Saves to collections.json on change.
+  void setDisplayOrder(const std::vector<std::string>& orderedIds);
+
  private:
   CollectionsStore() = default;
   bool loadFromFile();
@@ -157,4 +184,21 @@ class CollectionsStore {
   // Ensures FAVORITES_ID exists in the collections vector. Used after load
   // when the file was missing/empty/corrupt, and on first boot.
   void seedDefaults();
+  // Reorders `collections` in-place to match `displayOrderIds_`. Called at
+  // the end of begin() after virtuals have been seeded, so the user's saved
+  // L/R cycle order is honored across reboots (including for virtuals,
+  // which aren't otherwise persisted to collections.json).
+  void applyDisplayOrder();
+  // The saved L/R cycle order from collections.json. May be empty (first
+  // boot, pre-rearrange) -- in which case applyDisplayOrder() is a no-op and
+  // the natural seeding order is used.
+  std::vector<std::string> displayOrderIds_;
+  // CrumBLE: lazy cache for the BookReadingStats-derived virtuals.
+  // Populated on first resolveBookPaths(FINISHED_ID|NEW_ID) call this
+  // session and reused until invalidateScannedVirtuals() flips the flag.
+  // Mutable because the const resolveBookPaths() lazily populates them.
+  mutable bool scannedVirtualsValid_ = false;
+  mutable std::vector<std::string> finishedPathsCache_;
+  mutable std::vector<std::string> newPathsCache_;
+  void rebuildScannedVirtualsIfNeeded() const;
 };

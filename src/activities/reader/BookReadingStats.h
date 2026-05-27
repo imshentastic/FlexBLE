@@ -13,6 +13,13 @@ struct BookReadingStats {
   // the file is missing or the version byte does not match.
   static BookReadingStats load(const std::string& cachePath);
 
+  // CrumBLE: cheap existence check used by the "Unopened" virtual collection
+  // to gate book membership. A book whose reader was never entered has no
+  // stats.bin -- the reader writes one on first onEnter (see EpubReaderActivity)
+  // so this flips immediately on open, even if the user backs out before any
+  // reading time is logged.
+  static bool exists(const std::string& cachePath);
+
   // Saves stats to cachePath/stats.bin.
   void save(const std::string& cachePath) const;
 

@@ -11,6 +11,7 @@
 #include <cstdio>
 
 #include "BookmarkStore.h"
+#include "CollectionsStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "RecentBooksStore.h"
@@ -116,6 +117,9 @@ bool toggleEpubCompleted(const std::string& fullPath, const std::string& display
 
   stats.save(epub.getCachePath());
   globalStats.save();
+  // CrumBLE: completion flip changes Finished / New collection membership.
+  // Drop the cache so the next Home enter rescans the affected book.
+  CollectionsStore::getInstance().invalidateScannedVirtuals();
 
   if (completed && SETTINGS.moveFinishedToReadFolder && fullPath.rfind("/Read/", 0) != 0) {
     const std::string oldCachePath = epub.getCachePath();

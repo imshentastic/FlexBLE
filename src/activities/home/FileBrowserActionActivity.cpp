@@ -87,8 +87,17 @@ void FileBrowserActionActivity::render(RenderLock&&) {
 
   const int contentTop = metrics.topPadding + actionHeaderHeight + metrics.verticalSpacing;
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
+  // CrumBLE: highlightValue=true matches the visual style of the main Settings
+  // menu -- the right-justified value box inverts on the selected row -- so
+  // the shelf-header toggles read as "real" settings rather than action items
+  // with extra text. drawList still falls back to plain text when rowValue
+  // returns "", so action-only rows (Rename, Sort by, Rescan) render normally.
   GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(items.size()), selectedIndex,
-               [this](int index) { return std::string(I18N.get(items[index].labelId)); });
+               [this](int index) { return std::string(I18N.get(items[index].labelId)); },
+               /*rowSubtitle=*/nullptr,
+               /*rowIcon=*/nullptr,
+               [this](int index) { return items[index].rightValue; },
+               /*highlightValue=*/true);
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

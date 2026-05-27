@@ -98,10 +98,18 @@ struct ChoicePromptResult {
   int choice = -1;
 };
 
+// CrumBLE: result from RearrangeCollectionsActivity. The orderedIds vector
+// is the user's chosen display order (first to last). Cancelled results --
+// either an early Back or a partial mark sequence -- are signalled by
+// ActivityResult::isCancelled; orderedIds is empty in that case.
+struct RearrangeCollectionsResult {
+  std::vector<std::string> orderedIds;
+};
+
 using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,
                                    IntervalResult, PageResult, SyncResult, NetworkModeResult, FootnoteResult,
                                    BookmarkResult, FileBrowserActionResult, FilePathResult, SortPickerResult,
-                                   ChoicePromptResult>;
+                                   ChoicePromptResult, RearrangeCollectionsResult>;
 
 struct ActivityResult {
   bool isCancelled = false;
