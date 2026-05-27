@@ -835,9 +835,26 @@ void EpubReaderActivity::loop() {
     pendingBleQuickConnectNoImages_ = false;
     pendingBleQuickConnectPromptStage_ = -1;
     if (noImages) renderer.setSuppressImages(true);
-    // No drawPopup here -- see task #76 for the persistent connect popup.
-    if (!btMgr.isEnabled()) btMgr.enable();
-    btMgr.connectToDevice(SETTINGS.bleBondedDeviceAddr);
+    // Persistent "Connecting Bluetooth..." popup spanning the blocking
+    // NimBLE init + GATT handshake (~2-3 s total -- enable() initializes
+    // the controller and host, connectToDevice() establishes the link and
+    // subscribes to HID reports). Without this, the user sees the page
+    // sit unchanged for several seconds with no feedback that QC is
+    // actively working.
+    //
+    // RenderLock pattern (mirrors reindexCurrentSection): drawPopup paints
+    // directly to the buffer + displayBuffer() pushes it. Holding the lock
+    // across enable()/connectToDevice() blocks the render task from
+    // repainting the page until the connect call returns -- which is
+    // exactly what we want, since any concurrent repaint would race the
+    // popup. requestUpdate() after the lock releases lets the next render
+    // paint the page back on top once the connect is done.
+    {
+      RenderLock lock(*this);
+      GUI.drawPopup(renderer, tr(STR_BT_CONNECTING));
+      if (!btMgr.isEnabled()) btMgr.enable();
+      btMgr.connectToDevice(SETTINGS.bleBondedDeviceAddr);
+    }
     btManifestPromptAnsweredThisSession_ = true;  // we handled the manifest decision
     requestUpdate();
     return;
