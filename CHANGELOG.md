@@ -1,5 +1,18 @@
 # Changelog
 
+## [crumble-v3.4.0] - 2026-05-27
+
+### Added
+- Two new opt-in auto-generated collections: **Finished** (books you've marked complete) and **Unopened** (books in your library that have never been opened in the reader). Toggle them on from the long-press menu on the collection header.
+- **Rearrange** action in the long-press menu on the collection header. Tap Confirm on each collection in your desired order; Confirm reads "Mark 1", "Mark 2", ..., and the Back button reads "Undo" mid-flow so you can roll back a misclick. On the final mark, Home returns with the new L/R cycle order and the first collection active. Persists across reboots.
+- Persistent "Connecting Bluetooth..." popup during BT Quick Connect, spanning the NimBLE init and GATT handshake so the page doesn't sit unchanged for several seconds without feedback.
+
+### Fixed
+- Folders named `XTcache` (case-insensitive) are now skipped during the library walk, so any files the companion XT reader parks there don't appear in Recently Added, All Books, or Unopened.
+
+### Changed
+- The collection header's long-press menu is reordered around what users actually do: "+ New collection", "Sort by", "Rearrange", then the four Show/Hide toggles (All Books, Recently Added, Unopened, Finished), then "Rescan library". Each Show/Hide row uses the same right-justified inverting toggle style as the main Settings menu, so the current state is scannable at a glance.
+
 ## [crumble-v3.3.0] - 2026-05-27
 
 ### Added
