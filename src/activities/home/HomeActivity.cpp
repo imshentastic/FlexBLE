@@ -1395,7 +1395,16 @@ void HomeActivity::showShelfHeaderActionMenu() {
   //   7. Rescan library
   items.push_back({FileBrowserAction::CreateNewCollectionFromHeader, StrId::STR_HEADER_NEW_COLLECTION});
   if (active != nullptr && !isRecentlyAdded) {
-    items.push_back({FileBrowserAction::SortBy, StrId::STR_SORT_BY});
+    FileBrowserActionActivity::MenuItem sortItem;
+    sortItem.action = FileBrowserAction::SortBy;
+    sortItem.labelId = StrId::STR_SORT_BY;
+    // CrumBLE: right-justified active-sort label so the user sees what's
+    // currently selected at a glance. Confirm still opens the picker.
+    // Blank string when the collection is on Manual (no real sort applied).
+    if (active->sortMode != CollectionSort::Manual) {
+      sortItem.rightValue = SortPickerActivity::labelFor(active->sortMode);
+    }
+    items.push_back(std::move(sortItem));
   }
   // Rearrange is only meaningful when there's more than one visible
   // collection. Hidden otherwise to avoid a one-item picker.
@@ -1578,6 +1587,11 @@ void HomeActivity::showShelfHeaderActionMenu() {
                 shelfScrollOffset = 0;
                 requestUpdate();
               });
+        } else if (action == FileBrowserAction::ToggleTwoRowShelf) {
+          // No-op: the Rows row is wired with inlineToggle (handled inside
+          // the menu activity), so this action value never reaches the
+          // result handler. Kept for completeness against the enum.
+          return;
         } else if (action == FileBrowserAction::RenameCollection) {
           const Collection* active = CollectionsStore::getInstance().getActiveCollection();
           if (active == nullptr || active->isVirtual) return;
@@ -2433,6 +2447,18 @@ void HomeActivity::loop() {
         !inHeaderRow && (shelfCount > 0) && (selectorIndex >= shelfStart) && (selectorIndex < shelfEnd);
     const bool inMenuRow = !inHeaderRow && selectorIndex >= menuStart && selectorIndex < menuEnd;
 
+    // CrumBLE: per-collection two-row layout flag. When ON, the shelf is a
+    // paged grid of 6 cols x 2 rows (12 covers/page) instead of a single
+    // 4-cell row. Affects how L/R/U/D move within the shelf row -- with
+    // 2-row on, U/D jump between rows of the current page, and L/R can
+    // page-flip at the row edges.
+    const Collection* activeColForNav = CollectionsStore::getInstance().getActiveCollection();
+    const bool twoRowShelfActive = activeColForNav != nullptr && activeColForNav->twoRowShelf;
+    const int navCellsPerRow =
+        twoRowShelfActive ? LyraFlowTheme::shelfLayoutFor(2).cellsPerRow : LyraFlowTheme::shelfLayoutFor(1).cellsPerRow;
+    const int navRowsPerPage = twoRowShelfActive ? 2 : 1;
+    const int navPerPage = navCellsPerRow * navRowsPerPage;
+
     // Cycles the active collection. direction is +1 (next) or -1 (prev).
     // Wraps. Resets shelf-side render state so the new collection's
     // thumbs regenerate on next render. Persists the new activeId via
@@ -2498,7 +2524,29 @@ void HomeActivity::loop() {
         lastCarouselBookIndex = selectorIndex;
       } else if (inShelfRow && shelfCount > 0) {
         const int shelfIdx = selectorIndex - shelfStart;
-        selectorIndex = shelfStart + (shelfIdx + 1) % shelfCount;
+        if (twoRowShelfActive) {
+          // 2-row R: within-row column step. At col=cellsPerRow-1, hop to
+          // the same row of the next page (so the user's scan stays on
+          // the row they were on). Wrap to first page if we ran off the
+          // end of the collection.
+          const int page = shelfIdx / navPerPage;
+          const int visIdx = shelfIdx % navPerPage;
+          const int row = visIdx / navCellsPerRow;
+          const int col = visIdx % navCellsPerRow;
+          int newCol = col + 1;
+          int newPage = page;
+          if (newCol >= navCellsPerRow) { newCol = 0; newPage++; }
+          int newIdx = newPage * navPerPage + row * navCellsPerRow + newCol;
+          if (newIdx >= shelfCount) {
+            // Past the end -- wrap to same row, first page. Clamp to last
+            // existing book in case the first-page row isn't fully
+            // populated either (very small collection).
+            newIdx = std::min(shelfCount - 1, row * navCellsPerRow);
+          }
+          selectorIndex = shelfStart + newIdx;
+        } else {
+          selectorIndex = shelfStart + (shelfIdx + 1) % shelfCount;
+        }
       } else if (inMenuRow && menuItemCount > 0) {
         const int menuIdx = selectorIndex - menuStart;
         selectorIndex = menuStart + (menuIdx + 1) % menuItemCount;
@@ -2513,7 +2561,36 @@ void HomeActivity::loop() {
         lastCarouselBookIndex = selectorIndex;
       } else if (inShelfRow && shelfCount > 0) {
         const int shelfIdx = selectorIndex - shelfStart;
-        selectorIndex = shelfStart + (shelfIdx + shelfCount - 1) % shelfCount;
+        if (twoRowShelfActive) {
+          // 2-row L: within-row column step. At col=0, hop to the same row
+          // of the previous page. Wrap to last page if we'd go negative.
+          const int page = shelfIdx / navPerPage;
+          const int visIdx = shelfIdx % navPerPage;
+          const int row = visIdx / navCellsPerRow;
+          const int col = visIdx % navCellsPerRow;
+          int newCol = col - 1;
+          int newPage = page;
+          if (newCol < 0) {
+            newCol = navCellsPerRow - 1;
+            newPage--;
+          }
+          if (newPage < 0) {
+            // Wrap to the LAST page on the same row. The last page may
+            // not have a book at this col -- clamp to the last existing
+            // book of that row.
+            const int lastPage = (shelfCount - 1) / navPerPage;
+            int newIdx = lastPage * navPerPage + row * navCellsPerRow + newCol;
+            // If the row on the last page is partially populated and
+            // newCol exceeds its actual book count, clamp.
+            if (newIdx >= shelfCount) newIdx = shelfCount - 1;
+            selectorIndex = shelfStart + newIdx;
+          } else {
+            const int newIdx = newPage * navPerPage + row * navCellsPerRow + newCol;
+            selectorIndex = shelfStart + std::min(newIdx, shelfCount - 1);
+          }
+        } else {
+          selectorIndex = shelfStart + (shelfIdx + shelfCount - 1) % shelfCount;
+        }
       } else if (inMenuRow && menuItemCount > 0) {
         const int menuIdx = selectorIndex - menuStart;
         selectorIndex = menuStart + (menuIdx + menuItemCount - 1) % menuItemCount;
@@ -2553,9 +2630,27 @@ void HomeActivity::loop() {
         // the menu so Down still does something useful.
         selectorIndex = (shelfCount > 0) ? enterShelfRowAtLastPos() : enterMenuRowAtLastPos();
       } else if (inShelfRow) {
+        // 2-row mode: D from TOP row -> bottom row same column on the same
+        // page (if a book exists there). D from BOTTOM row -> exit to menu.
+        // 1-row mode: any D -> menu.
+        const int shelfIdx = static_cast<int>(selectorIndex) - shelfStart;
+        if (twoRowShelfActive) {
+          const int visIdx = shelfIdx % navPerPage;
+          const int row = visIdx / navCellsPerRow;
+          if (row == 0) {
+            const int target = shelfIdx + navCellsPerRow;
+            if (target < shelfCount) {
+              selectorIndex = shelfStart + target;
+              requestUpdate();
+              return;
+            }
+            // No book in the bottom-row slot of this page -- fall through
+            // to the exit-to-menu behavior below.
+          }
+        }
         // Save where we were in the books row so a future return
         // (Up from menu, Down from header) lands on the same book.
-        lastShelfBookIndex = static_cast<int>(selectorIndex) - shelfStart;
+        lastShelfBookIndex = shelfIdx;
         selectorIndex = enterMenuRowAtLastPos();
       } else /* inMenuRow */ {
         // Save the menu position before wrapping back to the carousel
@@ -2574,8 +2669,26 @@ void HomeActivity::loop() {
         shelfHeaderFocused = false;
         selectorIndex = lastCarouselBookIndex;
       } else if (inShelfRow) {
+        // 2-row mode: U from BOTTOM row -> top row same column. U from
+        // TOP row -> header (existing behaviour). 1-row mode: any U ->
+        // header.
+        const int shelfIdx = static_cast<int>(selectorIndex) - shelfStart;
+        if (twoRowShelfActive) {
+          const int visIdx = shelfIdx % navPerPage;
+          const int row = visIdx / navCellsPerRow;
+          if (row == 1) {
+            const int target = shelfIdx - navCellsPerRow;
+            if (target >= 0) {
+              selectorIndex = shelfStart + target;
+              requestUpdate();
+              return;
+            }
+            // Shouldn't reach here -- row=1 implies shelfIdx >=
+            // cellsPerRow within the page -- but fall through safely.
+          }
+        }
         // Save where we were before bouncing up to the header.
-        lastShelfBookIndex = static_cast<int>(selectorIndex) - shelfStart;
+        lastShelfBookIndex = shelfIdx;
         if (shelfHeaderExists) {
           shelfHeaderFocused = true;
         } else {
@@ -2631,18 +2744,23 @@ void HomeActivity::loop() {
       const int shelfCount = static_cast<int>(cachedShelfPaths().size());
       const int shelfStart = static_cast<int>(recentBooks.size());
       // Mirror the visible-cell math used inside drawBookshelfStrip so the
-      // scroll window matches the renderer's view exactly. Keep these in
-      // lockstep with the constants at the top of drawBookshelfStrip.
-      constexpr int kSidePad = 16;
-      constexpr int kCellWidth = 100;
-      constexpr int kCellGap = 16;
-      const int availW = renderer.getScreenWidth() - 2 * kSidePad;
-      const int cellTotalW = kCellWidth + kCellGap;
-      const int visibleSpines = std::max(1, (availW + kCellGap) / cellTotalW);
+      // scroll window matches the renderer's view exactly. Pull dimensions
+      // from the theme so this stays in lockstep with the strip's own
+      // layout (1-row 4x1 vs 2-row 6x2).
+      const int navRowCount = activeCollection->twoRowShelf ? 2 : 1;
+      const LyraFlowTheme::ShelfLayout navLayout = LyraFlowTheme::shelfLayoutFor(navRowCount);
+      const int visibleSpines = navLayout.cellsPerRow * navLayout.rowCount;
       if (selectorIndex >= shelfStart && selectorIndex < shelfStart + shelfCount) {
         const int focused = selectorIndex - shelfStart;
-        if (focused < shelfScrollOffset) shelfScrollOffset = focused;
-        if (focused >= shelfScrollOffset + visibleSpines) shelfScrollOffset = focused - visibleSpines + 1;
+        if (activeCollection->twoRowShelf) {
+          // Page-aligned scroll: each "page" is visibleSpines (=12) books.
+          // L/R that crosses a page boundary causes the window to jump by
+          // a full page so the user sees a clean group, not a sliding row.
+          shelfScrollOffset = (focused / visibleSpines) * visibleSpines;
+        } else {
+          if (focused < shelfScrollOffset) shelfScrollOffset = focused;
+          if (focused >= shelfScrollOffset + visibleSpines) shelfScrollOffset = focused - visibleSpines + 1;
+        }
       }
       if (shelfScrollOffset > std::max(0, shelfCount - visibleSpines)) {
         shelfScrollOffset = std::max(0, shelfCount - visibleSpines);
@@ -3025,16 +3143,20 @@ void HomeActivity::render(RenderLock&&) {
     //   carousel footer ends ~y=460 (cover + reading-progress bar)
     //   icon-bar label top  ~y=689
     //   midpoint            ~y=575
-    constexpr int kShelfTabHeight = 18;          // matches drawBookshelfStrip
-    constexpr int kShelfTabBottomGap = 12;       // matches drawBookshelfStrip
-    constexpr int kShelfCellWidth = 100;         // matches drawBookshelfStrip
-    constexpr int kShelfCellHeight = 150;        // matches drawBookshelfStrip
-    constexpr int kShelfStripHeight = kShelfTabHeight + kShelfTabBottomGap + kShelfCellHeight;
-    constexpr int kShelfSidePad = 16;            // matches drawBookshelfStrip
-    constexpr int kShelfCellGap = 16;            // matches drawBookshelfStrip
-    const int shelfAvailW = pageWidth - 2 * kShelfSidePad;
-    const int shelfCellTotalW = kShelfCellWidth + kShelfCellGap;
-    const int shelfVisibleCells = std::max(1, (shelfAvailW + kShelfCellGap) / shelfCellTotalW);
+    // CrumBLE: pull the cell/strip dimensions from the theme so we don't
+    // duplicate the layout constants. Two-row layout was removed from the
+    // UI; the layout-for-rowCount infrastructure stays in place for the
+    // future but is hard-pinned to 1-row here.
+    constexpr int shelfRowCount = 1;
+    const LyraFlowTheme::ShelfLayout shelfLayout = LyraFlowTheme::shelfLayoutFor(shelfRowCount);
+    const int kShelfCellWidth = shelfLayout.cellWidth;
+    const int kShelfCellHeight = shelfLayout.cellHeight;
+    const int kShelfStripHeight = shelfLayout.stripHeight;
+    // sidePad/cellGap stay constant across layouts; visibleCells counts the
+    // FULL page (rows*cols) so scrolling math advances by a whole page.
+    constexpr int kShelfSidePad = 16;
+    (void)kShelfSidePad;  // referenced indirectly via the strip rect / theme
+    const int shelfVisibleCells = shelfLayout.cellsPerRow * shelfLayout.rowCount;
 
     // Series enrichment — runs once per cycle into a new active
     // collection, only when collapseSeries is on for that collection.
@@ -3163,7 +3285,8 @@ void HomeActivity::render(RenderLock&&) {
     if (!shelfStateMatchesSnapshot) {
       static_cast<const LyraFlowTheme&>(GUI).drawBookshelfStrip(
           renderer, shelfRect, collectionName, shelfCoverPaths, shelfSelectedSpine, shelfScrollOffset,
-          shelfHeaderFocused, hasMultipleCollections, focusedTitle, &seriesMemberCounts, focusedAuthor);
+          shelfHeaderFocused, hasMultipleCollections, focusedTitle, &seriesMemberCounts, focusedAuthor,
+          shelfRowCount);
       // Remember the state of the shelf we just painted so the next
       // render can short-circuit if nothing about it has changed.
       shelfSnapshotActiveId = currentShelfActiveId;

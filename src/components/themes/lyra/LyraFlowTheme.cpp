@@ -94,11 +94,9 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   }
 
   const int pageWidth = renderer.getScreenWidth();
-  // CrumBLE: cover starts 58 px below the carousel rect's top. Half-way
-  // between the original 52 (before the title + author block went above)
-  // and the previous 64 (which left too much air between author and
-  // cover). Author bottom sits ~rect.y + 22; cover top at rect.y + 58
-  // gives ~36 px of breathing room.
+  // CrumBLE: cover starts 58 px below the carousel rect's top. (Tried +50
+  // for an 8 px up-shift but the carousel ended up crowding the status
+  // bar at the top; restored to +58 along with kTitleTopY = -12.)
   const int centerY = rect.y + 58;
   const int centerX = pageWidth / 2;
   const int count = static_cast<int>(recentBooks.size());
@@ -342,10 +340,9 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   // would show through.
   constexpr int kAuthorFontId = UI_10_FONT_ID;
   constexpr int kTitleAuthorGap = 2;
-  // Title sits at rect.y - 12 (was -5): pulls the title + author block UP
-  // ~7 px so there's a clearer visual gap between the author line bottom
-  // and the cover's top edge. Cover correspondingly drops to rect.y + 64
-  // (above), keeping both ends of the gap comfortable.
+  // Title sits at rect.y - 12 (reverted from the -20 up-shift). Paired
+  // with centerY = rect.y + 58 above; gap from author baseline to cover
+  // top stays ~36 px.
   constexpr int kTitleTopY = -12;
   const int titleLineH = renderer.getLineHeight(UI_12_FONT_ID);
   const int authorLineH = renderer.getLineHeight(kAuthorFontId);
@@ -366,13 +363,13 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   }
 
   // --- Reading-progress footer below the center cover. Modelled on the
-  //     LyraCarousel footer: compact elapsed-time label on the top-left,
-  //     a 5-px dithered-track progress bar across the cover width, and a
-  //     right-aligned percentage below the bar. ---
+  //     LyraCarousel footer: a 5-px dithered-track progress bar across the
+  //     cover width, with elapsed-time on the bottom-left and remaining-
+  //     time on the bottom-right ("XhYm left" / "Nm left"). ---
   constexpr int kFooterFontId = UI_10_FONT_ID;
   constexpr int kFooterTopGap = 8;
   constexpr int kFooterProgressBarHeight = 5;
-  constexpr int kFooterBarToLabelGap = 2;      // gap between bar and time/percent row
+  constexpr int kFooterBarToLabelGap = 2;
 
   const int footerWidth = actualCoverWidth;
   const int footerX = cX;
@@ -382,20 +379,11 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   const bool hasProgress = progressPercent >= 0.0f;
 
   // Pre-clear the footer region (bar + label row beneath it). Clears
-  // the FULL page width — not just the current cover's width — because
+  // the FULL page width -- not just the current cover's width -- because
   // adjacent books in the carousel can have different aspect ratios.
-  // If the previous render's cover was wider, the previous footer's
-  // right-aligned percent text extended past the current footerWidth's
-  // right edge, leaving trailing glyphs (e.g. "0%‰" instead of "0%"
-  // when prior was "37%"). Clearing pageWidth costs ~5KB more pixels
-  // per render but eliminates the class of bug entirely.
   const int footerStripHeight = kFooterProgressBarHeight + kFooterBarToLabelGap + renderer.getLineHeight(kFooterFontId) + 4;
   renderer.fillRect(0, infoY, renderer.getScreenWidth(), footerStripHeight, false);
 
-  // New stacking order (per UX feedback): bar on top, then a single row with
-  // elapsed-time on the left and percentage on the right beneath it. This
-  // keeps the numeric data clustered visually rather than splitting time
-  // above the bar and percent below.
   if (hasProgress) {
     const float clampedProgress = std::clamp(progressPercent, 0.0f, 100.0f);
     const int filledWidth = std::clamp(static_cast<int>((clampedProgress / 100.0f) * footerWidth), 0, footerWidth);
@@ -419,11 +407,32 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
       renderer.drawText(kFooterFontId, footerX, labelRowY, buf, true, EpdFontFamily::REGULAR);
     }
 
-    char percentBuf[8];
-    snprintf(percentBuf, sizeof(percentBuf), "%.0f%%", clampedProgress);
-    const int percentW = renderer.getTextWidth(kFooterFontId, percentBuf, EpdFontFamily::REGULAR);
-    renderer.drawText(kFooterFontId, footerX + footerWidth - percentW, labelRowY, percentBuf, true,
-                      EpdFontFamily::REGULAR);
+    // Remaining time replaces the legacy percentage display. Needs both
+    // a reading-time history AND non-zero progress; skipped below 1%
+    // progress so we don't show wildly inflated estimates from rounding
+    // noise on freshly-opened books. >= 1h is rounded to the nearest hour
+    // (so 1h 8m -> 1h, 1h 30m -> 2h) -- the granular "1h 30m left" feels
+    // misleadingly precise for what's a linear extrapolation from average
+    // reading speed; under 1h we keep "Nm left" to be useful near the end.
+    char remainingBuf[24] = "";
+    if (hasStats && clampedProgress >= 1.0f) {
+      const uint32_t remaining =
+          static_cast<uint32_t>(static_cast<float>(stats->totalReadingSeconds) *
+                                (100.0f - clampedProgress) / clampedProgress);
+      if (remaining < 60) {
+        snprintf(remainingBuf, sizeof(remainingBuf), "<1m left");
+      } else if (remaining < 3600) {
+        snprintf(remainingBuf, sizeof(remainingBuf), "%um left", static_cast<unsigned>(remaining / 60));
+      } else {
+        const unsigned hours = static_cast<unsigned>((remaining + 1800) / 3600);  // round-nearest
+        snprintf(remainingBuf, sizeof(remainingBuf), "%uh left", hours);
+      }
+    }
+    if (remainingBuf[0]) {
+      const int rw = renderer.getTextWidth(kFooterFontId, remainingBuf, EpdFontFamily::REGULAR);
+      renderer.drawText(kFooterFontId, footerX + footerWidth - rw, labelRowY, remainingBuf, true,
+                        EpdFontFamily::REGULAR);
+    }
   } else if (hasStats) {
     // Edge case: stats exist but progress doesn't (e.g. book just opened
     // for the first time, no last-read marker yet). Fall back to time-only
@@ -442,11 +451,45 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   }
 }
 
+LyraFlowTheme::ShelfLayout LyraFlowTheme::shelfLayoutFor(int rowCount) {
+  // 1-row default: 4 large covers across 480 px (16 + 4*100 + 3*16 + 16 = 480).
+  // 2-row option:  5 covers per row at 60x90 (preserves 2:3), 30 px column
+  // gap and 8 px gap between rows. 5 cells (vs the original 6) felt less
+  // cluttered without leaving "too much whitespace" -- the wider gap eats
+  // the side slack instead of compressing the books. 10 covers per page
+  // also paints noticeably faster than 12 since rendering scales with the
+  // visible cell count.
+  ShelfLayout L;
+  if (rowCount >= 2) {
+    L.cellWidth = 60;
+    L.cellHeight = 90;
+    L.cellsPerRow = 5;
+    L.cellGap = 30;
+    L.rowGap = 4;  // tightened from 8 -> 4 so the two rows feel like a tighter block
+    L.rowCount = 2;
+    L.drawShadows = false;  // shadows feel like noise at this cell size
+    // tab(18) + tabGap(12) + row1(90) + rowGap(4) + row2(90) = 214
+    L.stripHeight = 214;
+  } else {
+    L.cellWidth = 100;
+    L.cellHeight = 150;
+    L.cellsPerRow = 4;
+    L.cellGap = 16;
+    L.rowGap = 0;
+    L.rowCount = 1;
+    L.drawShadows = true;
+    // tab(18) + tabGap(12) + row(150) = 180
+    L.stripHeight = 180;
+  }
+  return L;
+}
+
 void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const char* collectionName,
                                        const std::vector<std::string>& coverPaths, int selectedSpineIndex,
                                        int scrollOffset, bool headerFocused, bool hasMultipleCollections,
                                        const char* focusedBookTitle,
-                                       const std::vector<int>* seriesMemberCounts, const char* focusedBookAuthor) const {
+                                       const std::vector<int>* seriesMemberCounts, const char* focusedBookAuthor,
+                                       int rowCount) const {
   // Vertical layout (top → bottom):
   //   [focused book title]  — drawn ABOVE rect.y so the rest of the layout
   //                           doesn't shift when focused vs unfocused
@@ -462,15 +505,22 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
   // for more breathing room there so the heading doesn't crowd the row.
   constexpr int kTabHeight = 18;
   constexpr int kTabBottomGap = 12;
-  // 4 thumbs across at 480px wide: 2*16 (side pad) + 4*100 (cells) + 3*16
-  // (gaps) = 480 exactly. Dropped from 5 cells @ 84x126 to 4 cells @
-  // 100x150 to fill the empty band below the carousel that the smaller
-  // cells left behind. Aspect still ~2:3 book-cover; renderer can blit
-  // 1:1 because loadShelfCovers caches BMPs at exactly this size.
-  constexpr int kCellWidth = 100;
-  constexpr int kCellHeight = 150;
+  // 1-row default: 4 thumbs across at 480 px wide: 2*16 (side pad) +
+  // 4*100 (cells) + 3*16 (gaps) = 480 exactly. Dropped from 5 cells @
+  // 84x126 to 4 cells @ 100x150 to fill the empty band below the
+  // carousel that the smaller cells left behind. Aspect still ~2:3
+  // book-cover; renderer can blit 1:1 because loadShelfCovers caches
+  // BMPs at exactly this size.
+  // 2-row option: 6 cells @ 60x90 per row (same 2:3 aspect, half height),
+  // 8 px row gap between the two rows. Strip height becomes 218 px (vs
+  // the 1-row 180 px) -- accommodated by HomeActivity's strip placement.
+  const ShelfLayout layout = shelfLayoutFor(rowCount);
+  const int kCellWidth = layout.cellWidth;
+  const int kCellHeight = layout.cellHeight;
+  const int kCellGap = layout.cellGap;
+  const int kRowGap = layout.rowGap;  // 8 in 2-row, 0 in 1-row (no second row to space)
+  const bool drawShadows = layout.drawShadows;
   constexpr int kSidePad = 16;
-  constexpr int kCellGap = 16;
 
   const int bookCount = static_cast<int>(coverPaths.size());
 
@@ -525,13 +575,21 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
 
   if (bookCount <= 0) return;
 
-  const int availW = rect.width - 2 * kSidePad;
+  const int cellsPerRow = layout.cellsPerRow;
+  const int rows = layout.rowCount;
+  const int visiblePerPage = cellsPerRow * rows;
   const int cellTotalW = kCellWidth + kCellGap;
-  const int visibleCells = std::max(1, (availW + kCellGap) / cellTotalW);
   const int shelfRowY = tabY + kTabHeight + kTabBottomGap;
-  const int actualDrawn = std::min(visibleCells, bookCount - scrollOffset);
-  const int rowDrawW = actualDrawn * kCellWidth + (actualDrawn - 1) * kCellGap;
+  // Total visible book slots this paint = min(perPage, remaining in collection).
+  const int actualDrawn = std::min(visiblePerPage, bookCount - scrollOffset);
+  // Row width is fixed at cellsPerRow cells when at least one full row is
+  // drawn; the final (partial) bottom row uses fewer cells but still
+  // anchors against the same rowStartX so columns line up across rows.
+  const int rowDrawW = cellsPerRow * kCellWidth + (cellsPerRow - 1) * kCellGap;
   const int rowStartX = rect.x + (rect.width - rowDrawW) / 2;
+  // The bottom-edge scroll-arrow Y anchors to the centre of the LAST row
+  // (so the arrow sits visually beside the cells regardless of 1- vs 2-row).
+  const int lastRowMidY = shelfRowY + (rows - 1) * (kCellHeight + kRowGap) + kCellHeight / 2;
 
   // Page-stack depth cue: draw two dithered light-gray strips only on the
   // right and bottom of each cell (not behind the cover — that part was
@@ -549,8 +607,13 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
 
   for (int i = 0; i < actualDrawn; ++i) {
     const int spineIdx = scrollOffset + i;
-    const int x = rowStartX + i * cellTotalW;
-    const int y = shelfRowY;
+    // Row-major iteration: i = 0..cellsPerRow-1 fills top row, cellsPerRow..
+    // 2*cellsPerRow-1 fills bottom row. Matches the user's "last book of
+    // row 1 is followed by first book of row 2" mental model.
+    const int row = i / cellsPerRow;
+    const int col = i % cellsPerRow;
+    const int x = rowStartX + col * cellTotalW;
+    const int y = shelfRowY + row * (kCellHeight + kRowGap);
     const bool isSeries = seriesMemberCounts != nullptr && spineIdx < static_cast<int>(seriesMemberCounts->size()) &&
                           (*seriesMemberCounts)[spineIdx] >= 2;
 
@@ -560,13 +623,15 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
       renderer.fillRect(x - kSeriesSpineWidth - 1, y, kSeriesSpineWidth, kCellHeight, true);
     }
 
-    // Right edge: pages stacked along the fore-edge of the book.
-    renderer.fillRectDither(x + kCellWidth, y + kShadowInset, kShadowDepth, kCellHeight - kShadowInset, Color::LightGray);
-    // Bottom edge: pages along the tail of the book.
-    renderer.fillRectDither(x + kShadowInset, y + kCellHeight, kCellWidth - kShadowInset, kShadowDepth, Color::LightGray);
-    // Corner block where the two strips meet — fills the gap so the L
-    // looks contiguous rather than missing its outer corner.
-    renderer.fillRectDither(x + kCellWidth, y + kCellHeight, kShadowDepth, kShadowDepth, Color::LightGray);
+    if (drawShadows) {
+      // Right edge: pages stacked along the fore-edge of the book.
+      renderer.fillRectDither(x + kCellWidth, y + kShadowInset, kShadowDepth, kCellHeight - kShadowInset, Color::LightGray);
+      // Bottom edge: pages along the tail of the book.
+      renderer.fillRectDither(x + kShadowInset, y + kCellHeight, kCellWidth - kShadowInset, kShadowDepth, Color::LightGray);
+      // Corner block where the two strips meet — fills the gap so the L
+      // looks contiguous rather than missing its outer corner.
+      renderer.fillRectDither(x + kCellWidth, y + kCellHeight, kShadowDepth, kShadowDepth, Color::LightGray);
+    }
 
     bool drewThumb = false;
     if (spineIdx < static_cast<int>(coverPaths.size()) && !coverPaths[spineIdx].empty()) {
@@ -608,8 +673,12 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
     }
   }
 
-  if (bookCount > visibleCells) {
-    const int triY = shelfRowY + kCellHeight / 2;
+  if (bookCount > visiblePerPage) {
+    // Anchor the page-flip arrows vertically halfway down the strip (between
+    // the two rows in 2-row mode) so they remain readable as "L/R = paginate"
+    // hints regardless of which row the cursor is on.
+    const int triY = shelfRowY + ((rows - 1) * (kCellHeight + kRowGap) + kCellHeight) / 2;
+    (void)lastRowMidY;
     constexpr int triSize = 4;
     if (scrollOffset > 0) {
       const int tx = rect.x + kSidePad / 2;
@@ -617,7 +686,7 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
       const int triYs[3] = {triY - triSize, triY, triY + triSize};
       renderer.fillPolygon(triXs, triYs, 3, true);
     }
-    if (scrollOffset + visibleCells < bookCount) {
+    if (scrollOffset + visiblePerPage < bookCount) {
       const int tx = rect.x + rect.width - kSidePad / 2;
       const int triXs[3] = {tx - triSize, tx + 1, tx - triSize};
       const int triYs[3] = {triY - triSize, triY, triY + triSize};
@@ -639,13 +708,11 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
   // making it invisible.
   if (selectedSpineIndex >= 0 && focusedBookTitle != nullptr && *focusedBookTitle != '\0') {
     constexpr int kTitleFontId = UI_10_FONT_ID;
-    // Tightened from +3 to 0 (halfway between the original +3 and the
-    // -3 we tried before): keeps the descender area (g, p, q, y) above
-    // the icon-bar's pre-render fillRect band so the bottom row of
-    // those letters renders intact, while leaving a small visible gap
-    // between the cell-row shadow and the title.
     constexpr int kTitleTopGap = 0;
-    const int titleY = shelfRowY + kCellHeight + kShadowDepth + kTitleTopGap;
+    // Anchor under the LAST row (whichever it is in 1- vs 2-row mode) so
+    // the title doesn't get tucked between the two rows in 2-row layout.
+    const int lastRowBottomY = shelfRowY + (rows - 1) * (kCellHeight + kRowGap) + kCellHeight;
+    const int titleY = lastRowBottomY + kShadowDepth + kTitleTopGap;
     const auto truncated = renderer.truncatedText(kTitleFontId, focusedBookTitle, rect.width - 2 * kSidePad);
     const int tw = renderer.getTextWidth(kTitleFontId, truncated.c_str(), EpdFontFamily::REGULAR);
     renderer.drawText(kTitleFontId, rect.x + (rect.width - tw) / 2, titleY, truncated.c_str(), true,

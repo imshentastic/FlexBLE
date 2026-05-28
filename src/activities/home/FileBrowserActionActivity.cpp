@@ -44,6 +44,15 @@ void FileBrowserActionActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    // CrumBLE: items wired with inlineToggle run the callback in place and
+    // stay in the menu. The row's rightValueGetter will re-evaluate on
+    // the next paint so the user sees the change without leaving the menu.
+    if (selectedIndex >= 0 && selectedIndex < static_cast<int>(items.size()) &&
+        items[selectedIndex].inlineToggle) {
+      items[selectedIndex].inlineToggle();
+      requestUpdate();
+      return;
+    }
     setResult(FileBrowserActionResult{static_cast<int>(items[selectedIndex].action)});
     finish();
     return;
@@ -85,6 +94,21 @@ void FileBrowserActionActivity::render(RenderLock&&) {
                       EpdFontFamily::BOLD);
   }
 
+  // CrumBLE: optional secondary label right-justified on the title row
+  // (used by the shelf-header menu to surface the current sort mode at
+  // a glance, e.g. "Favorites    Title (A-Z)"). Drawn in REGULAR weight
+  // and a smaller font so the title still reads as primary. Clamped to
+  // the title's reserved area so it never collides with the battery
+  // readout on the far right.
+  if (!headerRightLabel.empty()) {
+    constexpr int kRightLabelFontId = UI_10_FONT_ID;
+    const std::string rightLabel = renderer.truncatedText(kRightLabelFontId, headerRightLabel.c_str(),
+                                                          std::max(0, titleMaxWidth / 2));
+    const int rw = renderer.getTextWidth(kRightLabelFontId, rightLabel.c_str(), EpdFontFamily::REGULAR);
+    const int rx = titleX + titleMaxWidth - rw;
+    renderer.drawText(kRightLabelFontId, rx, titleY, rightLabel.c_str(), true, EpdFontFamily::REGULAR);
+  }
+
   const int contentTop = metrics.topPadding + actionHeaderHeight + metrics.verticalSpacing;
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
   // CrumBLE: highlightValue=true matches the visual style of the main Settings
@@ -96,7 +120,11 @@ void FileBrowserActionActivity::render(RenderLock&&) {
                [this](int index) { return std::string(I18N.get(items[index].labelId)); },
                /*rowSubtitle=*/nullptr,
                /*rowIcon=*/nullptr,
-               [this](int index) { return items[index].rightValue; },
+               [this](int index) {
+                 // Getter wins over static value -- lets rows update live
+                 // as inlineToggle flips the underlying state.
+                 return items[index].rightValueGetter ? items[index].rightValueGetter() : items[index].rightValue;
+               },
                /*highlightValue=*/true);
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));

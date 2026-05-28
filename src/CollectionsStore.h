@@ -52,6 +52,13 @@ struct Collection {
   // a dark spine glyph. Default ON; user can toggle per-collection
   // from the shelf header action menu. Persisted in collections.json.
   bool collapseSeries = true;
+  // CrumBLE two-row shelf: when true, the Flow theme's bookshelf strip
+  // renders 2 rows of 6 smaller (60x90) covers per page instead of the
+  // default 1 row of 4 (100x150). Logical order is row-major: the last
+  // book of row 1 is followed by the first book of row 2 in the same
+  // page. Default OFF (1-row layout) per-collection; user toggles via
+  // the shelf-header action menu. Persisted in collections.json.
+  bool twoRowShelf = false;
 };
 
 // One slot on the bookshelf row. For single books, memberPaths.size()==1
@@ -135,6 +142,10 @@ class CollectionsStore {
   void setSortMode(const std::string& collectionId, CollectionSort mode);
   // Sets the collapse-series flag. Persists.
   void setCollapseSeries(const std::string& collectionId, bool on);
+  // CrumBLE: sets the two-row shelf flag. Persists. No-op (with error log)
+  // for unknown ids. Always honored regardless of virtual/user (the layout
+  // is a visual preference independent of where the book list comes from).
+  void setTwoRowShelf(const std::string& collectionId, bool on);
   // Removes the given book from every collection it appears in (used when
   // the book file is being deleted off the SD card). Auto-saves at the
   // end if any change was made. Returns the number of collections that

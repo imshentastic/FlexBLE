@@ -2,6 +2,7 @@
 
 #include <I18n.h>
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -82,6 +83,10 @@ enum class FileBrowserAction : int {
   // collection in the order they want them displayed; the new order is
   // saved and becomes the L/R cycle on Home.
   RearrangeCollections = 21,
+  // CrumBLE: flips the active collection's twoRowShelf flag. Two-row
+  // layout shows ~12 smaller covers per page; one-row shows 4. Persisted
+  // on collections.json for user collections; virtuals reseed each begin.
+  ToggleTwoRowShelf = 22,
 };
 
 class FileBrowserActionActivity final : public Activity {
@@ -98,12 +103,27 @@ class FileBrowserActionActivity final : public Activity {
     // "Hide Recently Added") which crowds the text and is less scannable
     // when there are several toggles in a row.
     std::string rightValue;
+    // CrumBLE: optional getter that overrides `rightValue` per render. Lets
+    // an item show a value that can change WHILE the menu is open (e.g. a
+    // toggle that's wired up to inlineToggle below and re-evaluated each
+    // frame to reflect the new state without exiting + re-entering the menu).
+    std::function<std::string()> rightValueGetter;
+    // CrumBLE: when set, Confirm on this row invokes the callback instead
+    // of closing the menu. The menu stays open with selectorIndex
+    // preserved; the row's rightValueGetter is re-evaluated on the next
+    // paint so the user sees the new state. Used for "stay-in-menu"
+    // toggles whose effect on Home is deferred until the menu closes
+    // (e.g. Rows: One <-> Two flips the per-collection setting but the
+    // shelf re-layout is held until Back).
+    std::function<void()> inlineToggle;
   };
 
   FileBrowserActionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string title,
-                            std::vector<MenuItem> items, bool ignoreInitialConfirmRelease = false)
+                            std::vector<MenuItem> items, bool ignoreInitialConfirmRelease = false,
+                            std::string headerRightLabel = {})
       : Activity("FileBrowserAction", renderer, mappedInput),
         title(std::move(title)),
+        headerRightLabel(std::move(headerRightLabel)),
         items(std::move(items)),
         ignoreConfirmRelease(ignoreInitialConfirmRelease) {}
 
@@ -114,6 +134,10 @@ class FileBrowserActionActivity final : public Activity {
  private:
   ButtonNavigator buttonNavigator;
   std::string title;
+  // CrumBLE: optional right-justified secondary label rendered in the header
+  // row next to the title (e.g. the current sort mode on the shelf-header
+  // action menu, so "Favorites    Title (A-Z)"). Empty = nothing drawn.
+  std::string headerRightLabel;
   std::vector<MenuItem> items;
   int selectedIndex = 0;
   bool ignoreConfirmRelease = false;

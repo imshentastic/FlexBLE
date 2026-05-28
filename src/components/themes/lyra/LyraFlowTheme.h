@@ -81,7 +81,31 @@ class LyraFlowTheme : public LyraTheme {
                           // CrumBLE: focused book's author, drawn on a smaller second
                           // line under the title. Null/empty for series cells and
                           // filename-fallback books (which have no metadata author).
-                          const char* focusedBookAuthor = nullptr) const;
+                          const char* focusedBookAuthor = nullptr,
+                          // CrumBLE: render layout. 1 = single row of 4 large covers
+                          // (default), 2 = two rows of 6 smaller covers (12 per page).
+                          // HomeActivity picks per the active collection's
+                          // twoRowShelf flag.
+                          int rowCount = 1) const;
+
+  // CrumBLE: layout constants exposed for HomeActivity's path-window /
+  // scroll math. Pass rowCount=1 for the legacy 4x1 layout, =2 for 5x2.
+  struct ShelfLayout {
+    int cellWidth;
+    int cellHeight;
+    int cellsPerRow;
+    int cellGap;
+    int rowGap;       // vertical space between row 1 and row 2 in 2-row mode; ignored when rowCount=1
+    int rowCount;
+    int stripHeight;
+    // CrumBLE: page-stack shadow (the dithered strip on the right + bottom
+    // edges of each cell) is dropped in 2-row mode -- the smaller covers
+    // make the shadows feel like noise around the cells. The flag lets
+    // both drawBookshelfStrip and the partial-repaint path agree without
+    // having to re-derive from rowCount.
+    bool drawShadows;
+  };
+  static ShelfLayout shelfLayoutFor(int rowCount);
 
  public:
   // Set by HomeActivity right before invoking drawRecentBookCover. When

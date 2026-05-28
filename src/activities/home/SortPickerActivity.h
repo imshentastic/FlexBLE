@@ -54,5 +54,9 @@ class SortPickerActivity final : public Activity {
   ButtonNavigator buttonNavigator;
   int selectedIndex = 0;
 
+ public:
+  // CrumBLE: exposed so callers (HomeActivity's shelf-header menu) can
+  // surface the active sort mode in their own UI without duplicating
+  // the enum -> string switch.
   static const char* labelFor(CollectionSort mode);
 };

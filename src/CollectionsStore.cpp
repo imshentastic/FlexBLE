@@ -475,6 +475,21 @@ void CollectionsStore::setCollapseSeries(const std::string& collectionId, bool o
   LOG_ERR("CLN", "setCollapseSeries: unknown collection %s", collectionId.c_str());
 }
 
+void CollectionsStore::setTwoRowShelf(const std::string& collectionId, bool on) {
+  for (auto& c : collections) {
+    if (c.id != collectionId) continue;
+    if (c.twoRowShelf == on) return;
+    c.twoRowShelf = on;
+    // Same persistence policy as setSortMode/setCollapseSeries: only user
+    // collections survive a reboot. Virtuals reseed on begin() and their
+    // prefs aren't yet round-tripped through collections.json.
+    if (!c.isVirtual) saveToFile();
+    LOG_DBG("CLN", "Set twoRowShelf for %s to %d", collectionId.c_str(), on ? 1 : 0);
+    return;
+  }
+  LOG_ERR("CLN", "setTwoRowShelf: unknown collection %s", collectionId.c_str());
+}
+
 std::vector<ShelfEntry> CollectionsStore::resolveShelfEntries(const std::string& collectionId) const {
   const Collection* c = findCollection(collectionId);
   if (c == nullptr) return {};
@@ -605,6 +620,7 @@ bool CollectionsStore::loadFromFile() {
       // collapseSeries defaults to true (matches struct default). Older
       // JSON without the key picks up the default automatically.
       c.collapseSeries = entry["collapseSeries"] | true;
+      c.twoRowShelf = entry["twoRowShelf"] | false;
       JsonArrayConst books = entry["books"];
       if (!books.isNull()) {
         c.bookPaths.reserve(books.size());
@@ -707,6 +723,7 @@ bool CollectionsStore::saveToFile() const {
     entry["name"] = c.name;
     entry["sort"] = static_cast<unsigned>(c.sortMode);
     entry["collapseSeries"] = c.collapseSeries;
+    entry["twoRowShelf"] = c.twoRowShelf;
     JsonArray books = entry["books"].to<JsonArray>();
     for (const auto& path : c.bookPaths) books.add(path);
   }
