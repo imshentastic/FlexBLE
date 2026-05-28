@@ -2,12 +2,15 @@
 
 #include <FontDecompressor.h>
 #include <HalGPIO.h>
+#include <HalStorage.h>
 #include <Logging.h>
 #include <SdCardFont.h>
 #include <Utf8.h>
+#include <esp_system.h>  // esp_get_free_heap_size (cached-bitmap budget)
 #include <freertos/task.h>
 
 #include <algorithm>
+#include <new>
 
 #include "FontCacheManager.h"
 
@@ -1380,6 +1383,373 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
     }
   }
 }
+
+// ─── Cached-bitmap path (CrumBLE Phase 1) ─────────────────────────────────
+// Ported from rhythmerc/crosspoint-reader (commits 2df82e2, 70f7c43, d386fab,
+// a77ebeb). Caches decoded BMPs in RAM keyed by path; subsequent paints at
+// the same target size blit straight from a pre-scaled 1bpp buffer. Heap
+// budget adjusts dynamically based on free heap so BLE coexistence stays
+// safe (reconcileImageCacheBudget()).
+
+void GfxRenderer::reconcileImageCacheBudget() const {
+  // Tiered budget: full cache when memory is fat, shrunk when NimBLE eats
+  // ~58 KB, off entirely when the chapter / book also demands big buffers.
+  // Numbers are based on the standing CrumBLE heap envelope (~197 KB free
+  // fresh, ~140 KB with BLE on). See the design discussion in #90.
+  const uint32_t freeHeap = esp_get_free_heap_size();
+  size_t newBudget;
+  if (freeHeap >= 120u * 1024u) {
+    newBudget = 64u * 1024u;
+  } else if (freeHeap >= 80u * 1024u) {
+    newBudget = 16u * 1024u;
+  } else {
+    newBudget = 0u;
+  }
+  if (newBudget != imageCacheBudget_) {
+    imageCacheBudget_ = newBudget;
+    evictImageCacheToBudget();
+  }
+}
+
+void GfxRenderer::evictImageCacheToBudget() const {
+  while (imageCacheBytes_ > imageCacheBudget_ && !imageCache_.empty()) {
+    auto victim = imageCache_.begin();
+    for (auto it = imageCache_.begin(); it != imageCache_.end(); ++it) {
+      if (it->second.lastUsedTick < victim->second.lastUsedTick) victim = it;
+    }
+    imageCacheBytes_ -= victim->second.pixelsBytes + victim->second.scaledPixelsBytes;
+    imageCache_.erase(victim);
+  }
+}
+
+void GfxRenderer::clearImageCache() const {
+  imageCache_.clear();
+  imageCacheBytes_ = 0;
+}
+
+GfxRenderer::CachedBitmap* GfxRenderer::lookupCachedBitmap(const char* path) const {
+  if (path == nullptr || path[0] == '\0') return nullptr;
+
+  // Hit: bump LRU tick and return the existing entry.
+  auto it = imageCache_.find(path);
+  if (it != imageCache_.end()) {
+    it->second.lastUsedTick = ++imageCacheTick_;
+    return &it->second;
+  }
+
+  // Miss: open + decode + insert. Pre-flight the heap budget so the new
+  // decode doesn't push us past what BLE / the reader need.
+  reconcileImageCacheBudget();
+  if (imageCacheBudget_ == 0) return nullptr;
+
+  FsFile file;
+  if (!Storage.openFileForRead("GFXC", path, file)) {
+    LOG_DBG("GFX", "Cached bitmap miss: file open failed: %s", path);
+    return nullptr;
+  }
+  Bitmap bitmap(file);
+  if (bitmap.parseHeaders() != BmpReaderError::Ok || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
+    LOG_DBG("GFX", "Cached bitmap: parse failed: %s", path);
+    file.close();
+    return nullptr;
+  }
+
+  const int width = bitmap.getWidth();
+  const int height = bitmap.getHeight();
+  const int srcStride = (width + 3) / 4;  // 2bpp packed
+  const size_t bufBytes = static_cast<size_t>(srcStride) * static_cast<size_t>(height);
+
+  // Refuse to insert anything that would blow the budget even after a full
+  // eviction. Spares us a big alloc + free dance for a doomed insert.
+  if (bufBytes > imageCacheBudget_) {
+    LOG_DBG("GFX", "Cached bitmap: %u bytes exceeds budget %u; not caching %s",
+            static_cast<unsigned>(bufBytes), static_cast<unsigned>(imageCacheBudget_), path);
+    file.close();
+    return nullptr;
+  }
+  // Evict LRU until the new entry fits.
+  while (imageCacheBytes_ + bufBytes > imageCacheBudget_ && !imageCache_.empty()) {
+    auto victim = imageCache_.begin();
+    for (auto candidate = imageCache_.begin(); candidate != imageCache_.end(); ++candidate) {
+      if (candidate->second.lastUsedTick < victim->second.lastUsedTick) victim = candidate;
+    }
+    imageCacheBytes_ -= victim->second.pixelsBytes + victim->second.scaledPixelsBytes;
+    imageCache_.erase(victim);
+  }
+
+  std::unique_ptr<uint8_t[]> pixels(new (std::nothrow) uint8_t[bufBytes]);
+  if (!pixels) {
+    LOG_ERR("GFX", "Cached bitmap: pixels OOM (%u bytes) for %s", static_cast<unsigned>(bufBytes), path);
+    file.close();
+    return nullptr;
+  }
+
+  // Walk every row through readNextRow into the packed 2bpp buffer.
+  // BitmapScratchLock guards the shared rowBytes / outputRow temporaries.
+  BitmapScratchLock lock(*this);
+  if (!lock.isLocked()) {
+    LOG_ERR("GFX", "Cached bitmap: scratch lock contention for %s", path);
+    file.close();
+    return nullptr;
+  }
+  if (!ensureBitmapScratchBuffers(srcStride, bitmap.getRowBytes())) {
+    LOG_ERR("GFX", "Cached bitmap: scratch alloc failed for %s", path);
+    file.close();
+    return nullptr;
+  }
+  for (int row = 0; row < height; ++row) {
+    if (bitmap.readNextRow(bitmapScratchOutputRow_, bitmapScratchRowBytes_) != BmpReaderError::Ok) {
+      LOG_ERR("GFX", "Cached bitmap: row %d read failed for %s", row, path);
+      file.close();
+      return nullptr;
+    }
+    memcpy(pixels.get() + row * srcStride, bitmapScratchOutputRow_, srcStride);
+  }
+  file.close();
+
+  CachedBitmap entry;
+  entry.pixels = std::move(pixels);
+  entry.pixelsBytes = bufBytes;
+  entry.width = width;
+  entry.height = height;
+  entry.topDown = bitmap.isTopDown();
+  entry.lastUsedTick = ++imageCacheTick_;
+
+  auto [inserted, ok] = imageCache_.emplace(path, std::move(entry));
+  if (!ok) return nullptr;
+  imageCacheBytes_ += bufBytes;
+  return &inserted->second;
+}
+
+bool GfxRenderer::getCachedBitmapDimensions(CachedBitmap* handle, int* outWidth, int* outHeight) const {
+  if (handle == nullptr || !handle->pixels) return false;
+  if (outWidth) *outWidth = handle->width;
+  if (outHeight) *outHeight = handle->height;
+  return true;
+}
+
+void GfxRenderer::buildScaledBitmap(CachedBitmap* entry, const int targetW, const int targetH) const {
+  if (entry == nullptr) return;
+  if (entry->scaledPixels) {
+    imageCacheBytes_ -= entry->scaledPixelsBytes;
+    entry->scaledPixels.reset();
+    entry->scaledPixelsBytes = 0;
+  }
+
+  const int scaledStride = (targetW + 7) / 8;
+  const size_t scaledBytes = static_cast<size_t>(scaledStride) * static_cast<size_t>(targetH);
+
+  std::unique_ptr<uint8_t[]> scaled(new (std::nothrow) uint8_t[scaledBytes]);
+  if (!scaled) {
+    LOG_ERR("GFX", "Scaled bitmap OOM: %u bytes", static_cast<unsigned>(scaledBytes));
+    entry->scaledWidth = 0;
+    entry->scaledHeight = 0;
+    return;
+  }
+  // 0xFF = "all white" in our 1bpp scheme (bit 1 = white). We OR in zeros
+  // for source-black pixels.
+  memset(scaled.get(), 0xFF, scaledBytes);
+
+  const int srcStride = (entry->width + 3) / 4;
+  const float xRatio = static_cast<float>(entry->width) / static_cast<float>(targetW);
+  const float yRatio = static_cast<float>(entry->height) / static_cast<float>(targetH);
+
+  for (int ty = 0; ty < targetH; ++ty) {
+    const int srcRenderY = static_cast<int>(ty * yRatio);
+    const int srcRow = entry->topDown ? srcRenderY : (entry->height - 1 - srcRenderY);
+    const int clampedRow = std::clamp(srcRow, 0, entry->height - 1);
+    const uint8_t* srcRowPtr = entry->pixels.get() + clampedRow * srcStride;
+    uint8_t* dstRowPtr = scaled.get() + ty * scaledStride;
+    for (int tx = 0; tx < targetW; ++tx) {
+      const int srcX = static_cast<int>(tx * xRatio);
+      // 2bpp packed pixel: 4 pixels per source byte, MSB first.
+      const uint8_t val = (srcRowPtr[srcX / 4] >> (6 - ((srcX * 2) % 8))) & 0x3;
+      if (val < 3) {  // 0-2 = darker than full white; render as black
+        dstRowPtr[tx / 8] &= static_cast<uint8_t>(~(1u << (7 - (tx % 8))));
+      }
+    }
+  }
+
+  entry->scaledPixels = std::move(scaled);
+  entry->scaledPixelsBytes = scaledBytes;
+  entry->scaledWidth = targetW;
+  entry->scaledHeight = targetH;
+  imageCacheBytes_ += scaledBytes;
+}
+
+template <bool Opaque>
+bool GfxRenderer::drawCachedBitmap(const char* path, const int x, const int y, const int maxWidth,
+                                   const int maxHeight, const int cornerRadius) const {
+  return drawCachedBitmap<Opaque>(lookupCachedBitmap(path), x, y, maxWidth, maxHeight, cornerRadius);
+}
+
+template <bool Opaque>
+bool GfxRenderer::drawCachedBitmap(CachedBitmap* entry, const int x, const int y, const int maxWidth,
+                                   const int maxHeight, const int cornerRadius) const {
+  if (entry == nullptr) return false;
+  if (fontCacheManager_ != nullptr) return true;  // text-scan pass, no painting
+
+  float scale = 1.0f;
+  if (maxWidth > 0 && entry->width > maxWidth)
+    scale = static_cast<float>(maxWidth) / static_cast<float>(entry->width);
+  if (maxHeight > 0 && entry->height > maxHeight)
+    scale = std::min(scale, static_cast<float>(maxHeight) / static_cast<float>(entry->height));
+
+  const int targetW = static_cast<int>(entry->width * scale);
+  const int targetH = static_cast<int>(entry->height * scale);
+  if (targetW <= 0 || targetH <= 0) return false;
+
+  if (!entry->scaledPixels || entry->scaledWidth != targetW || entry->scaledHeight != targetH) {
+    buildScaledBitmap(entry, targetW, targetH);
+  }
+  if (!entry->scaledPixels) return false;
+
+  // Rounded-corner skip table: pixels inside the four [0, r) × [0, r) corner
+  // boxes that fall outside the circle (dx² + dy² > rr²) are left untouched.
+  // Same maths as maskRoundedRectOutsideCorners, but applied during the
+  // blit so the framebuffer underneath (typically a drop shadow) stays
+  // visible through the corner.
+  constexpr int kMaxCornerR = 32;
+  int8_t skipPerRow[kMaxCornerR];
+  const int rMax = std::min(kMaxCornerR, std::min(targetW / 2, targetH / 2));
+  const int r = std::max(0, std::min(cornerRadius, rMax));
+  const bool rounded = r > 0;
+  if (rounded) {
+    const int rr = r - 1;
+    const int rr2 = rr * rr;
+    for (int dy = 0; dy < r; ++dy) {
+      const int ty = rr - dy;
+      const int ty2 = ty * ty;
+      int skip = 0;
+      while (skip < r) {
+        const int tx = rr - skip;
+        if (tx * tx + ty2 > rr2) ++skip;
+        else break;
+      }
+      skipPerRow[dy] = static_cast<int8_t>(skip);
+    }
+  }
+
+  const int scaledStride = (targetW + 7) / 8;
+  const int screenW = getScreenWidth();
+  const int screenH = getScreenHeight();
+  const int sx0 = std::max(0, -x);
+  const int sx1 = std::min(targetW, screenW - x);
+  const int sy0 = std::max(0, -y);
+  const int sy1 = std::min(targetH, screenH - y);
+  if (sx0 >= sx1 || sy0 >= sy1) return true;
+
+  int phyX0, phyY0;
+  rotateCoordinates(orientation, x + sx0, y + sy0, &phyX0, &phyY0, panelWidth, panelHeight);
+
+  // Per-orientation inner loops. Portrait variants hold phyX constant per
+  // source row → hoist byte column + bitMask out of the inner pixel loop;
+  // landscape variants hold phyY constant → hoist row base. Each pixel
+  // costs an AND + branch instead of recomputing 0x80 >> n.
+  const int32_t panelStride = static_cast<int32_t>(panelWidthBytes);
+
+  switch (orientation) {
+    case Portrait:
+    case PortraitInverted: {
+      const int dyPerSx = (orientation == Portrait) ? -1 : 1;
+      const int dxPerSy = (orientation == Portrait) ? 1 : -1;
+      const int32_t byteStep = static_cast<int32_t>(dyPerSx) * panelStride;
+      for (int sy = sy0; sy < sy1; ++sy) {
+        int rowSx0 = sx0;
+        int rowSx1 = sx1;
+        if (rounded) {
+          int skip = 0;
+          if (sy < r) skip = skipPerRow[sy];
+          else if (sy >= targetH - r) skip = skipPerRow[targetH - 1 - sy];
+          if (skip > 0) {
+            rowSx0 = std::max(sx0, skip);
+            rowSx1 = std::min(sx1, targetW - skip);
+            if (rowSx0 >= rowSx1) continue;
+          }
+        }
+        const int phyX = phyX0 + (sy - sy0) * dxPerSy;
+        const uint8_t bitMask = static_cast<uint8_t>(0x80u >> (phyX & 7));
+        int32_t byteIndex = static_cast<int32_t>(phyY0) * panelStride + (phyX >> 3) +
+                            static_cast<int32_t>(rowSx0 - sx0) * byteStep;
+        const uint8_t* srcRow = entry->scaledPixels.get() + sy * scaledStride;
+        int sx = rowSx0;
+        while (sx < rowSx1) {
+          const int bitOffset = sx & 7;
+          const int run = std::min(8 - bitOffset, rowSx1 - sx);
+          uint8_t srcByte = srcRow[sx >> 3];
+          uint8_t srcMask = static_cast<uint8_t>(0x80u >> bitOffset);
+          for (int b = 0; b < run; ++b) {
+            const bool srcSet = (srcByte & srcMask) != 0;  // bit set = WHITE in our 1bpp
+            if constexpr (Opaque) {
+              if (srcSet) frameBuffer[byteIndex] |= bitMask;
+              else        frameBuffer[byteIndex] &= static_cast<uint8_t>(~bitMask);
+            } else {
+              if (!srcSet) frameBuffer[byteIndex] &= static_cast<uint8_t>(~bitMask);
+            }
+            byteIndex += byteStep;
+            srcMask >>= 1;
+          }
+          sx += run;
+        }
+      }
+      break;
+    }
+    case LandscapeClockwise:
+    case LandscapeCounterClockwise: {
+      const int dxPerSx = (orientation == LandscapeCounterClockwise) ? 1 : -1;
+      const int dyPerSy = (orientation == LandscapeCounterClockwise) ? 1 : -1;
+      for (int sy = sy0; sy < sy1; ++sy) {
+        int rowSx0 = sx0;
+        int rowSx1 = sx1;
+        if (rounded) {
+          int skip = 0;
+          if (sy < r) skip = skipPerRow[sy];
+          else if (sy >= targetH - r) skip = skipPerRow[targetH - 1 - sy];
+          if (skip > 0) {
+            rowSx0 = std::max(sx0, skip);
+            rowSx1 = std::min(sx1, targetW - skip);
+            if (rowSx0 >= rowSx1) continue;
+          }
+        }
+        const int phyY = phyY0 + (sy - sy0) * dyPerSy;
+        const int32_t rowBase = static_cast<int32_t>(phyY) * panelStride;
+        int phyX = phyX0 + (rowSx0 - sx0) * dxPerSx;
+        const uint8_t* srcRow = entry->scaledPixels.get() + sy * scaledStride;
+        int sx = rowSx0;
+        while (sx < rowSx1) {
+          const int bitOffset = sx & 7;
+          const int run = std::min(8 - bitOffset, rowSx1 - sx);
+          uint8_t srcByte = srcRow[sx >> 3];
+          uint8_t srcMask = static_cast<uint8_t>(0x80u >> bitOffset);
+          for (int b = 0; b < run; ++b) {
+            const bool srcSet = (srcByte & srcMask) != 0;
+            const int32_t byteIndex = rowBase + (phyX >> 3);
+            const uint8_t bitMask = static_cast<uint8_t>(0x80u >> (phyX & 7));
+            if constexpr (Opaque) {
+              if (srcSet) frameBuffer[byteIndex] |= bitMask;
+              else        frameBuffer[byteIndex] &= static_cast<uint8_t>(~bitMask);
+            } else {
+              if (!srcSet) frameBuffer[byteIndex] &= static_cast<uint8_t>(~bitMask);
+            }
+            phyX += dxPerSx;
+            srcMask >>= 1;
+          }
+          sx += run;
+        }
+      }
+      break;
+    }
+  }
+  return true;
+}
+
+// Explicit template instantiations -- the blit specializations live here so
+// callers in other translation units can call drawCachedBitmap without
+// pulling the full body into their includes.
+template bool GfxRenderer::drawCachedBitmap<false>(const char*, int, int, int, int, int) const;
+template bool GfxRenderer::drawCachedBitmap<true>(const char*, int, int, int, int, int) const;
+template bool GfxRenderer::drawCachedBitmap<false>(CachedBitmap*, int, int, int, int, int) const;
+template bool GfxRenderer::drawCachedBitmap<true>(CachedBitmap*, int, int, int, int, int) const;
 
 void GfxRenderer::drawPerspectiveBitmap(const Bitmap& bitmap, const int x, const int y, const int w, const int hL,
                                         const int hR) const {

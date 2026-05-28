@@ -11,7 +11,9 @@ class SdCardFont;
 #include <cassert>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "Bitmap.h"
@@ -30,6 +32,30 @@ class GfxRenderer {
     LandscapeClockwise,        // 800x480 logical coordinates, rotated 180° (swap top/bottom)
     PortraitInverted,          // 480x800 logical coordinates, inverted
     LandscapeCounterClockwise  // 800x480 logical coordinates, native panel orientation
+  };
+
+  // CrumBLE Phase 1: path-keyed in-RAM bitmap cache for the new Library
+  // shelf paint path. A `CachedBitmap` holds the BMP's full decoded
+  // 2-bit-per-pixel packed pixels (matches Bitmap::readNextRow output),
+  // plus an optional pre-scaled 1-bit-per-pixel buffer at the most
+  // recently requested target dimensions. The 1bpp scaled buffer is what
+  // drawCachedBitmap actually blits to the framebuffer -- subsequent
+  // paints at the same target size hit memory only.
+  //
+  // Stride for `pixels`        = (width  + 3) / 4   bytes (2bpp packed)
+  // Stride for `scaledPixels`  = (scaledWidth + 7) / 8 bytes (1bpp MSB-first)
+  struct CachedBitmap {
+    std::unique_ptr<uint8_t[]> pixels;
+    size_t pixelsBytes = 0;
+    int width = 0;
+    int height = 0;
+    bool topDown = false;
+    uint32_t lastUsedTick = 0;
+
+    std::unique_ptr<uint8_t[]> scaledPixels;
+    size_t scaledPixelsBytes = 0;
+    int scaledWidth = 0;
+    int scaledHeight = 0;
   };
 
  private:
@@ -116,6 +142,32 @@ class GfxRenderer {
   void drawPixelDither(int x, int y) const;
   template <Color color>
   void fillArc(int maxRadius, int cx, int cy, int xDir, int yDir) const;
+
+  // CrumBLE Phase 1: cached-bitmap state. All members are `mutable` because
+  // drawCachedBitmap() and lookupCachedBitmap() are exposed as const-on-this
+  // (consistent with the rest of the renderer's "const paint methods")
+  // even though they mutate the cache (insert, scale, evict, touch LRU).
+  mutable std::unordered_map<std::string, CachedBitmap> imageCache_;
+  mutable size_t imageCacheBytes_ = 0;
+  // Dynamic budget: starts at 64 KB on the assumption BLE is off; shrinks
+  // when free-heap drops (see reconcileImageCacheBudget()). Always 0 in BW
+  // mode with NimBLE actively starving the heap — the budget tracker
+  // evicts to 0 below the floor.
+  mutable size_t imageCacheBudget_ = 64u * 1024u;
+  mutable uint32_t imageCacheTick_ = 0;
+  // Builds (or rebuilds) `entry->scaledPixels` at (targetW, targetH) from
+  // the 2bpp source. Bytes accounted against imageCacheBytes_.
+  void buildScaledBitmap(CachedBitmap* entry, int targetW, int targetH) const;
+  // Evicts LRU entries until imageCacheBytes_ <= imageCacheBudget_. No-op
+  // when already within budget. Called automatically by lookupCachedBitmap
+  // after each insert and by reconcileImageCacheBudget() when the budget
+  // shrinks.
+  void evictImageCacheToBudget() const;
+  // Recomputes imageCacheBudget_ from current ESP free heap. Tiered:
+  // > 120 KB: 64 KB cache, 80-120 KB: 16 KB, < 80 KB: 0 (force-flush).
+  // Cheap (one esp_get_free_heap_size call); called by lookupCachedBitmap
+  // before each insert.
+  void reconcileImageCacheBudget() const;
 
  public:
   explicit GfxRenderer(HalDisplay& halDisplay)
@@ -244,6 +296,49 @@ class GfxRenderer {
   void drawBitmap(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight, float cropX = 0,
                   float cropY = 0) const;
   void drawBitmap1Bit(const Bitmap& bitmap, int x, int y, int maxWidth, int maxHeight) const;
+
+  // ─── Cached-bitmap path (Library / shelf cover paints) ───────────────────
+  // CrumBLE Phase 1, ported from rhythmerc/crosspoint-reader. Caches decoded
+  // BMPs in RAM by path; subsequent paints at the same target size blit
+  // straight from a pre-scaled 1bpp buffer (no SD I/O, no re-decode).
+  //
+  // First call for a given path: opens the file, parses headers, walks
+  // every row through Bitmap::readNextRow into a 2bpp packed buffer,
+  // inserts into imageCache_. Returns nullptr on parse / OOM failure.
+  // Subsequent calls return the same handle (cache hit).
+  CachedBitmap* lookupCachedBitmap(const char* path) const;
+  CachedBitmap* lookupCachedBitmap(const std::string& path) const { return lookupCachedBitmap(path.c_str()); }
+  // Reads dimensions from a cache handle without forcing a paint. Returns
+  // false if handle is null or hasn't been decoded yet (which shouldn't
+  // happen for handles returned by lookupCachedBitmap).
+  bool getCachedBitmapDimensions(CachedBitmap* handle, int* outWidth, int* outHeight) const;
+  // Blits the cached bitmap at (x, y), aspect-fit to (maxWidth x maxHeight).
+  // Re-builds the 1bpp scaled buffer when the target size changes. Returns
+  // false if the path can't be loaded, the bitmap is empty, or it's fully
+  // clipped off-screen.
+  //
+  // `Opaque=false` (default) writes ONLY black-source pixels — leaves
+  // whatever's already in the framebuffer where the source is white. Lets
+  // a drop-shadow underneath show through. `Opaque=true` writes both
+  // inks, so the caller can skip the white-substrate fillRect.
+  //
+  // `cornerRadius` > 0 carves rounded corners directly during the blit:
+  // pixels in the corner-skip table (same `dx² + dy² > r²` test as
+  // maskRoundedRectOutsideCorners) are left untouched, so any shadow
+  // underneath remains visible at the corners.
+  template <bool Opaque = false>
+  bool drawCachedBitmap(const char* path, int x, int y, int maxWidth, int maxHeight, int cornerRadius = 0) const;
+  template <bool Opaque = false>
+  bool drawCachedBitmap(CachedBitmap* handle, int x, int y, int maxWidth, int maxHeight,
+                        int cornerRadius = 0) const;
+  // Drops every cached entry and resets the byte counter. Use when the
+  // active book / library has changed enough that the cache contents are
+  // stale, or as a low-heap escape hatch.
+  void clearImageCache() const;
+  // Returns the current budget (post-reconciliation if you've called
+  // anything that triggers it). Diagnostic; not for sizing decisions.
+  size_t getImageCacheBudget() const { return imageCacheBudget_; }
+  size_t getImageCacheBytes() const { return imageCacheBytes_; }
   // Trapezoidal blit used by Flow/iPod-style carousel. Fits the bitmap into a
   // bounding box of width `w` and height `max(hL, hR)` whose top-left is (x, y);
   // each output column has its own height linearly interpolated from hL on the
