@@ -4,6 +4,7 @@
 
 #include <algorithm>
 
+#include "CollectionsStore.h"
 #include "CrossPointState.h"
 #include "OpdsServerStore.h"
 #include "boot_sleep/BootActivity.h"
@@ -200,6 +201,14 @@ void ActivityManager::goToRecentBooks() {
   } else {
     replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
   }
+}
+
+void ActivityManager::goToBookshelf(std::string collectionId) {
+  // Default to whatever the user last left active in the carousel header.
+  if (collectionId.empty()) {
+    collectionId = CollectionsStore::getInstance().getActiveId();
+  }
+  replaceActivity(std::make_unique<RecentBooksGridActivity>(renderer, mappedInput, std::move(collectionId)));
 }
 
 void ActivityManager::goToBrowser() {

@@ -15,6 +15,8 @@
 #include <cstdio>
 
 #include "BookActions.h"
+#include "CollectionsStore.h"
+#include "CoverThumbStatus.h"
 #include "CrossPointSettings.h"
 #include "FileBrowserActionActivity.h"
 #include "MappedInputManager.h"
@@ -36,7 +38,7 @@ constexpr int kLyraGridContentTop =
     LyraMetrics::values.topPadding + LyraMetrics::values.headerHeight + LyraMetrics::values.verticalSpacing;
 constexpr int kLyraGridSpacing = LyraMetrics::values.verticalSpacing;
 
-void drawGridHeader(const GfxRenderer& renderer, const int pageWidth) {
+void drawGridHeader(const GfxRenderer& renderer, const int pageWidth, const char* titleText) {
   const Rect rect{0, LyraMetrics::values.topPadding, pageWidth, LyraMetrics::values.headerHeight};
   renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
 
@@ -49,7 +51,7 @@ void drawGridHeader(const GfxRenderer& renderer, const int pageWidth) {
 
   const int titleMaxWidth = rect.width - LyraMetrics::values.contentSidePadding * 3;
   const std::string title =
-      renderer.truncatedText(UI_12_FONT_ID, tr(STR_MENU_RECENT_BOOKS), titleMaxWidth, EpdFontFamily::BOLD);
+      renderer.truncatedText(UI_12_FONT_ID, titleText, titleMaxWidth, EpdFontFamily::BOLD);
   renderer.drawText(UI_12_FONT_ID, rect.x + LyraMetrics::values.contentSidePadding,
                     rect.y + LyraMetrics::values.batteryBarHeight + 3, title.c_str(), true, EpdFontFamily::BOLD);
   renderer.drawLine(rect.x, rect.y + rect.height - 3, rect.x + rect.width - 1, rect.y + rect.height - 3, 3, true);
@@ -207,6 +209,17 @@ std::string getReusableCoverPath(const RecentBook& book) {
 }
 
 void ensureReusableCoverPath(RecentBook& book) {
+  // Books whose thumb-gen has previously failed should stay on the
+  // placeholder path. Without this gate, the re-derivation below would
+  // refill coverBmpPath with the template, which trips needsCoverThumbGeneration
+  // -> Loading popup -> repeat failure on every shelf revisit.
+  if (CoverThumbStatus::isMarkedFailed(book.path)) {
+    if (!book.coverBmpPath.empty()) {
+      book.coverBmpPath = "";
+      updateRecentBookCoverPath(book, "");
+    }
+    return;
+  }
   if (book.coverBmpPath.empty() || hasThumbnailPlaceholder(book.coverBmpPath)) {
     return;
   }
@@ -223,6 +236,43 @@ void ensureReusableCoverPath(RecentBook& book) {
 
 void RecentBooksGridActivity::loadRecentBooks() {
   recentBooks.clear();
+  if (isCollectionMode()) {
+    // Collection mode (#81): pull paths from CollectionsStore and synthesise
+    // RecentBook entries. Pre-populate coverBmpPath with the canonical
+    // thumb-template path (/.crosspoint/<hash>/thumb_[WIDTH]x[HEIGHT].bmp)
+    // -- without that, needsCoverThumbGeneration() can't find existing
+    // thumbs across visits because it looks them up via book.coverBmpPath,
+    // so the Loading popup fires + regenerates every single time the user
+    // re-enters the grid.
+    const auto paths = CollectionsStore::getInstance().resolveBookPaths(collectionId_);
+    recentBooks.reserve(paths.size());
+    for (const auto& path : paths) {
+      if (!Storage.exists(path.c_str())) continue;
+      RecentBook book;
+      book.path = path;
+      // Template path; getCoverThumbPath fills in [WIDTH]/[HEIGHT] at the
+      // grid's chosen cell size (COVER_WIDTH x COVER_HEIGHT). Skip when a
+      // previous generation has been marked permanently-failed so we don't
+      // re-derive a path that will only trigger a doomed retry below
+      // (loading popup + same failure every revisit).
+      if (!CoverThumbStatus::isMarkedFailed(path)) {
+        if (FsHelpers::hasEpubExtension(path)) {
+          book.coverBmpPath = Epub(path, "/.crosspoint").getThumbBmpPath();
+        } else if (FsHelpers::hasXtcExtension(path)) {
+          book.coverBmpPath = Xtc(path, "/.crosspoint").getThumbBmpPath();
+        }
+      }
+      // Filename-without-extension title fallback. The page-cover load
+      // pass may overwrite this with real metadata if it parses the book
+      // for a thumbnail; that's fine.
+      const size_t slash = path.find_last_of('/');
+      const std::string fname = (slash != std::string::npos) ? path.substr(slash + 1) : path;
+      const size_t dot = fname.find_last_of('.');
+      book.title = (dot != std::string::npos && dot > 0) ? fname.substr(0, dot) : fname;
+      recentBooks.push_back(BookState{book});
+    }
+    return;
+  }
   const auto& books = RECENT_BOOKS.getBooks();
   recentBooks.reserve(std::min(books.size(), static_cast<size_t>(MAX_GRID_BOOKS)));
 
@@ -250,6 +300,9 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
   for (int i = pageStart; i < pageEnd; ++i) {
     RecentBook& book = recentBooks[i].book;
     ensureReusableCoverPath(book);
+    // Books with a "thumb generation failed" marker render the placeholder
+    // (coverBmpPath stays empty) and never trigger the Loading popup.
+    if (CoverThumbStatus::isMarkedFailed(book.path)) continue;
     if (book.coverBmpPath.empty()) {
       needsGeneration = true;
       break;
@@ -272,6 +325,11 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
 
   for (int i = pageStart; i < pageEnd; ++i) {
     RecentBook& book = recentBooks[i].book;
+    // Already-known-failed books: render placeholder, no Loading popup.
+    if (CoverThumbStatus::isMarkedFailed(book.path)) {
+      processedCount++;
+      continue;
+    }
     const std::string coverPath =
         book.coverBmpPath.empty() ? "" : UITheme::getCoverThumbPath(book.coverBmpPath, COVER_WIDTH, COVER_HEIGHT);
     if (needsCoverThumbGeneration(book, coverPath)) {
@@ -291,9 +349,11 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
             const std::string reusablePath = epub.getThumbBmpPath();
             book.coverBmpPath = reusablePath;
             updateRecentBookCoverPath(book, reusablePath);
+            CoverThumbStatus::clearFailed(book.path);
           } else {
             updateRecentBookCoverPath(book, "");
             book.coverBmpPath = "";
+            CoverThumbStatus::markFailed(book.path);
           }
         }
       } else if (FsHelpers::hasXtcExtension(book.path)) {
@@ -308,9 +368,11 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
             const std::string reusablePath = xtc.getThumbBmpPath();
             book.coverBmpPath = reusablePath;
             updateRecentBookCoverPath(book, reusablePath);
+            CoverThumbStatus::clearFailed(book.path);
           } else {
             updateRecentBookCoverPath(book, "");
             book.coverBmpPath = "";
+            CoverThumbStatus::markFailed(book.path);
           }
         }
       }
@@ -513,7 +575,15 @@ void RecentBooksGridActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  drawGridHeader(renderer, pageWidth);
+  // CrumBLE #81: header title is the collection name in collection mode,
+  // otherwise the legacy "Recent Books" label. Looking up the collection
+  // each frame is cheap (in-memory map find) so we don't cache it.
+  const char* headerTitle = tr(STR_MENU_RECENT_BOOKS);
+  if (isCollectionMode()) {
+    const Collection* c = CollectionsStore::getInstance().findCollection(collectionId_);
+    if (c != nullptr) headerTitle = c->name.c_str();
+  }
+  drawGridHeader(renderer, pageWidth, headerTitle);
   constexpr int contentTop = kLyraGridContentTop;
   constexpr int titleStripHeight = 32;
   constexpr int titleGridGap = 16;
@@ -578,6 +648,19 @@ void RecentBooksGridActivity::render(RenderLock&&) {
       const int by = y;
       constexpr int bw = COVER_WIDTH;
       constexpr int bh = COVER_HEIGHT;
+
+      // Drop shadow: LightGray L-shape (right + bottom + corner), same
+      // vocabulary as the Flow shelf row so the Bookshelf grid feels
+      // like the same furniture as the home carousel's shelf strip.
+      // Drawn BEFORE the cover bitmap so the bitmap overpaints the
+      // shadow's inner edge cleanly. kShadowDepth/kShadowInset mirror
+      // LyraFlowTheme constants of the same name.
+      constexpr int kShadowDepth = 6;
+      constexpr int kShadowInset = 3;
+      renderer.fillRectDither(bx + bw, by + kShadowInset, kShadowDepth, bh - kShadowInset, Color::LightGray);
+      renderer.fillRectDither(bx + kShadowInset, by + bh, bw - kShadowInset, kShadowDepth, Color::LightGray);
+      renderer.fillRectDither(bx + bw, by + bh, kShadowDepth, kShadowDepth, Color::LightGray);
+
       bool drawn = false;
       const std::string thumbPath =
           recentBooks[bookIdx].book.coverBmpPath.empty()
@@ -594,7 +677,6 @@ void RecentBooksGridActivity::render(RenderLock&&) {
             renderer.fillRoundedRect(bx, by, bw, bh, kCoverCornerRadius, Color::White);
             renderer.drawBitmap(bmp, bx, by, bw, bh, cropX, cropY);
             renderer.maskRoundedRectOutsideCorners(bx, by, bw, bh, kCoverCornerRadius, Color::White);
-            renderer.drawRoundedRect(bx, by, bw, bh, 2, kCoverCornerRadius, true);
             drawn = true;
           }
           file.close();
@@ -602,7 +684,6 @@ void RecentBooksGridActivity::render(RenderLock&&) {
       }
       if (!drawn) {
         renderer.fillRoundedRect(bx, by, bw, bh, kCoverCornerRadius, Color::White);
-        renderer.drawRoundedRect(bx, by, bw, bh, 2, kCoverCornerRadius, true);
         renderer.drawIcon(BookIcon, bx + (bw - 32) / 2, by + (bh - 32) / 2, 32, 32);
       }
       if (bookIdx == static_cast<int>(selectorIndex)) {

@@ -93,6 +93,10 @@ class ActivityManager {
   void goToSettings();
   void goToFileBrowser(std::string path = {});
   void goToRecentBooks();
+  // CrumBLE #81: opens the Bookshelf grid -- a RecentBooksGridActivity
+  // sourced from the given CollectionsStore collection (instead of
+  // RECENT_BOOKS). Empty collectionId defaults to the active collection.
+  void goToBookshelf(std::string collectionId = {});
   void goToBrowser();
   void goToReader(std::string path, bool suppressBackRelease = false);
   void goToSleep(bool fromTimeout = false);
