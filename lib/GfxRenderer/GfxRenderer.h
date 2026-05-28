@@ -67,6 +67,12 @@ class GfxRenderer {
     size_t scaledPixelsBytes = 0;
     int scaledWidth = 0;
     int scaledHeight = 0;
+    // CrumBLE: cropX/cropY (0.0-1.0) of the SOURCE that was trimmed
+    // before scaling into scaledPixels. Stored so the cache invalidates
+    // the scaled buffer when a different crop is requested for the same
+    // target size (e.g. carousel center vs. side aspect-fill).
+    float scaledCropX = 0.0f;
+    float scaledCropY = 0.0f;
   };
 
  private:
@@ -185,7 +191,8 @@ class GfxRenderer {
   mutable uint32_t imageCacheTick_ = 0;
   // Builds (or rebuilds) `entry->scaledPixels` at (targetW, targetH) from
   // the 2bpp source. Bytes accounted against imageCacheBytes_.
-  void buildScaledBitmap(CachedBitmap* entry, int targetW, int targetH) const;
+  void buildScaledBitmap(CachedBitmap* entry, int targetW, int targetH, float cropX = 0.0f,
+                         float cropY = 0.0f) const;
   // Evicts LRU entries until imageCacheBytes_ <= imageCacheBudget_. No-op
   // when already within budget. Called automatically by lookupCachedBitmap
   // after each insert and by reconcileImageCacheBudget() when the budget
@@ -362,11 +369,19 @@ class GfxRenderer {
   // pixels in the corner-skip table (same `dx² + dy² > r²` test as
   // maskRoundedRectOutsideCorners) are left untouched, so any shadow
   // underneath remains visible at the corners.
+  // `cropX, cropY` (0.0-1.0): fraction of source width/height to trim
+  // before scaling. 0 = aspect-fit (default; matches the API's original
+  // behaviour, scaled output may be smaller than max on one axis). >0 =
+  // aspect-fill with crop -- the scaled output is exactly maxWidth x
+  // maxHeight and (cropX/2, cropY/2) of the source is trimmed from each
+  // side of the cropped axis. Computed by callers via
+  // calculateCoverFillCrop and friends.
   template <bool Opaque = false>
-  bool drawCachedBitmap(const char* path, int x, int y, int maxWidth, int maxHeight, int cornerRadius = 0) const;
+  bool drawCachedBitmap(const char* path, int x, int y, int maxWidth, int maxHeight,
+                        float cropX = 0.0f, float cropY = 0.0f, int cornerRadius = 0) const;
   template <bool Opaque = false>
   bool drawCachedBitmap(CachedBitmap* handle, int x, int y, int maxWidth, int maxHeight,
-                        int cornerRadius = 0) const;
+                        float cropX = 0.0f, float cropY = 0.0f, int cornerRadius = 0) const;
   // Drops every cached entry and resets the byte counter. Use when the
   // active book / library has changed enough that the cache contents are
   // stale, or as a low-heap escape hatch.

@@ -204,22 +204,41 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   //     true aspect ratio (otherwise drawBitmap aspect-fits but our 220×320
   //     chrome leaves a white sliver for narrower covers, e.g. 1720×2600
   //     which is taller than 220:320). ---
+  // CrumBLE Phase A perf: try the in-RAM cache first. Cache hit blits
+  // from a pre-scaled 1bpp buffer (~2 ms). Cache miss falls through to
+  // direct drawBitmap below -- the cache rejects loads when the budget
+  // is tight (BLE on, low heap) so we still need the legacy SD path.
   const std::string cp = UITheme::getCoverThumbPath(recentBooks[curIdx].coverBmpPath, centerCoverHeight);
-  FsFile cf;
-  const bool centerOpened = !cp.empty() && Storage.openFileForRead("HOME", cp, cf);
-  Bitmap centerBitmap(cf);
-  bool centerParsed = false;
-  if (centerOpened) {
-    if (centerBitmap.parseHeaders() == BmpReaderError::Ok && centerBitmap.getWidth() > 0 &&
-        centerBitmap.getHeight() > 0) {
-      const int srcW = centerBitmap.getWidth();
-      const int srcH = centerBitmap.getHeight();
-      const float fitScale = std::min(static_cast<float>(centerCoverWidth) / static_cast<float>(srcW),
-                                      static_cast<float>(centerCoverHeight) / static_cast<float>(srcH));
-      actualCoverWidth = std::min(centerCoverWidth, static_cast<int>(std::round(srcW * fitScale)));
-      actualCoverHeight = std::min(centerCoverHeight, static_cast<int>(std::round(srcH * fitScale)));
-      centerParsed = true;
+  GfxRenderer::CachedBitmap* centerHandle = cp.empty() ? nullptr : renderer.lookupCachedBitmap(cp);
+  int centerSrcW = 0, centerSrcH = 0;
+  bool centerParsed = renderer.getCachedBitmapDimensions(centerHandle, &centerSrcW, &centerSrcH);
+  // Direct-draw fallback file: only opened when the cache can't serve
+  // us (handle == nullptr). Bitmap is constructed once with the file
+  // ref inside the draw block below since the type's copy ctor /
+  // assignment are deleted. The file stays open for the whole
+  // function so drawBitmap can stream rows on demand.
+  FsFile centerFallbackFile;
+  bool centerFallbackOpened = false;
+  if (!centerParsed && !cp.empty()) {
+    if (Storage.openFileForRead("HOME", cp, centerFallbackFile)) {
+      centerFallbackOpened = true;
+      Bitmap probe(centerFallbackFile);
+      if (probe.parseHeaders() == BmpReaderError::Ok && probe.getWidth() > 0 && probe.getHeight() > 0) {
+        centerSrcW = probe.getWidth();
+        centerSrcH = probe.getHeight();
+        centerParsed = true;
+        // Rewind so the draw below can re-read headers + row data from
+        // the start of the file. probe goes out of scope here but the
+        // file handle stays open.
+        centerFallbackFile.seek(0);
+      }
     }
+  }
+  if (centerParsed) {
+    const float fitScale = std::min(static_cast<float>(centerCoverWidth) / static_cast<float>(centerSrcW),
+                                    static_cast<float>(centerCoverHeight) / static_cast<float>(centerSrcH));
+    actualCoverWidth = std::min(centerCoverWidth, static_cast<int>(std::round(centerSrcW * fitScale)));
+    actualCoverHeight = std::min(centerCoverHeight, static_cast<int>(std::round(centerSrcH * fitScale)));
   }
 
   int cX = centerX - actualCoverWidth / 2;
@@ -252,7 +271,16 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
     renderer.fillRect(clearX, clearY, clearW, clearH, false);
 
     if (centerParsed) {
-      renderer.drawBitmap(centerBitmap, cX, actualY, actualCoverWidth, actualCoverHeight);
+      if (centerHandle) {
+        renderer.drawCachedBitmap(centerHandle, cX, actualY, actualCoverWidth, actualCoverHeight);
+      } else {
+        // Construct Bitmap inside this branch — its copy ctor is
+        // deleted so we can't hoist it out and assign to it.
+        Bitmap centerFallbackBitmap(centerFallbackFile);
+        if (centerFallbackBitmap.parseHeaders() == BmpReaderError::Ok) {
+          renderer.drawBitmap(centerFallbackBitmap, cX, actualY, actualCoverWidth, actualCoverHeight);
+        }
+      }
       cutRoundedCorners(renderer, cX, actualY, actualCoverWidth, actualCoverHeight, bookCornerRadius);
     } else {
     // Placeholder: black lower-2/3 with the cover icon centered just below
@@ -313,9 +341,10 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
 
   }  // end of if (!skipCarouselCoverLoads)
 
-  // Close the center-cover file opened above (outside the skip block now,
-  // since the header peek runs on every render).
-  if (centerOpened) cf.close();
+  // Close the direct-draw fallback's open file (the cached path keeps no
+  // file open -- lookupCachedBitmap closed it the moment the 2bpp pixels
+  // were copied into the cache entry).
+  if (centerFallbackOpened) centerFallbackFile.close();
 
   // One-shot reset so the next render starts from a known default.
   skipCarouselCoverLoads = false;
@@ -635,27 +664,54 @@ void LyraFlowTheme::drawBookshelfStrip(GfxRenderer& renderer, Rect rect, const c
 
     bool drewThumb = false;
     if (spineIdx < static_cast<int>(coverPaths.size()) && !coverPaths[spineIdx].empty()) {
-      FsFile file;
-      if (Storage.openFileForRead("LFT", coverPaths[spineIdx], file)) {
-        Bitmap bitmap(file);
-        if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
-          // Aspect-fill into the cell, cropping the longer axis. Same math
-          // as RecentBooksGridActivity::loadPageCovers.
-          const float srcW = static_cast<float>(bitmap.getWidth());
-          const float srcH = static_cast<float>(bitmap.getHeight());
-          const float srcRatio = srcW / srcH;
-          const float targetRatio = static_cast<float>(kCellWidth) / static_cast<float>(kCellHeight);
-          float cropX = 0.0f;
-          float cropY = 0.0f;
-          if (srcRatio > targetRatio) {
-            cropX = std::max(0.0f, 1.0f - (targetRatio / srcRatio));
-          } else if (srcRatio < targetRatio) {
-            cropY = std::max(0.0f, 1.0f - (srcRatio / targetRatio));
-          }
-          renderer.drawBitmap(bitmap, x, y, kCellWidth, kCellHeight, cropX, cropY);
-          drewThumb = true;
+      const std::string& cellPath = coverPaths[spineIdx];
+      // CrumBLE Phase A perf: try the in-RAM cache first. Cache hit blits
+      // a pre-scaled 1bpp buffer (~1 ms). Cache miss (budget tight under
+      // BLE / low heap) falls back to direct drawBitmap so the cell
+      // still renders.
+      GfxRenderer::CachedBitmap* handle = renderer.lookupCachedBitmap(cellPath);
+      int srcW = 0, srcH = 0;
+      const bool cacheHit =
+          renderer.getCachedBitmapDimensions(handle, &srcW, &srcH) && srcW > 0 && srcH > 0;
+      auto applyAspectFillAndDrawCached = [&](int sw, int sh) {
+        const float srcRatio = static_cast<float>(sw) / static_cast<float>(sh);
+        const float targetRatio = static_cast<float>(kCellWidth) / static_cast<float>(kCellHeight);
+        float cropX = 0.0f;
+        float cropY = 0.0f;
+        if (srcRatio > targetRatio) {
+          cropX = std::max(0.0f, 1.0f - (targetRatio / srcRatio));
+        } else if (srcRatio < targetRatio) {
+          cropY = std::max(0.0f, 1.0f - (srcRatio / targetRatio));
         }
-        file.close();
+        renderer.drawCachedBitmap(handle, x, y, kCellWidth, kCellHeight, cropX, cropY);
+      };
+      if (cacheHit) {
+        applyAspectFillAndDrawCached(srcW, srcH);
+        drewThumb = true;
+      } else {
+        // Cache miss (low-heap budget or file open in cache failed):
+        // fall back to direct SD-streamed drawBitmap so the cell still
+        // renders. Bitmap can't be reassigned (deleted copy ctor) so we
+        // do all the work inside this branch.
+        FsFile file;
+        if (Storage.openFileForRead("LFT", cellPath, file)) {
+          Bitmap fallback(file);
+          if (fallback.parseHeaders() == BmpReaderError::Ok && fallback.getWidth() > 0 && fallback.getHeight() > 0) {
+            const float srcRatio =
+                static_cast<float>(fallback.getWidth()) / static_cast<float>(fallback.getHeight());
+            const float targetRatio = static_cast<float>(kCellWidth) / static_cast<float>(kCellHeight);
+            float cropX = 0.0f;
+            float cropY = 0.0f;
+            if (srcRatio > targetRatio) {
+              cropX = std::max(0.0f, 1.0f - (targetRatio / srcRatio));
+            } else if (srcRatio < targetRatio) {
+              cropY = std::max(0.0f, 1.0f - (srcRatio / targetRatio));
+            }
+            renderer.drawBitmap(fallback, x, y, kCellWidth, kCellHeight, cropX, cropY);
+            drewThumb = true;
+          }
+          file.close();
+        }
       }
     }
     if (!drewThumb) {

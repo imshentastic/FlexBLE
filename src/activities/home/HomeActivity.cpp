@@ -1951,6 +1951,16 @@ void HomeActivity::onExit() {
   gCarouselCache.invalidate();
   freeCarouselFrames();
   carouselWarmupPending = false;
+
+  // CrumBLE Phase A perf: the in-RAM cover-bitmap cache only reconciles
+  // its budget on cache misses, so leaving Home → Reader → Menu →
+  // Bluetooth (zero cache lookups) can leave ~50 KB of cover bitmaps
+  // pinned indefinitely. NimBLE then can't claim its ~58 KB block at
+  // BT enable, the first text-page render starves the FontDecompressor
+  // (3-4 KB page-buffer alloc fails), supervision-timeout disconnects
+  // fire. Drop the cache here so heap is restored before any heavier
+  // activity loads. Cache is rebuilt cheaply on the next Home visit.
+  renderer.clearImageCache();
 }
 
 bool HomeActivity::storeCoverBuffer() {

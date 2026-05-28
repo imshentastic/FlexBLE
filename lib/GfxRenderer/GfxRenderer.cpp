@@ -1715,7 +1715,8 @@ bool GfxRenderer::getCachedBitmapDimensions(CachedBitmap* handle, int* outWidth,
   return true;
 }
 
-void GfxRenderer::buildScaledBitmap(CachedBitmap* entry, const int targetW, const int targetH) const {
+void GfxRenderer::buildScaledBitmap(CachedBitmap* entry, const int targetW, const int targetH,
+                                    const float cropX, const float cropY) const {
   if (entry == nullptr) return;
   if (entry->scaledPixels) {
     imageCacheBytes_ -= entry->scaledPixelsBytes;
@@ -1731,6 +1732,8 @@ void GfxRenderer::buildScaledBitmap(CachedBitmap* entry, const int targetW, cons
     LOG_ERR("GFX", "Scaled bitmap OOM: %u bytes", static_cast<unsigned>(scaledBytes));
     entry->scaledWidth = 0;
     entry->scaledHeight = 0;
+    entry->scaledCropX = 0.0f;
+    entry->scaledCropY = 0.0f;
     return;
   }
   // 0xFF = "all white" in our 1bpp scheme (bit 1 = white). We OR in zeros
@@ -1738,17 +1741,28 @@ void GfxRenderer::buildScaledBitmap(CachedBitmap* entry, const int targetW, cons
   memset(scaled.get(), 0xFF, scaledBytes);
 
   const int srcStride = (entry->width + 3) / 4;
-  const float xRatio = static_cast<float>(entry->width) / static_cast<float>(targetW);
-  const float yRatio = static_cast<float>(entry->height) / static_cast<float>(targetH);
+  // CrumBLE: aspect-fill crop support. cropX/cropY (0.0-1.0) trim the
+  // source's long axis evenly from both sides before scaling, so the
+  // scaled output exactly fills (targetW x targetH) without
+  // letterboxing. cropX=0, cropY=0 (default) reproduces the legacy
+  // aspect-fit behaviour: full source mapped 1:1 into target.
+  const float clampedCropX = std::clamp(cropX, 0.0f, 0.99f);
+  const float clampedCropY = std::clamp(cropY, 0.0f, 0.99f);
+  const float visibleSrcW = static_cast<float>(entry->width) * (1.0f - clampedCropX);
+  const float visibleSrcH = static_cast<float>(entry->height) * (1.0f - clampedCropY);
+  const float srcXOffset = static_cast<float>(entry->width) * clampedCropX * 0.5f;
+  const float srcYOffset = static_cast<float>(entry->height) * clampedCropY * 0.5f;
+  const float xRatio = visibleSrcW / static_cast<float>(targetW);
+  const float yRatio = visibleSrcH / static_cast<float>(targetH);
 
   for (int ty = 0; ty < targetH; ++ty) {
-    const int srcRenderY = static_cast<int>(ty * yRatio);
+    const int srcRenderY = static_cast<int>(srcYOffset + ty * yRatio);
     const int srcRow = entry->topDown ? srcRenderY : (entry->height - 1 - srcRenderY);
     const int clampedRow = std::clamp(srcRow, 0, entry->height - 1);
     const uint8_t* srcRowPtr = entry->pixels.get() + clampedRow * srcStride;
     uint8_t* dstRowPtr = scaled.get() + ty * scaledStride;
     for (int tx = 0; tx < targetW; ++tx) {
-      const int srcX = static_cast<int>(tx * xRatio);
+      const int srcX = std::clamp(static_cast<int>(srcXOffset + tx * xRatio), 0, entry->width - 1);
       // 2bpp packed pixel: 4 pixels per source byte, MSB first.
       const uint8_t val = (srcRowPtr[srcX / 4] >> (6 - ((srcX * 2) % 8))) & 0x3;
       if (val < 3) {  // 0-2 = darker than full white; render as black
@@ -1761,33 +1775,42 @@ void GfxRenderer::buildScaledBitmap(CachedBitmap* entry, const int targetW, cons
   entry->scaledPixelsBytes = scaledBytes;
   entry->scaledWidth = targetW;
   entry->scaledHeight = targetH;
+  entry->scaledCropX = clampedCropX;
+  entry->scaledCropY = clampedCropY;
   imageCacheBytes_ += scaledBytes;
 }
 
 template <bool Opaque>
 bool GfxRenderer::drawCachedBitmap(const char* path, const int x, const int y, const int maxWidth,
-                                   const int maxHeight, const int cornerRadius) const {
-  return drawCachedBitmap<Opaque>(lookupCachedBitmap(path), x, y, maxWidth, maxHeight, cornerRadius);
+                                   const int maxHeight, const float cropX, const float cropY,
+                                   const int cornerRadius) const {
+  return drawCachedBitmap<Opaque>(lookupCachedBitmap(path), x, y, maxWidth, maxHeight, cropX, cropY, cornerRadius);
 }
 
 template <bool Opaque>
 bool GfxRenderer::drawCachedBitmap(CachedBitmap* entry, const int x, const int y, const int maxWidth,
-                                   const int maxHeight, const int cornerRadius) const {
+                                   const int maxHeight, const float cropX, const float cropY,
+                                   const int cornerRadius) const {
   if (entry == nullptr) return false;
   if (fontCacheManager_ && fontCacheManager_->isScanning()) return true;  // text-scan pass, no painting
 
-  float scale = 1.0f;
-  if (maxWidth > 0 && entry->width > maxWidth)
-    scale = static_cast<float>(maxWidth) / static_cast<float>(entry->width);
-  if (maxHeight > 0 && entry->height > maxHeight)
-    scale = std::min(scale, static_cast<float>(maxHeight) / static_cast<float>(entry->height));
-
-  const int targetW = static_cast<int>(entry->width * scale);
-  const int targetH = static_cast<int>(entry->height * scale);
+  // (maxWidth, maxHeight) is treated as the EXACT target rect. Caller is
+  // responsible for choosing dims that match the source aspect (for
+  // letterbox-free aspect-fit) or for passing cropX/cropY to trim the
+  // source's long axis (aspect-fill). Skipping the cache's own aspect
+  // math keeps the contract simple: scaled output is always exactly
+  // (maxWidth, maxHeight).
+  const int targetW = maxWidth;
+  const int targetH = maxHeight;
   if (targetW <= 0 || targetH <= 0) return false;
 
-  if (!entry->scaledPixels || entry->scaledWidth != targetW || entry->scaledHeight != targetH) {
-    buildScaledBitmap(entry, targetW, targetH);
+  // Cache invalidation also keys on cropX/cropY: a re-render with a
+  // different crop at the same target size must rebuild.
+  constexpr float kCropEpsilon = 1e-4f;
+  const bool cropChanged =
+      std::abs(entry->scaledCropX - cropX) > kCropEpsilon || std::abs(entry->scaledCropY - cropY) > kCropEpsilon;
+  if (!entry->scaledPixels || entry->scaledWidth != targetW || entry->scaledHeight != targetH || cropChanged) {
+    buildScaledBitmap(entry, targetW, targetH, cropX, cropY);
   }
   if (!entry->scaledPixels) return false;
 
@@ -1933,10 +1956,10 @@ bool GfxRenderer::drawCachedBitmap(CachedBitmap* entry, const int x, const int y
 // Explicit template instantiations -- the blit specializations live here so
 // callers in other translation units can call drawCachedBitmap without
 // pulling the full body into their includes.
-template bool GfxRenderer::drawCachedBitmap<false>(const char*, int, int, int, int, int) const;
-template bool GfxRenderer::drawCachedBitmap<true>(const char*, int, int, int, int, int) const;
-template bool GfxRenderer::drawCachedBitmap<false>(CachedBitmap*, int, int, int, int, int) const;
-template bool GfxRenderer::drawCachedBitmap<true>(CachedBitmap*, int, int, int, int, int) const;
+template bool GfxRenderer::drawCachedBitmap<false>(const char*, int, int, int, int, float, float, int) const;
+template bool GfxRenderer::drawCachedBitmap<true>(const char*, int, int, int, int, float, float, int) const;
+template bool GfxRenderer::drawCachedBitmap<false>(CachedBitmap*, int, int, int, int, float, float, int) const;
+template bool GfxRenderer::drawCachedBitmap<true>(CachedBitmap*, int, int, int, int, float, float, int) const;
 
 void GfxRenderer::drawPerspectiveBitmap(const Bitmap& bitmap, const int x, const int y, const int w, const int hL,
                                         const int hR) const {
