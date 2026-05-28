@@ -5,6 +5,7 @@
 #include <Logging.h>
 #include <cstring>
 
+#include "../reader/EpubReaderActivity.h"  // prewarmReaderTextBuffer
 #include "CrossPointSettings.h"
 #include "DeviceProfiles.h"
 #include "MappedInputManager.h"
@@ -43,6 +44,12 @@ void BluetoothSettingsActivity::onEnter() {
   // Restore Bluetooth persistent state on entry
   if (SETTINGS.bluetoothEnabled && !btMgr->isEnabled()) {
     LOG_INF("BT", "Restoring Bluetooth from settings (enabled)");
+    // CrumBLE Phase 1 fast-open: pre-grow the reader glyph buffer before
+    // NimBLE claims its ~58 KB. Without this, the first text page after
+    // returning to the reader can't allocate its page buffer, glyphs
+    // starve, and BLE supervision-timeouts within seconds. Cheap no-op
+    // when we're not in a reader context.
+    EpubReaderActivity::prewarmReaderTextBuffer(renderer);
     if (btMgr->enable()) {
       lastError = "Bluetooth restored";
     } else {
@@ -185,6 +192,10 @@ void BluetoothSettingsActivity::handleMainMenuInput() {
         }
       } else {
         LOG_INF("BT", "Enabling Bluetooth...");
+        // CrumBLE Phase 1 fast-open: pre-grow the reader glyph buffer
+        // before NimBLE eats heap. See onEnter restore above for the
+        // full reasoning.
+        EpubReaderActivity::prewarmReaderTextBuffer(renderer);
         if (btMgr->enable()) {
           lastError = "Bluetooth enabled";
           SETTINGS.bluetoothEnabled = 1;
