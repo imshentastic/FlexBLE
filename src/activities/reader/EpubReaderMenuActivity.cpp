@@ -10,6 +10,7 @@
 #include "../settings/BluetoothSettingsActivity.h"
 #include "../util/ConfirmationActivity.h"
 #include "CrossPointSettings.h"
+#include "EpubReaderActivity.h"  // prewarmReaderTextBuffer
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -177,6 +178,11 @@ void EpubReaderMenuActivity::loop() {
                                settingsChanged = settingsChanged || haveReaderLayoutSettingsChanged(before);
                                pendingOrientation = SETTINGS.orientation;  // sync in case orientation changed
                                if (bleWasOn) {
+                                 // CrumBLE Phase 1 fast-open: pre-grow the glyph
+                                 // buffer before the deferred enable drains, so
+                                 // NimBLE init doesn't race a cold-buffer first
+                                 // text-page render.
+                                 EpubReaderActivity::prewarmReaderTextBuffer(renderer);
                                  // Deferred: drained on the main loop AFTER any pending
                                  // re-layout from settings changes finishes. Prevents
                                  // NimBLE init from racing the section rebuild.

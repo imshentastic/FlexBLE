@@ -163,6 +163,33 @@ class EpubReaderActivity final : public Activity {
   // edge detector below to decide whether to prompt the user to switch to
   // the prepared layout when they connect a remote.
   std::optional<PxcManifest> pxcManifest_;
+
+  // CrumBLE Phase 1 fast-open: non-critical onEnter work (font buffer
+  // pre-grow, reader-settings cache build, .pxc manifest parse) is
+  // deferred to the first loop() tick AFTER the first render. Net
+  // saving: ~30-50 ms off tap-to-first-pixel. The deferred steps are
+  // BLE-protective (prevent heap-fragmentation during reading) but BLE
+  // can't pair faster than the first-render window, so deferring is
+  // safe. firstRenderCompleted_ flips at the bottom of render(); loop()
+  // checks both flags and calls runDeferredOnEnter() exactly once.
+  bool deferredOnEnterPending_ = false;
+  bool firstRenderCompleted_ = false;
+  void runDeferredOnEnter();
+
+ public:
+  // CrumBLE Phase 1 fast-open: pre-grow the reader's glyph decompression
+  // buffer to its high-water mark, then drop the prewarm's page-slot
+  // buffers. Must be called before any BT-enable from inside the reader
+  // -- without a pre-grown buffer, NimBLE's ~58 KB heap claim fragments
+  // the heap and the first text-page glyph group can't allocate the
+  // ~6 KB decompression buffer, starving glyphs and dropping the BT
+  // link within a page or two. Used to run at book-open unconditionally
+  // (~20 ms penalty for every book open); now only fires when the user
+  // actually enables BT, inside the "Connecting Bluetooth..." popup
+  // window where it's invisible. Static so callers from the drawer,
+  // reader menu, and other reader-context activities can all reach it
+  // without an instance pointer.
+  static void prewarmReaderTextBuffer(GfxRenderer& renderer);
   // Edge tracker: set true when a remote actually links (NimBLE handshake
   // completes), false when it drops. Manifest mismatch check fires on the
   // 0 -> 1 transition + stability window. Distinct from btWasEnabled --

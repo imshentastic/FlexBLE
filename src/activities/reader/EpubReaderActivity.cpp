@@ -343,97 +343,17 @@ void EpubReaderActivity::onEnter() {
   // NOTE: This affects layout math and must be applied before any render calls.
   ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
 
-  // CrumBLE: pre-grow the glyph decompression buffer to its high-water mark now,
-  // while BLE is off and the heap is unfragmented. The buffer is held across
-  // pages, but it only grows when a group is first decompressed -- so opening on a
-  // cover/image page (no text) and connecting a BT remote before the first text
-  // page leaves it ungrown, and under NimBLE's fragmentation the first text page
-  // then can't allocate the ~6 KB group buffer, starving glyphs and dropping the
-  // link within a page or two. Decompressing a sample of common glyphs across the
-  // four styles here makes the buffer ready no matter which page BT connects on.
-  if (auto* fcm = renderer.getFontCacheManager()) {
-    fcm->prewarmCache(SETTINGS.getReaderFontId(),
-                      "etaoinshrdlucmfwypvbgkjqxzETAOINSHRDLUCMFWYP.,;:'\"!?-0123456789", 0x0F);
-    // Drop the prewarm's page-slot buffers immediately. We only need this prewarm
-    // to grow the *shared glyph-group buffer* to its high-water mark -- clearCache
-    // keeps that capacity via invalidateHotGroup. Leaving the four sample-string
-    // slot.buffers held (~10-15 KB total) would fragment the heap right before the
-    // first chapter's image extraction, dropping maxAlloc below the JPEG decoder
-    // threshold and suppressing images at book-open even with BT off.
-    fcm->clearCache();
-  }
-
-  // CrumBLE: build the reader-category settings list once now, while heap is
-  // unfragmented (same window the prewarm depends on -- BLE not yet eating
-  // 58 KB, no chapter decoded yet). The drawer references this cache instead
-  // of rebuilding under BLE pressure, which used to OOM-crash on a fragmented
-  // heap. Skip if heap is already tight -- the drawer's own local gate will
-  // fall back to its actions-only list, same as before. Tracking BLE state
-  // too because mid-book Reader Activity re-entry (e.g. returning from a
-  // settings sub-activity) can hit this with BLE already connected; in that
-  // rare case we prefer the safe skip over a doomed build.
+  // CrumBLE fast-open: clear deferred state. The font-buffer pre-grow
+  // is no longer eagerly done here at all -- it's a BLE-only safety
+  // net, so we run it inline at each BT-enable call site instead
+  // (drawer Quick Connect, reader main menu BT toggle, manifest-prompt
+  // accept, post-layout re-enable). Non-BT users never pay the cost;
+  // BT users pay it inside the "Connecting Bluetooth..." popup window
+  // where it's invisible.
   readerSettingsCache_.clear();
-  {
-    const auto heap = MemoryBudget::snapshot();
-    if (MemoryBudget::hasHeap(heap, 40u * 1024u, 20u * 1024u)) {
-      auto all = getSettingsList(&sdFontSystem.registry());
-      readerSettingsCache_.reserve(20);
-      for (auto& s : all) {
-        if (s.category == StrId::STR_CAT_READER) {
-          readerSettingsCache_.push_back(std::move(s));
-        }
-      }
-      readerSettingsCache_.shrink_to_fit();
-      LOG_INF("ERA", "Cached %u reader settings (heap free=%u maxAlloc=%u)",
-              static_cast<unsigned>(readerSettingsCache_.size()), heap.freeHeap, heap.maxAllocHeap);
-    } else {
-      LOG_INF("ERA", "Skipping reader-settings cache build; heap too tight (free=%u maxAlloc=%u)",
-              heap.freeHeap, heap.maxAllocHeap);
-    }
-  }
-
-  // CrumBLE: parse the optimizer's .pxc manifest if the book has one. Path is
-  // META-INF/crumble-pxc.json (standard EPUB metadata directory). Contents
-  // mirror the /api/reader-render-info snapshot the optimizer used at bake
-  // time. We hold the parsed fields until book close so the BLE-link edge
-  // detector in loop() can prompt the user to switch layouts when needed.
   pxcManifest_.reset();
-  {
-    const std::string manifestPath = "META-INF/crumble-pxc.json";
-    size_t manifestSize = 0;
-    if (epub->getItemSize(manifestPath, &manifestSize) && manifestSize > 0 && manifestSize < 2048) {
-      uint8_t* manifestBytes = epub->readItemContentsToBytes(manifestPath, &manifestSize);
-      if (manifestBytes) {
-        JsonDocument doc;
-        const DeserializationError err = deserializeJson(doc, manifestBytes, manifestSize);
-        if (!err) {
-          PxcManifest m;
-          m.orientation = doc["orientation"] | 0;
-          m.screenMargin = doc["screenMargin"] | 0;
-          m.imageRendering = doc["imageRendering"] | 0;
-          m.fontId = doc["fontId"] | 0;
-          m.viewportW = doc["viewportWidth"] | 0;
-          m.viewportH = doc["viewportHeight"] | 0;
-          m.screenW = doc["screenWidth"] | 0;
-          m.screenH = doc["screenHeight"] | 0;
-          m.pxcCount = doc["pxcCount"] | 0;
-          m.fontFamily = doc["fontFamily"] | 0;
-          m.fontSize = doc["fontSize"] | 0;
-          m.sdFontSizeRange = doc["sdFontSizeRange"] | 0;
-          if (doc["sdFontFamilyName"].is<const char*>()) {
-            m.sdFontFamilyName = doc["sdFontFamilyName"].as<const char*>();
-          }
-          pxcManifest_ = m;
-          LOG_INF("ERA", "Loaded .pxc manifest: %u images, viewport %ux%u, fontId=%ld",
-                  static_cast<unsigned>(m.pxcCount), static_cast<unsigned>(m.viewportW),
-                  static_cast<unsigned>(m.viewportH), static_cast<long>(m.fontId));
-        } else {
-          LOG_INF("ERA", "Failed to parse .pxc manifest: %s", err.c_str());
-        }
-        free(manifestBytes);
-      }
-    }
-  }
+  deferredOnEnterPending_ = true;
+  firstRenderCompleted_ = false;
   // Reset BLE-link edge state on every book open: a fresh book may have a
   // different manifest (or none), and any prior link tracking is stale.
   btWasLinked_ = false;
@@ -527,6 +447,104 @@ void EpubReaderActivity::onEnter() {
 
   // Trigger first update
   requestUpdate();
+}
+
+// CrumBLE Phase 1 fast-open: pre-grow the glyph decompression buffer.
+// Called inline at every BT-enable site so the buffer is ready before
+// NimBLE eats heap. See header for the full rationale.
+void EpubReaderActivity::prewarmReaderTextBuffer(GfxRenderer& renderer) {
+  auto* fcm = renderer.getFontCacheManager();
+  if (!fcm) return;
+  fcm->prewarmCache(SETTINGS.getReaderFontId(),
+                    "etaoinshrdlucmfwypvbgkjqxzETAOINSHRDLUCMFWYP.,;:'\"!?-0123456789", 0x0F);
+  // Drop the prewarm's page-slot buffers immediately. We only need the
+  // prewarm to grow the *shared glyph-group buffer* to its high-water
+  // mark -- clearCache keeps that capacity via invalidateHotGroup.
+  // Leaving the four sample-string slot buffers held (~10-15 KB total)
+  // would fragment the heap right before NimBLE's allocation pass and
+  // partially defeat the protection we're trying to add.
+  fcm->clearCache();
+}
+
+// CrumBLE Phase 1 fast-open: ran from loop() once the first render has
+// completed. Holds the (non-BLE-critical) work that used to sit in onEnter
+// and added latency to tap-to-first-pixel. The font-buffer pre-grow used
+// to live here -- it now runs only at the actual BT-enable call sites
+// (drawer Quick Connect, reader main menu BT toggle, etc.) so the cost
+// is paid inside the "Connecting Bluetooth..." popup window where it's
+// invisible, instead of at every book open.
+void EpubReaderActivity::runDeferredOnEnter() {
+  if (!epub) return;
+
+  // CrumBLE: build the reader-category settings list once now, while heap is
+  // unfragmented (same window the prewarm depends on -- BLE not yet eating
+  // 58 KB, no chapter decoded yet). The drawer references this cache instead
+  // of rebuilding under BLE pressure, which used to OOM-crash on a fragmented
+  // heap. Skip if heap is already tight -- the drawer's own local gate will
+  // fall back to its actions-only list, same as before. Tracking BLE state
+  // too because mid-book Reader Activity re-entry (e.g. returning from a
+  // settings sub-activity) can hit this with BLE already connected; in that
+  // rare case we prefer the safe skip over a doomed build.
+  {
+    const auto heap = MemoryBudget::snapshot();
+    if (MemoryBudget::hasHeap(heap, 40u * 1024u, 20u * 1024u)) {
+      auto all = getSettingsList(&sdFontSystem.registry());
+      readerSettingsCache_.reserve(20);
+      for (auto& s : all) {
+        if (s.category == StrId::STR_CAT_READER) {
+          readerSettingsCache_.push_back(std::move(s));
+        }
+      }
+      readerSettingsCache_.shrink_to_fit();
+      LOG_INF("ERA", "Cached %u reader settings (heap free=%u maxAlloc=%u)",
+              static_cast<unsigned>(readerSettingsCache_.size()), heap.freeHeap, heap.maxAllocHeap);
+    } else {
+      LOG_INF("ERA", "Skipping reader-settings cache build; heap too tight (free=%u maxAlloc=%u)",
+              heap.freeHeap, heap.maxAllocHeap);
+    }
+  }
+
+  // CrumBLE: parse the optimizer's .pxc manifest if the book has one. Path is
+  // META-INF/crumble-pxc.json (standard EPUB metadata directory). Contents
+  // mirror the /api/reader-render-info snapshot the optimizer used at bake
+  // time. We hold the parsed fields until book close so the BLE-link edge
+  // detector in loop() can prompt the user to switch layouts when needed.
+  {
+    const std::string manifestPath = "META-INF/crumble-pxc.json";
+    size_t manifestSize = 0;
+    if (epub->getItemSize(manifestPath, &manifestSize) && manifestSize > 0 && manifestSize < 2048) {
+      uint8_t* manifestBytes = epub->readItemContentsToBytes(manifestPath, &manifestSize);
+      if (manifestBytes) {
+        JsonDocument doc;
+        const DeserializationError err = deserializeJson(doc, manifestBytes, manifestSize);
+        if (!err) {
+          PxcManifest m;
+          m.orientation = doc["orientation"] | 0;
+          m.screenMargin = doc["screenMargin"] | 0;
+          m.imageRendering = doc["imageRendering"] | 0;
+          m.fontId = doc["fontId"] | 0;
+          m.viewportW = doc["viewportWidth"] | 0;
+          m.viewportH = doc["viewportHeight"] | 0;
+          m.screenW = doc["screenWidth"] | 0;
+          m.screenH = doc["screenHeight"] | 0;
+          m.pxcCount = doc["pxcCount"] | 0;
+          m.fontFamily = doc["fontFamily"] | 0;
+          m.fontSize = doc["fontSize"] | 0;
+          m.sdFontSizeRange = doc["sdFontSizeRange"] | 0;
+          if (doc["sdFontFamilyName"].is<const char*>()) {
+            m.sdFontFamilyName = doc["sdFontFamilyName"].as<const char*>();
+          }
+          pxcManifest_ = m;
+          LOG_INF("ERA", "Loaded .pxc manifest: %u images, viewport %ux%u, fontId=%ld",
+                  static_cast<unsigned>(m.pxcCount), static_cast<unsigned>(m.viewportW),
+                  static_cast<unsigned>(m.viewportH), static_cast<long>(m.fontId));
+        } else {
+          LOG_INF("ERA", "Failed to parse .pxc manifest: %s", err.c_str());
+        }
+        free(manifestBytes);
+      }
+    }
+  }
 }
 
 void EpubReaderActivity::onExit() {
@@ -623,6 +641,16 @@ void EpubReaderActivity::loop() {
     // Should never happen
     finish();
     return;
+  }
+
+  // CrumBLE Phase 1 fast-open: deferred init runs the first time loop()
+  // ticks AFTER the first render lands. Pays the font-buffer pre-grow +
+  // settings cache + .pxc manifest parse here (~30-50 ms) so they don't
+  // delay tap-to-first-pixel. Idempotent guard: deferredOnEnterPending_
+  // flips false on the first run so subsequent ticks skip.
+  if (deferredOnEnterPending_ && firstRenderCompleted_) {
+    deferredOnEnterPending_ = false;
+    runDeferredOnEnter();
   }
 
   // A chapter layout aborted under BLE pressure and we requested a BLE disable.
@@ -865,6 +893,10 @@ void EpubReaderActivity::loop() {
     {
       RenderLock lock(*this);
       GUI.drawPopup(renderer, tr(STR_BT_CONNECTING));
+      // CrumBLE Phase 1 fast-open: pre-grow the glyph buffer NOW, before
+      // NimBLE eats heap. Cost (~20 ms) hides inside the Connecting
+      // popup window we just drew.
+      prewarmReaderTextBuffer(renderer);
       if (!btMgr.isEnabled()) btMgr.enable();
       btMgr.connectToDevice(SETTINGS.bleBondedDeviceAddr);
     }
@@ -2399,6 +2431,11 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     pendingScreenshot = false;
     ScreenshotUtil::takeScreenshot(renderer);
   }
+
+  // CrumBLE Phase 1 fast-open: flip the gate so loop() picks up the
+  // deferred init on the next tick. Only the FIRST render needs to set
+  // this -- subsequent re-renders idempotently keep it true.
+  firstRenderCompleted_ = true;
 }
 
 void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportWidth, const uint16_t viewportHeight) {
@@ -2555,6 +2592,10 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   if (bleReEnableHeldForImagePage && !imageRepaintUnsafeNow) {
     bleReEnableHeldForImagePage = false;
     LOG_INF("ERS", "Clean BLE-safe render after rebuild (images cached); re-enabling BLE for bonded remote reconnect");
+    // CrumBLE Phase 1 fast-open: pre-grow the glyph buffer before the
+    // queued enable drains. NimBLE starts initializing on the next loop
+    // tick; the buffer needs to be at high-water by then.
+    prewarmReaderTextBuffer(renderer);
     BluetoothHIDManager::getInstance().requestEnableLater();
   }
 

@@ -11,6 +11,7 @@
 
 #include "../util/ConfirmationActivity.h"
 #include "CrossPointSettings.h"
+#include "EpubReaderActivity.h"  // prewarmReaderTextBuffer
 #include "MappedInputManager.h"
 #include "SettingsList.h"
 #include "components/UITheme.h"
@@ -119,6 +120,11 @@ void BookSettingsDrawerActivity::onExit() {
   // change to re-layout for); approximate via settingsChanged.
   auto& bt = BluetoothHIDManager::getInstance();
   if (bleWasEnabledOnEntry_ && !bt.isEnabled() && settingsChanged) {
+    // CrumBLE Phase 1 fast-open: pre-grow the glyph buffer before the
+    // deferred enable drains. The drawer dropped BLE on entry to apply
+    // a layout change; the post-layout re-enable needs the buffer at
+    // high-water mark before NimBLE eats heap.
+    EpubReaderActivity::prewarmReaderTextBuffer(renderer);
     bt.requestEnableLater();
   }
 }
