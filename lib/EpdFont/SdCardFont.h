@@ -242,6 +242,12 @@ class SdCardFont {
   void freeStyleKernLigatureData(PerStyle& s);
   void freeStyleMiniKern(PerStyle& s);
   bool loadStyleKernLigatureData(PerStyle& s);
+  // Lazy-load fullIntervals for a style. Returns true if intervals are
+  // resident after the call. Cheap when already loaded (no-op). Called
+  // from any code path that's about to consult an interval -- prewarm,
+  // advance fetch, glyph miss -- so a multi-style .cpfont only pays
+  // for the styles actually rendered.
+  bool ensureStyleIntervalsLoaded(uint8_t styleIdx);
   bool buildMiniKernMatrix(PerStyle& s, const uint32_t* codepoints, uint32_t cpCount);
   void applyKernLigaturePointers(PerStyle& s, EpdFontData& data) const;
   void applyGlyphMissCallback(uint8_t styleIdx);

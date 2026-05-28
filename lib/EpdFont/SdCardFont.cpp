@@ -248,6 +248,76 @@ bool SdCardFont::loadStyleKernLigatureData(PerStyle& s) {
   return true;
 }
 
+// --- Lazy per-style interval loader (CrumBLE, port from rhythmerc bb303d7) ---
+
+// fullIntervals are allocated and read on first access. Validation runs once
+// here; subsequent calls are a cheap null check. Failures clear the partial
+// allocation so a retry path stays consistent.
+bool SdCardFont::ensureStyleIntervalsLoaded(uint8_t styleIdx) {
+  if (styleIdx >= MAX_STYLES) return false;
+  auto& s = styles_[styleIdx];
+  if (!s.present) return false;
+  if (s.fullIntervals) return true;
+
+  FsFile file;
+  if (!Storage.openFileForRead("SDCF", filePath_, file)) {
+    LOG_ERR("SDCF", "Failed to open .cpfont for intervals: %s", filePath_);
+    return false;
+  }
+
+  s.fullIntervals = new (std::nothrow) EpdUnicodeInterval[s.header.intervalCount];
+  if (!s.fullIntervals) {
+    LOG_ERR("SDCF", "Failed to allocate %u intervals for style %u", s.header.intervalCount, styleIdx);
+    return false;
+  }
+
+  if (!file.seekSet(s.intervalsFileOffset)) {
+    LOG_ERR("SDCF", "Failed to seek to intervals for style %u", styleIdx);
+    delete[] s.fullIntervals;
+    s.fullIntervals = nullptr;
+    return false;
+  }
+  const size_t intervalsBytes = s.header.intervalCount * sizeof(EpdUnicodeInterval);
+  if (file.read(reinterpret_cast<uint8_t*>(s.fullIntervals), intervalsBytes) != static_cast<int>(intervalsBytes)) {
+    LOG_ERR("SDCF", "Failed to read intervals for style %u", styleIdx);
+    delete[] s.fullIntervals;
+    s.fullIntervals = nullptr;
+    return false;
+  }
+
+  // Validate interval contents before any later code (findGlobalGlyphIndex,
+  // glyph reads) trusts them. A malformed file could otherwise drive
+  // out-of-range glyph indices into bogus on-disk reads.
+  uint32_t expectedOffset = 0;
+  uint32_t prevLast = 0;
+  for (uint32_t j = 0; j < s.header.intervalCount; ++j) {
+    const auto& iv = s.fullIntervals[j];
+    if (iv.first > iv.last) {
+      LOG_ERR("SDCF", "Style %u: invalid interval %u (first 0x%lX > last 0x%lX)", styleIdx, j,
+              static_cast<unsigned long>(iv.first), static_cast<unsigned long>(iv.last));
+      delete[] s.fullIntervals;
+      s.fullIntervals = nullptr;
+      return false;
+    }
+    const uint32_t span = iv.last - iv.first + 1;
+    const bool overlapsPrev = (j > 0 && iv.first <= prevLast);
+    const bool spanTooBig = (span > s.header.glyphCount);
+    const bool offsetMismatch = (iv.offset != expectedOffset);
+    const bool offsetOverruns = (iv.offset > s.header.glyphCount - span);
+    if (overlapsPrev || spanTooBig || offsetMismatch || offsetOverruns) {
+      LOG_ERR("SDCF", "Style %u: invalid interval layout at %u (overlap=%d span=%u offMis=%d offOver=%d)", styleIdx, j,
+              overlapsPrev, span, offsetMismatch, offsetOverruns);
+      delete[] s.fullIntervals;
+      s.fullIntervals = nullptr;
+      return false;
+    }
+    expectedOffset += span;
+    prevLast = iv.last;
+  }
+
+  return true;
+}
+
 // --- Per-page mini kern matrix ---
 
 // Local copy of EpdFont.cpp's lookupKernClass (that one is file-static there).
@@ -528,61 +598,14 @@ bool SdCardFont::load(const char* path) {
   styleCount_ = styleCount;
   contentHash_ = hash;
 
-  // Load full intervals into RAM for each present style
+  // Initialize per-style stub data and glyph-miss callback. fullIntervals are
+  // NOT allocated here -- they're lazy per style (see ensureStyleIntervalsLoaded)
+  // so a multi-style .cpfont only pays for the styles actually rendered. On a
+  // theme like RoundedRaff (4 styles x 4 deduped fonts x ~150 intervals x 12
+  // bytes = ~28KB), an activity that only uses Regular saves ~21KB at boot.
   for (uint8_t i = 0; i < MAX_STYLES; i++) {
     auto& s = styles_[i];
     if (!s.present) continue;
-
-    s.fullIntervals = new (std::nothrow) EpdUnicodeInterval[s.header.intervalCount];
-    if (!s.fullIntervals) {
-      LOG_ERR("SDCF", "Failed to allocate %u intervals for style %u", s.header.intervalCount, i);
-      freeAll();
-      return false;
-    }
-
-    if (!file.seekSet(s.intervalsFileOffset)) {
-      LOG_ERR("SDCF", "Failed to seek to intervals for style %u", i);
-      freeAll();
-      return false;
-    }
-    size_t intervalsBytes = s.header.intervalCount * sizeof(EpdUnicodeInterval);
-    if (file.read(reinterpret_cast<uint8_t*>(s.fullIntervals), intervalsBytes) != static_cast<int>(intervalsBytes)) {
-      LOG_ERR("SDCF", "Failed to read intervals for style %u", i);
-      freeAll();
-      return false;
-    }
-
-    // Validate interval contents before any later code (findGlobalGlyphIndex,
-    // glyph reads) trusts them. A malformed file could otherwise drive
-    // out-of-range glyph indices into bogus on-disk reads.
-    {
-      uint32_t expectedOffset = 0;
-      uint32_t prevLast = 0;
-      for (uint32_t j = 0; j < s.header.intervalCount; ++j) {
-        const auto& iv = s.fullIntervals[j];
-        if (iv.first > iv.last) {
-          LOG_ERR("SDCF", "Style %u: invalid interval %u (first 0x%lX > last 0x%lX)", i, j,
-                  static_cast<unsigned long>(iv.first), static_cast<unsigned long>(iv.last));
-          file.close();
-          freeAll();
-          return false;
-        }
-        const uint32_t span = iv.last - iv.first + 1;
-        const bool overlapsPrev = (j > 0 && iv.first <= prevLast);
-        const bool spanTooBig = (span > s.header.glyphCount);
-        const bool offsetMismatch = (iv.offset != expectedOffset);
-        const bool offsetOverruns = (iv.offset > s.header.glyphCount - span);
-        if (overlapsPrev || spanTooBig || offsetMismatch || offsetOverruns) {
-          LOG_ERR("SDCF", "Style %u: invalid interval layout at %u (overlap=%d span=%u offMis=%d offOver=%d)", i, j,
-                  overlapsPrev, span, offsetMismatch, offsetOverruns);
-          file.close();
-          freeAll();
-          return false;
-        }
-        expectedOffset += span;
-        prevLast = iv.last;
-      }
-    }
 
     // Initialize stub data
     memset(&s.stubData, 0, sizeof(s.stubData));
@@ -734,6 +757,9 @@ int SdCardFont::prewarm(const char* utf8Text, uint8_t styleMask, bool metadataOn
 }
 
 int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint32_t cpCount, bool metadataOnly) {
+  if (!ensureStyleIntervalsLoaded(styleIdx)) {
+    return static_cast<int>(cpCount);
+  }
   auto& s = styles_[styleIdx];
 
   // Map codepoints to global glyph indices for this style
@@ -1080,6 +1106,10 @@ int SdCardFont::fetchAdvancesForCodepoints(uint32_t* codepoints, uint32_t cpCoun
   int totalMissed = 0;
   for (uint8_t si = 0; si < MAX_STYLES; si++) {
     if (!(styleMask & (1 << si)) || !styles_[si].present) continue;
+    if (!ensureStyleIntervalsLoaded(si)) {
+      totalMissed += static_cast<int>(cpCount);
+      continue;
+    }
     const auto& s = styles_[si];
 
     // Stop fetching once the cache is full — further inserts would be dropped
@@ -1280,8 +1310,8 @@ const EpdGlyph* SdCardFont::onGlyphMiss(void* ctx, uint32_t codepoint) {
   uint8_t styleIdx = oc->styleIdx;
 
   if (!self->loaded_ || styleIdx >= MAX_STYLES || !self->styles_[styleIdx].present) return nullptr;
+  if (!self->ensureStyleIntervalsLoaded(styleIdx)) return nullptr;
   const auto& s = self->styles_[styleIdx];
-  if (!s.fullIntervals) return nullptr;
 
   // Check overflow cache first (matching both codepoint and style)
   for (uint32_t i = 0; i < self->overflowCount_; i++) {
