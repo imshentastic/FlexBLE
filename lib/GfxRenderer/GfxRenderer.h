@@ -142,6 +142,16 @@ class GfxRenderer {
   void drawPixelDither(int x, int y) const;
   template <Color color>
   void fillArc(int maxRadius, int cx, int cy, int xDir, int yDir) const;
+  // CrumBLE Phase 2: byte-aligned rectangle fill (rhythmerc/crosspoint port).
+  // Clips, rotates the two opposing logical corners into physical-framebuffer
+  // space, then walks each physical row with head-mask + memset middle +
+  // tail-mask byte writes -- no per-pixel rotate, no per-pixel RMW. For
+  // dither colors (LightGray, DarkGray), the per-row 8-bit pattern is
+  // precomputed from inverse-rotated logical (x, y); within a row the dither
+  // has period 2 so the same byte pattern applies to every full byte. All
+  // fillRect() / fillRectDither() callers dispatch here.
+  template <Color color>
+  void fillRectImpl(int x, int y, int width, int height) const;
 
   // CrumBLE Phase 1: cached-bitmap state. All members are `mutable` because
   // drawCachedBitmap() and lookupCachedBitmap() are exposed as const-on-this

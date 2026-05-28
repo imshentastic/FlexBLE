@@ -870,11 +870,155 @@ void GfxRenderer::drawRoundedRect(const int x, const int y, const int width, con
   }
 }
 
+// CrumBLE Phase 2: dispatch into the byte-aligned template. `state=true`
+// means "draw black" (matches drawPixel's convention). The implementation
+// lives in fillRectImpl<Color> below.
 void GfxRenderer::fillRect(const int x, const int y, const int width, const int height, const bool state) const {
-  for (int fillY = y; fillY < y + height; fillY++) {
-    drawLine(x, fillY, x + width - 1, fillY, state);
+  if (state) {
+    fillRectImpl<Color::Black>(x, y, width, height);
+  } else {
+    fillRectImpl<Color::White>(x, y, width, height);
   }
 }
+
+template <Color C>
+void GfxRenderer::fillRectImpl(const int x, const int y, const int width, const int height) const {
+  if constexpr (C == Color::Clear) return;
+  if (width <= 0 || height <= 0) return;
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
+
+  // Clip in logical space.
+  const int screenW = getScreenWidth();
+  const int screenH = getScreenHeight();
+  const int lx0 = std::max(0, x);
+  const int ly0 = std::max(0, y);
+  const int lx1 = std::min(screenW, x + width);
+  const int ly1 = std::min(screenH, y + height);
+  if (lx0 >= lx1 || ly0 >= ly1) return;
+
+  // Rotate the two opposing logical corners into physical-framebuffer space.
+  // Rotation is rigid (no shear/stretch) so the bbox of the two corners IS
+  // the physical rect we need to fill.
+  int paX, paY, pbX, pbY;
+  rotateCoordinates(orientation, lx0, ly0, &paX, &paY, panelWidth, panelHeight);
+  rotateCoordinates(orientation, lx1 - 1, ly1 - 1, &pbX, &pbY, panelWidth, panelHeight);
+
+  const int phyX0 = std::min(paX, pbX);
+  const int phyX1 = std::max(paX, pbX);  // inclusive
+  const int phyY0 = std::min(paY, pbY);
+  const int phyY1 = std::max(paY, pbY);
+
+  // Bit/byte layout: MSB-first within a byte, so phyX -> bit (7 - (phyX & 7)).
+  // Head/tail masks cover only the in-rect bits of the first/last byte.
+  const int byteStart = phyX0 >> 3;
+  const int byteEnd = phyX1 >> 3;  // inclusive
+  const uint8_t headMask = static_cast<uint8_t>(0xFFu >> (phyX0 & 7));
+  const uint8_t tailMask = static_cast<uint8_t>(0xFFu << (7 - (phyX1 & 7)));
+  const int32_t panelStride = static_cast<int32_t>(panelWidthBytes);
+
+  if constexpr (C == Color::Black || C == Color::White) {
+    // Solid fill. Framebuffer convention: bit 0 = black, bit 1 = white.
+    const uint8_t fillByte = (C == Color::Black) ? 0x00u : 0xFFu;
+    for (int py = phyY0; py <= phyY1; ++py) {
+      uint8_t* row = frameBuffer + static_cast<int32_t>(py) * panelStride;
+      if (byteStart == byteEnd) {
+        const uint8_t mask = headMask & tailMask;
+        if constexpr (C == Color::Black) {
+          row[byteStart] &= static_cast<uint8_t>(~mask);
+        } else {
+          row[byteStart] |= mask;
+        }
+      } else {
+        if constexpr (C == Color::Black) {
+          row[byteStart] &= static_cast<uint8_t>(~headMask);
+          if (byteEnd > byteStart + 1) {
+            memset(row + byteStart + 1, fillByte, byteEnd - byteStart - 1);
+          }
+          row[byteEnd] &= static_cast<uint8_t>(~tailMask);
+        } else {
+          row[byteStart] |= headMask;
+          if (byteEnd > byteStart + 1) {
+            memset(row + byteStart + 1, fillByte, byteEnd - byteStart - 1);
+          }
+          row[byteEnd] |= tailMask;
+        }
+      }
+    }
+  } else {
+    // Dither (LightGray / DarkGray). Pattern has period 2 in logical (x, y).
+    // Within one physical row the dither byte is constant -- precompute it
+    // once and memset it across the row's full bytes. dlxPerPhyX /
+    // dlyPerPhyX encode how logical (x, y) change as phyX increments
+    // (derived from inverting rotateCoordinates).
+    int dlxPerPhyX = 0, dlyPerPhyX = 0;
+    switch (orientation) {
+      case Portrait:                  dlxPerPhyX =  0; dlyPerPhyX =  1; break;
+      case PortraitInverted:          dlxPerPhyX =  0; dlyPerPhyX = -1; break;
+      case LandscapeClockwise:        dlxPerPhyX = -1; dlyPerPhyX =  0; break;
+      case LandscapeCounterClockwise: dlxPerPhyX =  1; dlyPerPhyX =  0; break;
+    }
+
+    for (int py = phyY0; py <= phyY1; ++py) {
+      // Logical (x, y) at bit-7 of the row's starting byte (phyX = byteStart*8).
+      int lxBase = 0, lyBase = 0;
+      switch (orientation) {
+        case Portrait:
+          lxBase = panelHeight - 1 - py;
+          lyBase = byteStart * 8;
+          break;
+        case PortraitInverted:
+          lxBase = py;
+          lyBase = panelWidth - 1 - byteStart * 8;
+          break;
+        case LandscapeClockwise:
+          lxBase = panelWidth - 1 - byteStart * 8;
+          lyBase = panelHeight - 1 - py;
+          break;
+        case LandscapeCounterClockwise:
+          lxBase = byteStart * 8;
+          lyBase = py;
+          break;
+      }
+
+      // Build the row's "black bitmask" by walking 8 bit positions.
+      uint8_t blackMask = 0;
+      for (int b = 0; b < 8; ++b) {
+        const int lx = lxBase + b * dlxPerPhyX;
+        const int ly = lyBase + b * dlyPerPhyX;
+        bool isBlack;
+        if constexpr (C == Color::LightGray) {
+          isBlack = ((lx & 1) == 0) && ((ly & 1) == 0);
+        } else {  // DarkGray
+          isBlack = (((lx + ly) & 1) == 0);
+        }
+        if (isBlack) blackMask |= static_cast<uint8_t>(1u << (7 - b));
+      }
+      const uint8_t whiteMask = static_cast<uint8_t>(~blackMask);
+
+      // The legacy dither path called drawPixel for every pixel, setting
+      // both inks. We match that: inside the row's rect mask, write
+      // whiteMask (1 = white, 0 = black). Outside the mask, untouched.
+      uint8_t* row = frameBuffer + static_cast<int32_t>(py) * panelStride;
+      if (byteStart == byteEnd) {
+        const uint8_t rectMask = headMask & tailMask;
+        row[byteStart] = static_cast<uint8_t>((row[byteStart] & ~rectMask) | (rectMask & whiteMask));
+      } else {
+        row[byteStart] = static_cast<uint8_t>((row[byteStart] & ~headMask) | (headMask & whiteMask));
+        if (byteEnd > byteStart + 1) {
+          memset(row + byteStart + 1, whiteMask, byteEnd - byteStart - 1);
+        }
+        row[byteEnd] = static_cast<uint8_t>((row[byteEnd] & ~tailMask) | (tailMask & whiteMask));
+      }
+    }
+  }
+}
+
+// Explicit instantiations -- callers in other TUs can dispatch by Color at
+// runtime through fillRect / fillRectDither.
+template void GfxRenderer::fillRectImpl<Color::Black>(int, int, int, int) const;
+template void GfxRenderer::fillRectImpl<Color::White>(int, int, int, int) const;
+template void GfxRenderer::fillRectImpl<Color::LightGray>(int, int, int, int) const;
+template void GfxRenderer::fillRectImpl<Color::DarkGray>(int, int, int, int) const;
 
 // NOTE: Those are in critical path, and need to be templated to avoid runtime checks for every pixel.
 // Any branching must be done outside the loops to avoid performance degradation.
@@ -904,30 +1048,15 @@ void GfxRenderer::drawPixelDither<Color::DarkGray>(const int x, const int y) con
 }
 
 void GfxRenderer::fillRectDither(const int x, const int y, const int width, const int height, Color color) const {
-  if (color == Color::Clear) {
-  } else if (color == Color::Black) {
-    fillRect(x, y, width, height, true);
-  } else if (color == Color::White) {
-    fillRect(x, y, width, height, false);
-  } else if (color == Color::LightGray || color == Color::DarkGray) {
-    const int x0 = std::max(x, 0);
-    const int y0 = std::max(y, 0);
-    const int x1 = std::min(x + width, getScreenWidth());
-    const int y1 = std::min(y + height, getScreenHeight());
-    if (x0 >= x1 || y0 >= y1) return;
-    if (color == Color::LightGray) {
-      for (int fillY = y0; fillY < y1; fillY++) {
-        for (int fillX = x0; fillX < x1; fillX++) {
-          drawPixelDither<Color::LightGray>(fillX, fillY);
-        }
-      }
-    } else {
-      for (int fillY = y0; fillY < y1; fillY++) {
-        for (int fillX = x0; fillX < x1; fillX++) {
-          drawPixelDither<Color::DarkGray>(fillX, fillY);
-        }
-      }
-    }
+  // CrumBLE Phase 2: dispatch into fillRectImpl<Color> for every color
+  // (including the solid Black/White cases, which previously delegated to
+  // fillRect anyway). Clear short-circuits.
+  switch (color) {
+    case Color::Clear:                                                            break;
+    case Color::Black:     fillRectImpl<Color::Black>(x, y, width, height);       break;
+    case Color::White:     fillRectImpl<Color::White>(x, y, width, height);       break;
+    case Color::LightGray: fillRectImpl<Color::LightGray>(x, y, width, height);   break;
+    case Color::DarkGray:  fillRectImpl<Color::DarkGray>(x, y, width, height);    break;
   }
 }
 
@@ -1587,7 +1716,7 @@ template <bool Opaque>
 bool GfxRenderer::drawCachedBitmap(CachedBitmap* entry, const int x, const int y, const int maxWidth,
                                    const int maxHeight, const int cornerRadius) const {
   if (entry == nullptr) return false;
-  if (fontCacheManager_ != nullptr) return true;  // text-scan pass, no painting
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) return true;  // text-scan pass, no painting
 
   float scale = 1.0f;
   if (maxWidth > 0 && entry->width > maxWidth)
