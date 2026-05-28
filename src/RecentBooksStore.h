@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -84,6 +85,19 @@ class RecentBooksStore {
 
   bool loadFromFile();
   RecentBook getDataFromBook(std::string path) const;
+
+  // CrumBLE: scans LibraryIndex for books with a stats.bin sidecar that
+  // aren't currently in the recents list and adds them (newest stats.bin
+  // mtime first), up to MAX_RECENT_BOOKS. This is the heal path for when
+  // running a foreign firmware (e.g. rhythmerc/crosspoint-reader) between
+  // CrumBLE boots wiped or replaced /.crosspoint/recent.json -- per-book
+  // stats.bin files survive on the SD card, so we can reconstruct an
+  // approximate recents list from them.
+  //
+  // `onProgress` (optional): invoked 0..100 during the metadata-load pass.
+  // Returns number of books added (0 means recents was already at cap, no
+  // candidate books with stats exist, or no metadata loads succeeded).
+  int healFromStats(const std::function<void(int)>& onProgress = nullptr);
 
  private:
   bool loadFromBinaryFile();

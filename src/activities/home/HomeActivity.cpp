@@ -21,7 +21,9 @@
 
 #include "../reader/BookReadingStats.h"
 #include "../reader/BookStatsActivity.h"
+#include "activities/home/BookshelfPickerActivity.h"
 #include "activities/reader/GlobalReadingStats.h"
+#include "activities/util/ChoicePromptActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "AddBooksToCollectionActivity.h"
@@ -29,6 +31,7 @@
 #include "BookmarkStore.h"
 #include "BookmarksHomeActivity.h"
 #include "CollectionPickerActivity.h"
+#include "CoverThumbStatus.h"
 #include "SeriesMiniPickerActivity.h"
 #include "CrossPointSettings.h"
 #include "LibraryIndex.h"
@@ -579,6 +582,15 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
       progress++;
       continue;
     }
+    // Books we've previously failed to thumbnail render the placeholder
+    // path and never trigger the Loading popup. coverBmpPath would have
+    // been cleared at the time of failure (recent.json persisted "")
+    // but, defense in depth: also short-circuit here so a re-derivation
+    // anywhere upstream can't reanimate the retry loop.
+    if (CoverThumbStatus::isMarkedFailed(book.path)) {
+      progress++;
+      continue;
+    }
     if (!book.coverBmpPath.empty()) {
       if (isCarouselTheme) {
         // For carousel: generate exact-size thumbnails for the center image rect and side slots.
@@ -622,8 +634,10 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
                       ESP.getFreeHeap(), ESP.getMaxAllocHeap());
               updateRecentBookCoverPath(book, "");
               book.coverBmpPath = "";
+              CoverThumbStatus::markFailed(book.path);
             } else {
               bookUpdated[bookIdx] = true;
+              CoverThumbStatus::clearFailed(book.path);
             }
             coverRendered = false;
             requestUpdate();
@@ -645,8 +659,10 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               if (!success) {
                 updateRecentBookCoverPath(book, "");
                 book.coverBmpPath = "";
+                CoverThumbStatus::markFailed(book.path);
               } else {
                 bookUpdated[bookIdx] = true;
+                CoverThumbStatus::clearFailed(book.path);
               }
               coverRendered = false;
               requestUpdate();
@@ -677,6 +693,11 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
                 LOG_ERR("HOME", "failed to load EPUB cache for thumb generation: %s", book.path.c_str());
                 updateRecentBookCoverPath(book, "");
                 book.coverBmpPath = "";
+                // Persist "give up" — repeated failed load() attempts cost
+                // a Loading popup + a second of SD I/O per visit. If a
+                // future build improves cache load, the user can clear
+                // /.crosspoint/<hash>/thumb_failed.marker manually.
+                CoverThumbStatus::markFailed(book.path);
                 coverRendered = false;
                 requestUpdate();
                 progress++;
@@ -696,8 +717,10 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
                       ESP.getFreeHeap(), ESP.getMaxAllocHeap());
               updateRecentBookCoverPath(book, "");
               book.coverBmpPath = "";
+              CoverThumbStatus::markFailed(book.path);
             } else {
               bookUpdated[bookIdx] = true;  // non-carousel path reuses same tracking
+              CoverThumbStatus::clearFailed(book.path);
             }
             coverRendered = false;
             requestUpdate();
@@ -716,8 +739,10 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               if (!success) {
                 updateRecentBookCoverPath(book, "");
                 book.coverBmpPath = "";
+                CoverThumbStatus::markFailed(book.path);
               } else {
                 bookUpdated[bookIdx] = true;
+                CoverThumbStatus::clearFailed(book.path);
               }
               coverRendered = false;
               requestUpdate();
@@ -916,6 +941,14 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffs
       processed++;
       continue;
     }
+    // Persistent across boots, unlike failedShelfCovers (cleared per
+    // home visit to allow a single transient-failure retry). If gen has
+    // been marked permanently failed for this book, render the
+    // placeholder and don't even pay the existence-check below.
+    if (CoverThumbStatus::isMarkedFailed(bookPath)) {
+      processed++;
+      continue;
+    }
     // Build the dimension-specific resolved thumb path. If it already exists
     // on SD, this book is done — skip the expensive EPUB/XTC load.
     std::string templatePath;
@@ -970,6 +1003,7 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffs
     }
     GUI.fillPopupProgress(renderer, popupRect, 10 + processed * progressIncrement);
 
+    bool genSucceeded = false;
     if (FsHelpers::hasEpubExtension(bookPath)) {
       Epub epub(bookPath, "/.crosspoint");
       // generateThumbBmpNoIndex extracts the cover WITHOUT building the full
@@ -979,13 +1013,15 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffs
       // no extractable cover. The no-index path parses just content.opf, so a
       // coverless book falls back to the placeholder in OPF-parse time. The
       // full index is built later, when the book is actually opened.
-      if (!epub.generateThumbBmpNoIndex(cellWidth, cellHeight)) {
+      genSucceeded = epub.generateThumbBmpNoIndex(cellWidth, cellHeight);
+      if (!genSucceeded) {
         LOG_ERR("HOME", "shelf: failed to generate thumb for %s", bookPath.c_str());
       }
     } else if (FsHelpers::hasXtcExtension(bookPath)) {
       Xtc xtc(bookPath, "/.crosspoint");
       if (xtc.load()) {
-        if (!xtc.generateThumbBmp(cellWidth, cellHeight)) {
+        genSucceeded = xtc.generateThumbBmp(cellWidth, cellHeight);
+        if (!genSucceeded) {
           LOG_ERR("HOME", "shelf: failed to generate xtc thumb for %s", bookPath.c_str());
         }
       }
@@ -995,10 +1031,18 @@ void HomeActivity::loadShelfCovers(int cellWidth, int cellHeight, int scrollOffs
     // book is skipped on subsequent renders — otherwise it stays "missing"
     // forever and we'd re-show the popup + requestUpdate() every frame,
     // which is the flashing loop. The book just renders as a blank cover.
-    if (resolved.empty() || !Storage.exists(resolved.c_str())) {
+    const bool thumbNowExists = !resolved.empty() && Storage.exists(resolved.c_str());
+    if (!thumbNowExists) {
       failedShelfCovers.push_back(bookPath);
-      LOG_ERR("HOME", "shelf: thumb generation failed for %s; rendering blank (won't retry this session)",
+      // Persist across boots so the next session's home doesn't repeat
+      // the same Loading-popup flash for this book.
+      CoverThumbStatus::markFailed(bookPath);
+      LOG_ERR("HOME", "shelf: thumb generation failed for %s; rendering blank (won't retry)",
               bookPath.c_str());
+    } else if (genSucceeded) {
+      // Wipe the persistent marker on the rare cross-build "fixed cover"
+      // case (decoder improved or user replaced the book file).
+      CoverThumbStatus::clearFailed(bookPath);
     }
     // Count this generation attempt toward the first-index cap (only enforced
     // while wasFreshFirstBoot(); harmless to increment otherwise).
@@ -1769,6 +1813,32 @@ void HomeActivity::onEnter() {
   shelfSnapshotValid = false;
   lastRenderedCoverSelectorValid = false;
 
+  // CrumBLE: heal recent.json if a foreign firmware (e.g.
+  // rhythmerc/crosspoint-reader) ran between boots and wiped or
+  // replaced it. Per-book stats.bin sidecars in /.crosspoint/<hash>/
+  // survive on the SD card, so we can backfill recents from them.
+  // Gated to once per boot, and only when recents is genuinely short --
+  // a healthy user with > kRecentsHealThreshold entries already sees
+  // their full carousel and never triggers this path.
+  {
+    static bool recentsHealAttempted = false;
+    constexpr int kRecentsHealThreshold = 6;
+    if (!recentsHealAttempted) {
+      recentsHealAttempted = true;
+      if (RECENT_BOOKS.getCount() < kRecentsHealThreshold) {
+        // Don't kick a fresh SD walk from here -- if LibraryIndex isn't
+        // populated yet (e.g. first boot, no virtual collection visited),
+        // skip and try again next boot once the user has touched the
+        // virtual-collection flow that walks it. healFromStats handles
+        // the empty case as a no-op.
+        const int added = RECENT_BOOKS.healFromStats(nullptr);
+        if (added > 0) {
+          LOG_INF("HOME", "Recents auto-healed: +%d entries from stats.bin sidecars", added);
+        }
+      }
+    }
+  }
+
   const auto& metrics = UITheme::getInstance().getMetrics();
   loadRecentBooks(metrics.homeRecentBooksCount);
 
@@ -1780,6 +1850,24 @@ void HomeActivity::onEnter() {
         break;
       }
     }
+  } else if (hasSavedCursor_) {
+    // Returning from a non-reader activity (settings, file browser,
+    // bookshelf grid, etc.) — restore where the cursor was. The shelf
+    // map is restored ahead of the index so the clamp / theme-specific
+    // bounds below see the correct collection state. Hard clamp the
+    // restored index against the current row sizes in case
+    // recentBooks/shelf membership shifted while we were elsewhere.
+    shelfPosByCollection = savedShelfPosByCollection_;
+    lastCarouselBookIndex = std::clamp(
+        savedLastCarouselBookIndex_, 0,
+        std::max(0, static_cast<int>(recentBooks.size()) - 1));
+    lastShelfBookIndex = std::max(0, savedLastShelfBookIndex_);
+    lastMenuIndex = std::max(0, savedLastMenuIndex_);
+    shelfHeaderFocused = savedShelfHeaderFocused_;
+    // selectorIndex bounds are theme-dependent and finalised below the
+    // initialMenuItem block; use the saved value here and let the
+    // standard render-prep clamp it on the first render.
+    selectorIndex = std::max(0, savedSelectorIndex_);
   }
 
   globalStats = GlobalReadingStats::load();
@@ -1845,6 +1933,19 @@ void HomeActivity::updateHighlightedBookContext() {
 
 void HomeActivity::onExit() {
   Activity::onExit();
+
+  // Snapshot cursor position so the next home visit lands the user
+  // where they left off (whether they're going to settings, the file
+  // browser, the bookshelf grid, etc.). The reader's just-read-book
+  // promotion (see onEnter's openEpubPath block) wins over this snapshot
+  // when applicable.
+  savedSelectorIndex_ = selectorIndex;
+  savedLastCarouselBookIndex_ = lastCarouselBookIndex;
+  savedLastShelfBookIndex_ = lastShelfBookIndex;
+  savedLastMenuIndex_ = lastMenuIndex;
+  savedShelfHeaderFocused_ = shelfHeaderFocused;
+  savedShelfPosByCollection_ = shelfPosByCollection;
+  hasSavedCursor_ = true;
 
   freeCoverBuffer();
   gCarouselCache.invalidate();
@@ -2800,6 +2901,28 @@ void HomeActivity::loop() {
         }
       }
     }
+    // CrumBLE #81: long-press on the icon-bar's Bookshelf entry brings up
+    // a collection picker. Tap = open the active collection's grid;
+    // long-press = pick a different collection, then open that grid.
+    // shelfBookCount is computed inline (matches the short-press path's
+    // shelfBookCount derivation a few hundred lines below).
+    int shelfBookCountForLongPress = 0;
+    if (static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA_FLOW) {
+      const Collection* activeCol = CollectionsStore::getInstance().getActiveCollection();
+      if (activeCol != nullptr) {
+        shelfBookCountForLongPress = static_cast<int>(cachedShelfEntries().size());
+      }
+    }
+    const auto& menuItemsForLongPress = buildHomeMenuItems(hasOpdsServers, hasReadingStats, hasBookmarks);
+    const int menuSelectedIdxForLongPress =
+        selectorIndex - getHomeMenuSelectionOffset(recentBooks) - shelfBookCountForLongPress;
+    if (menuSelectedIdxForLongPress >= 0 &&
+        menuSelectedIdxForLongPress < static_cast<int>(menuItemsForLongPress.size()) &&
+        menuItemsForLongPress[menuSelectedIdxForLongPress].action == HomeMenuAction::RecentBooks) {
+      longPressConfirmHandled = true;
+      showBookshelfCollectionPicker();
+      return;
+    }
     const std::string focusedPath = getFocusedBookPath();
     if (!focusedPath.empty()) {
       longPressConfirmHandled = true;
@@ -2815,16 +2938,14 @@ void HomeActivity::loop() {
       longPressConfirmHandled = false;
       return;
     }
-    // Confirm while focus is on the shelf header behaves like Down: dive
-    // into the active collection's books. If the collection is empty,
-    // skip straight to the menu so Confirm still does something useful.
+    // Short-press on the collection title (shelf header focus) opens
+    // the Bookshelf grid for the active collection -- same target as
+    // a tap of the Bookshelf icon below. Previously this dove the
+    // selector into the shelf row; that behaviour was redundant with
+    // the Down key, and surveying every book in the active collection
+    // is exactly what the Bookshelf grid was added for.
     if (shelfHeaderFocused) {
-      const Collection* active = CollectionsStore::getInstance().getActiveCollection();
-      const int shelfStart = static_cast<int>(recentBooks.size());
-      const int shelfCount = (active != nullptr) ? static_cast<int>(active->bookPaths.size()) : 0;
-      shelfHeaderFocused = false;
-      selectorIndex = (shelfCount > 0) ? shelfStart : shelfStart;  // shelfStart == menuStart when shelfCount==0
-      requestUpdate();
+      activityManager.goToBookshelf();
       return;
     }
     const auto& metrics = UITheme::getInstance().getMetrics();
@@ -3426,7 +3547,60 @@ void HomeActivity::onContinueReading() {
   }
 }
 
-void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
+void HomeActivity::onRecentsOpen() {
+  // CrumBLE #81: the icon-bar entry (now labelled "Bookshelf") opens the
+  // grid over the currently-active collection. Long-press of the same
+  // entry brings up a collection picker (see the long-press branch in
+  // the loop's Confirm handler).
+  activityManager.goToBookshelf();
+}
+
+void HomeActivity::showBookshelfCollectionPicker() {
+  // CrumBLE #81: snapshot the visible collections (id+name) so the
+  // BookshelfPickerActivity has stable strings to render and we can
+  // map the picked index back to a collection id after the activity
+  // exits. The picker visually matches Reader Options (full-screen
+  // list with header + button hints) rather than the popup-style
+  // ChoicePromptActivity.
+  const auto& collections = CollectionsStore::getInstance().getCollections();
+  if (collections.size() <= 1) {
+    // Only one collection visible -- the picker would be a one-item list.
+    // Just open the grid directly.
+    activityManager.goToBookshelf();
+    return;
+  }
+  std::vector<std::string> labels;
+  std::vector<std::string> ids;
+  labels.reserve(collections.size());
+  ids.reserve(collections.size());
+  const std::string activeId = CollectionsStore::getInstance().getActiveId();
+  int currentIndex = -1;
+  for (size_t i = 0; i < collections.size(); ++i) {
+    labels.push_back(collections[i].name);
+    ids.push_back(collections[i].id);
+    if (collections[i].id == activeId) {
+      currentIndex = static_cast<int>(i);
+    }
+  }
+  startActivityForResult(
+      std::make_unique<BookshelfPickerActivity>(renderer, mappedInput, std::move(labels), currentIndex),
+      [this, ids = std::move(ids)](const ActivityResult& res) {
+        if (res.isCancelled) {
+          requestUpdate();
+          return;
+        }
+        const auto* cr = std::get_if<ChoicePromptResult>(&res.data);
+        if (cr == nullptr || cr->choice < 0 || cr->choice >= static_cast<int>(ids.size())) {
+          requestUpdate();
+          return;
+        }
+        // Set picked collection as active so the carousel header reflects
+        // the user's choice when they return to Home later, AND so the
+        // Bookshelf grid we're about to open inherits the same id.
+        CollectionsStore::getInstance().setActiveId(ids[cr->choice]);
+        activityManager.goToBookshelf(ids[cr->choice]);
+      });
+}
 
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 

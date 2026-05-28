@@ -124,6 +124,21 @@ class HomeActivity final : public Activity {
     int bookIndex = 0;
   };
   std::unordered_map<std::string, ShelfPos> shelfPosByCollection;
+  // CrumBLE: cursor recall across home visits. onExit snapshots where
+  // the user was (selectorIndex + per-row mirrors + shelf scroll); the
+  // next onEnter restores it instead of leaving the cursor at 0. Reset
+  // implicitly only by destructing the HomeActivity (e.g. cold boot).
+  // Skipped on returns from the reader (APP_STATE.openEpubPath set) so
+  // the "just-read book is highlighted" affordance still wins for that
+  // specific path. The map deep-copies (small; one entry per visited
+  // collection).
+  bool hasSavedCursor_ = false;
+  int savedSelectorIndex_ = 0;
+  int savedLastCarouselBookIndex_ = 0;
+  int savedLastShelfBookIndex_ = 0;
+  int savedLastMenuIndex_ = 0;
+  bool savedShelfHeaderFocused_ = false;
+  std::unordered_map<std::string, ShelfPos> savedShelfPosByCollection_;
   // Set true during a Flow render whenever a progress popup (shelf cover
   // loading or "Detecting series...") was drawn over the framebuffer before
   // the end-of-render snapshot. The popup sits over the carousel, which the
@@ -267,6 +282,11 @@ class HomeActivity final : public Activity {
   // separate menu (vs. the per-book one) so the items always match the
   // collection-level context.
   void showShelfHeaderActionMenu();
+  // CrumBLE #81: long-press handler for the icon-bar's Bookshelf entry.
+  // Opens a ChoicePromptActivity listing the visible collections; on
+  // confirm, sets the picked collection as active and opens the
+  // Bookshelf grid over it.
+  void showBookshelfCollectionPicker();
   // CrumBLE series — Confirm on a shelf cell. For single-book cells
   // this is just onSelectBook(firstPath). For series cells, opens the
   // most-recently-read member if any is in RECENT_BOOKS; otherwise

@@ -10,6 +10,9 @@
 
 #include <algorithm>
 #include <iterator>
+#include <unordered_set>
+
+#include "LibraryIndex.h"
 
 namespace {
 constexpr uint8_t RECENT_BOOKS_FILE_VERSION = 3;
@@ -166,6 +169,92 @@ bool RecentBooksStore::loadFromFile() {
   }
 
   return false;
+}
+
+int RecentBooksStore::healFromStats(const std::function<void(int)>& onProgress) {
+  // Existing entries — never add a duplicate path.
+  std::unordered_set<std::string> existing;
+  existing.reserve(recentBooks.size());
+  for (const auto& b : recentBooks) existing.insert(b.path);
+
+  const int slotsAvail = MAX_RECENT_BOOKS - static_cast<int>(recentBooks.size());
+  if (slotsAvail <= 0) return 0;
+
+  // Snapshot LibraryIndex. Caller is expected to have ensureWalked() it
+  // already (on HomeActivity::onEnter, the virtual-collection access
+  // path normally already triggered a walk this boot). Walking from
+  // here would risk a long pause during heal.
+  const auto allPaths = LibraryIndex::getInstance().getAllBookPaths();
+  if (allPaths.empty()) return 0;
+
+  // Candidates: paths with stats.bin that aren't in recents already.
+  // Each gets the stats.bin's modify-time key so we can sort newest-first.
+  struct Candidate {
+    std::string path;
+    uint32_t mtime = 0;
+  };
+  std::vector<Candidate> candidates;
+  candidates.reserve(16);
+
+  for (const auto& path : allPaths) {
+    if (existing.count(path)) continue;
+    std::string cachePath;
+    if (FsHelpers::hasEpubExtension(path)) {
+      cachePath = Epub::cachePathForFilePath(path, "/.crosspoint");
+    } else if (FsHelpers::hasXtcExtension(path)) {
+      // Mirrors Xtc(filepath, cacheDir) constructor's path derivation.
+      cachePath = std::string("/.crosspoint/xtc_") + std::to_string(std::hash<std::string>{}(path));
+    } else {
+      continue;  // TXT / Markdown have no stats.bin sidecar
+    }
+    const std::string statsPath = cachePath + "/stats.bin";
+    if (!Storage.exists(statsPath.c_str())) continue;
+
+    uint32_t mtime = 0;
+#ifndef SIMULATOR
+    // Device HalFile exposes FAT modify-time as a sortable key. The
+    // simulator's HalFile (vendored library) doesn't, and the timestamp
+    // sort is a nice-to-have, not a correctness requirement -- fall back
+    // to LibraryIndex iteration order on the sim.
+    FsFile f;
+    if (Storage.openFileForRead("RBS", statsPath, f)) {
+      mtime = f.getModifyTimeKey();
+      f.close();
+    }
+#endif
+    candidates.push_back({path, mtime});
+  }
+
+  if (candidates.empty()) return 0;
+
+  // Newest stats.bin first. Books opened more recently were more
+  // recently touched; this is the best proxy for "should be near the top
+  // of the carousel" we have without a real recents log.
+  std::sort(candidates.begin(), candidates.end(),
+            [](const Candidate& a, const Candidate& b) { return a.mtime > b.mtime; });
+
+  // Cap to remaining slots so we don't load metadata for books we'll
+  // never use.
+  if (static_cast<int>(candidates.size()) > slotsAvail) {
+    candidates.resize(slotsAvail);
+  }
+
+  const int total = static_cast<int>(candidates.size());
+  int added = 0;
+  for (int i = 0; i < total; ++i) {
+    if (onProgress) onProgress((i * 100) / total);
+    RecentBook book = getDataFromBook(candidates[i].path);
+    if (book.title.empty()) continue;  // omit entries whose metadata load failed
+    recentBooks.push_back(book);
+    added++;
+  }
+  if (onProgress) onProgress(100);
+
+  if (added > 0) {
+    LOG_INF("RBS", "Heal: added %d books from stats.bin sidecars", added);
+    saveToFile();
+  }
+  return added;
 }
 
 bool RecentBooksStore::loadFromBinaryFile() {
