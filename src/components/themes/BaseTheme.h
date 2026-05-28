@@ -265,8 +265,11 @@ class BaseTheme {
   // Reserved horizontal slot the status bar layout always carves out for
   // the BT icon (whether or not the stack is on), so the battery + number
   // don't shift when BLE toggles. Sized to fit body + tight side dots.
-  static constexpr int btIconBodyWidth = 9;
-  static constexpr int btIconBodyHeight = 14;
-  static constexpr int btIconReservedWidth = 17;  // body 9 + 3-px dots both sides + 2 px margin
+  // Body sized up from 9x14 to 11x17 for legibility. Line width stays at
+  // 2 (a thinner stroke renders as soft gray on e-ink anti-aliasing); the
+  // visual weight increase comes from the larger envelope instead.
+  static constexpr int btIconBodyWidth = 11;
+  static constexpr int btIconBodyHeight = 17;
+  static constexpr int btIconReservedWidth = 19;  // body 11 + 3-px dots both sides + 2 px margin
   static constexpr int btIconBatterySpacing = 11;  // tighter -- "100" has no '%' suffix now
 };

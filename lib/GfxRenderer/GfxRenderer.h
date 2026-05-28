@@ -20,7 +20,18 @@ class SdCardFont;
 
 // Color representation: uint8_t mapped to 4x4 Bayer matrix dithering levels
 // 0 = transparent, 1-16 = gray levels (white to black)
-enum Color : uint8_t { Clear = 0x00, White = 0x01, LightGray = 0x05, DarkGray = 0x0A, Black = 0x10 };
+// CrumBLE: VeryDarkGray is the inverse of LightGray's 2x2 period -- black
+// at every pixel EXCEPT (x even AND y even), i.e. 3-of-4 coverage (~75%).
+// Sits between DarkGray (50%) and Black (100%); used by the transition
+// popups to read denser than DarkGray without becoming flat-black.
+enum Color : uint8_t {
+  Clear = 0x00,
+  White = 0x01,
+  LightGray = 0x05,
+  DarkGray = 0x0A,
+  VeryDarkGray = 0x0D,
+  Black = 0x10,
+};
 
 class GfxRenderer {
  public:

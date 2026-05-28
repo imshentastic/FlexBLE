@@ -988,8 +988,10 @@ void GfxRenderer::fillRectImpl(const int x, const int y, const int width, const 
         bool isBlack;
         if constexpr (C == Color::LightGray) {
           isBlack = ((lx & 1) == 0) && ((ly & 1) == 0);
-        } else {  // DarkGray
+        } else if constexpr (C == Color::DarkGray) {
           isBlack = (((lx + ly) & 1) == 0);
+        } else {  // VeryDarkGray -- complement of LightGray (3-of-4 coverage)
+          isBlack = !(((lx & 1) == 0) && ((ly & 1) == 0));
         }
         if (isBlack) blackMask |= static_cast<uint8_t>(1u << (7 - b));
       }
@@ -1019,6 +1021,7 @@ template void GfxRenderer::fillRectImpl<Color::Black>(int, int, int, int) const;
 template void GfxRenderer::fillRectImpl<Color::White>(int, int, int, int) const;
 template void GfxRenderer::fillRectImpl<Color::LightGray>(int, int, int, int) const;
 template void GfxRenderer::fillRectImpl<Color::DarkGray>(int, int, int, int) const;
+template void GfxRenderer::fillRectImpl<Color::VeryDarkGray>(int, int, int, int) const;
 
 // NOTE: Those are in critical path, and need to be templated to avoid runtime checks for every pixel.
 // Any branching must be done outside the loops to avoid performance degradation.
@@ -1047,16 +1050,24 @@ void GfxRenderer::drawPixelDither<Color::DarkGray>(const int x, const int y) con
   drawPixel(x, y, (x + y) % 2 == 0);  // TODO: maybe find a better pattern?
 }
 
+template <>
+void GfxRenderer::drawPixelDither<Color::VeryDarkGray>(const int x, const int y) const {
+  // Inverse of LightGray's 2x2 mask -- everywhere EXCEPT (x even AND y
+  // even) is black, giving ~75% coverage.
+  drawPixel(x, y, !(x % 2 == 0 && y % 2 == 0));
+}
+
 void GfxRenderer::fillRectDither(const int x, const int y, const int width, const int height, Color color) const {
   // CrumBLE Phase 2: dispatch into fillRectImpl<Color> for every color
   // (including the solid Black/White cases, which previously delegated to
   // fillRect anyway). Clear short-circuits.
   switch (color) {
     case Color::Clear:                                                            break;
-    case Color::Black:     fillRectImpl<Color::Black>(x, y, width, height);       break;
-    case Color::White:     fillRectImpl<Color::White>(x, y, width, height);       break;
-    case Color::LightGray: fillRectImpl<Color::LightGray>(x, y, width, height);   break;
-    case Color::DarkGray:  fillRectImpl<Color::DarkGray>(x, y, width, height);    break;
+    case Color::Black:        fillRectImpl<Color::Black>(x, y, width, height);        break;
+    case Color::White:        fillRectImpl<Color::White>(x, y, width, height);        break;
+    case Color::LightGray:    fillRectImpl<Color::LightGray>(x, y, width, height);    break;
+    case Color::DarkGray:     fillRectImpl<Color::DarkGray>(x, y, width, height);     break;
+    case Color::VeryDarkGray: fillRectImpl<Color::VeryDarkGray>(x, y, width, height); break;
   }
 }
 
@@ -1089,6 +1100,11 @@ void GfxRenderer::maskRoundedRectOutsideCorners(const int x, const int y, const 
           drawPixelDither<Color::DarkGray>(x + width - 1 - dx, y + dy);               // top-right
           drawPixelDither<Color::DarkGray>(x + dx, y + height - 1 - dy);              // bottom-left
           drawPixelDither<Color::DarkGray>(x + width - 1 - dx, y + height - 1 - dy);  // bottom-right
+        } else if (color == Color::VeryDarkGray) {
+          drawPixelDither<Color::VeryDarkGray>(x + dx, y + dy);                           // top-left
+          drawPixelDither<Color::VeryDarkGray>(x + width - 1 - dx, y + dy);               // top-right
+          drawPixelDither<Color::VeryDarkGray>(x + dx, y + height - 1 - dy);              // bottom-left
+          drawPixelDither<Color::VeryDarkGray>(x + width - 1 - dx, y + height - 1 - dy);  // bottom-right
         }
       }
     }
@@ -1186,6 +1202,9 @@ void GfxRenderer::fillRoundedRect(const int x, const int y, const int width, con
         break;
       case Color::DarkGray:
         fillArc<Color::DarkGray>(maxRadius, cx, cy, xDir, yDir);
+        break;
+      case Color::VeryDarkGray:
+        fillArc<Color::VeryDarkGray>(maxRadius, cx, cy, xDir, yDir);
         break;
     }
   };
