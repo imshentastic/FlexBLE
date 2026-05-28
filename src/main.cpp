@@ -896,6 +896,16 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
 
+  // CrumBLE (port from rhythmerc/crosspoint-reader 023a8b1): system-wide
+  // glyph fallback. When any registered family misses a codepoint, the
+  // resolver routes the lookup to UI_12 (inter) before substituting
+  // REPLACEMENT_GLYPH (tofu). inter ships with broad Latin Extended +
+  // Cyrillic coverage so the off-coverage characters that show up in
+  // book titles and metadata land on real glyphs. setGlyphFallbackFont
+  // retro-wires into every previously-registered family above; future
+  // insertFont calls inherit the fallback automatically.
+  renderer.setGlyphFallbackFont(UI_12_FONT_ID);
+
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);
 

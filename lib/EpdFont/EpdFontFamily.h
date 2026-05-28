@@ -22,6 +22,14 @@ class EpdFontFamily {
   int8_t getKerning(uint32_t leftCp, uint32_t rightCp, Style style = REGULAR) const;
   uint32_t applyLigatures(uint32_t cp, const char*& text, Style style = REGULAR) const;
 
+  /// CrumBLE (port from rhythmerc 023a8b1): system-wide glyph fallback
+  /// propagated to all four style slots. The renderer only ever wires
+  /// one fallback family so style-level granularity isn't useful here.
+  /// const because EpdFontFamily stores `const EpdFont*` members and
+  /// EpdFont::setFallback mutates a `mutable` field.
+  void setFallback(const EpdFont* fallback) const;
+  const EpdFont* getRegular() const { return regular; }
+
  private:
   const EpdFont* regular;
   const EpdFont* bold;

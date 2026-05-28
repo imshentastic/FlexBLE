@@ -111,6 +111,13 @@ class GfxRenderer {
   uint8_t* bwCompressedBackup = nullptr;
   size_t bwCompressedBackupSize = 0;
   std::map<int, EpdFontFamily> fontMap;
+  // CrumBLE (port from rhythmerc 023a8b1): ID of the registered EpdFontFamily
+  // that serves as the system-wide glyph fallback. When a font's coverage
+  // misses a codepoint, EpdFont::getGlyph / EpdFontFamily::getGlyphData
+  // routes the lookup to this family's regular EpdFont before substituting
+  // REPLACEMENT_GLYPH. 0 means no fallback wired (missing codepoints render
+  // as tofu / REPLACEMENT_GLYPH only).
+  int glyphFallbackFontId_ = 0;
   // Shared bitmap row buffers. Every read/write must be inside BitmapScratchLock;
   // ensureBitmapScratchBuffers() asserts that contract before exposing them.
   mutable SemaphoreHandle_t bitmapScratchMutex_ = nullptr;
@@ -216,6 +223,14 @@ class GfxRenderer {
   // Setup
   void begin();  // must be called right after display.begin()
   void insertFont(int fontId, EpdFontFamily font);
+  // CrumBLE (port from rhythmerc 023a8b1): install the system-wide glyph
+  // fallback. `fontId` must already be registered via insertFont. Retro-
+  // wires its regular-style EpdFont into every other registered family so
+  // existing fonts inherit the fallback. Subsequent insertFont calls also
+  // pick up the fallback automatically. Pass 0 to clear the fallback
+  // (legacy behaviour: missing codepoints render as REPLACEMENT_GLYPH).
+  void setGlyphFallbackFont(int fontId);
+  int getGlyphFallbackFontId() const { return glyphFallbackFontId_; }
   // Clears both the flash-font map and any SD-font registration for fontId.
   // Coupled to avoid dangling SdCardFont* in sdCardFonts_ when callers free
   // the underlying SdCardFont and forget the SD-side unregister.
