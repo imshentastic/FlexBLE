@@ -72,9 +72,30 @@ class FontDecompressor {
     const EpdFontData* fontData;
     PageGlyphEntry* glyphs;
     uint16_t glyphCount;
+    // When true, `buffer` points INTO pageSlotPool and is NOT to be
+    // free()'d by freePageBuffer() -- the pool resets via offset rewind
+    // instead. Heap-malloc'd slots (pool full or unavailable) free normally.
+    bool bufferFromPool;
   };
   PageSlot pageSlots[MAX_PAGE_SLOTS] = {};
   uint8_t pageSlotCount = 0;
+
+  // CrumBLE #69: pre-allocated bump-pool for slot.buffer. Each page render
+  // mallocs 2-5 KB per style (3-4 styles), and once a BLE remote has
+  // fragmented the heap (NimBLE eats ~58 KB in scattered blocks) these
+  // small contiguous mallocs start failing -- which degrades AA, drops the
+  // BW backup, and eventually trips the panic on the next sensitive alloc.
+  //
+  // The pool is allocated ONCE at init() before NimBLE / EPUB parser have
+  // touched the heap, so the contiguous 12 KB is guaranteed to fit. All
+  // four slots draw from the pool via bump allocation; freePageBuffer()
+  // resets the offset to 0 since all slots are freed together. Slots that
+  // don't fit the pool (rare worst-case pages with many large glyphs)
+  // fall back to malloc -- the lookup tables still malloc unconditionally
+  // since they're smaller (~500 bytes typical) and lower fragmentation risk.
+  static constexpr uint32_t kPageSlotPoolBytes = 12U * 1024U;
+  uint8_t* pageSlotPool = nullptr;
+  uint32_t pageSlotPoolOffset = 0;
 
   // Hot group: last decompressed group (byte-aligned) for non-prewarmed fallback path.
   // Kept in byte-aligned format; individual glyphs are compacted on demand into hotGlyphBuf.
