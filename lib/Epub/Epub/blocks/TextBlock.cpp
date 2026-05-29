@@ -1,6 +1,5 @@
 #include "TextBlock.h"
 
-#include <Arduino.h>  // ESP.getMaxAllocHeap() for the #69 heap pre-flight in deserialize()
 #include <GfxRenderer.h>
 #include <Logging.h>
 #include <Serialization.h>
@@ -284,26 +283,6 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(FsFile& file) {
   if (remainingBeforeWords < 0 || static_cast<uint32_t>(remainingBeforeWords) < minimumRemainingBytes) {
     LOG_ERR("TXB", "Deserialization failed: truncated block metadata (%u words need at least %lu bytes, %d available)",
             wc, static_cast<unsigned long>(minimumRemainingBytes), remainingBeforeWords);
-    return nullptr;
-  }
-
-  // CrumBLE #69: pre-flight heap check. With -fno-exceptions (platformio.ini)
-  // a bad_alloc thrown by any of the vector::resize() calls below turns into
-  // std::terminate() -> abort(), tripping the panic. Under deep BLE-induced
-  // fragmentation (NimBLE ~58 KB scattered across the heap), the words vector
-  // can't get its wc*sizeof(string) contiguous block and we crash.
-  //
-  // Conservative budget: ~80 bytes per word covers all of words/wordXpos/
-  // wordStyles/wordBackgroundBlack growth plus typical string-content allocs;
-  // a 4 KB headroom absorbs the post-word metadata vectors. If maxAlloc can't
-  // satisfy this, bail. Caller chain (Page::deserialize -> Section::load...
-  // -> render) handles nullptr by leaving the page empty, which beats
-  // crashing.
-  const uint32_t estimatedNeed = static_cast<uint32_t>(wc) * 80U + 4096U;
-  const uint32_t maxAlloc = ESP.getMaxAllocHeap();
-  if (maxAlloc < estimatedNeed) {
-    LOG_ERR("TXB", "Heap too tight for %u-word block (need ~%lu bytes, maxAlloc %lu); bailing",
-            wc, static_cast<unsigned long>(estimatedNeed), static_cast<unsigned long>(maxAlloc));
     return nullptr;
   }
 
