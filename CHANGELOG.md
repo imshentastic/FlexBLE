@@ -1,5 +1,19 @@
 # Changelog
 
+## [crumble-v3.6.0] - 2026-05-29
+
+### Added
+- Phase 1 fast book open from Home. The reader's non-critical onEnter work (settings cache build, .pxc manifest parse, font glyph buffer prewarm) now runs after the first reader page has actually painted, instead of blocking the tap-to-first-pixel path. Felt as ~30-50 ms snappier on every book open.
+- The in-RAM cover bitmap cache (introduced in v3.5 but inert until now) is wired up across the Flow theme carousel center cover, the four perspective side covers, and the Bookshelf grid. Navigating through the carousel and into the Bookshelf hits memory instead of re-decoding from SD on every cell.
+
+### Fixed
+- Bluetooth remote stays connected more reliably on mixed text/image books. The reader's glyph decompression buffer is pre-grown at every Bluetooth-enable site (drawer Quick Connect, reader menu BT toggle, Bluetooth settings) so the buffer's high-water mark is allocated BEFORE NimBLE eats heap, instead of fighting for contiguous heap mid-page-turn.
+
+### Changed
+- Renderer perf hacks ported from rhythmerc/crosspoint-reader: opaque-path fast path for the cached-bitmap blit, corner-skip during blit (replaces a per-pixel post-mask), the 1px asymmetric drawRect-with-lineWidth fix, and a fast path for fillRoundedRect when cornerRadius is 0. Wired in at the carousel center cover and the Bookshelf grid cells.
+- Bluetooth indicator removed from the reader status bar. The always-dotted-when-enabled variant misled users when the remote disconnected; the connection-state-driven variant introduced a perf regression in the status-bar repaint path. Bluetooth state remains visible through the "Connecting Bluetooth..." popup and the in-reader Quick Connect / Disconnect drawer actions.
+- System-wide glyph fallback (added in v3.5 but never released in a tagged build) reverted. It let codepoints missing from your reader font route through Inter (the UI font) before becoming tofu, but pushed heap over the cliff on image-heavy books while a Bluetooth remote was linked. Net effect: rare codepoints in book content (uncommon diacritics, Cyrillic on an otherwise-Latin font, math/special punctuation) render as tofu instead of via Inter, but image-heavy + Bluetooth reading is stable again.
+
 ## [crumble-v3.4.0] - 2026-05-27
 
 ### Added
