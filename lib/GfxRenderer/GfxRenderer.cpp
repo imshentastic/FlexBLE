@@ -2020,6 +2020,57 @@ void GfxRenderer::drawPerspectiveBitmap(const Bitmap& bitmap, const int x, const
   }
 }
 
+void GfxRenderer::drawPerspectiveBitmap(CachedBitmap* handle, const int x, const int y, const int w, const int hL,
+                                        const int hR) const {
+  if (handle == nullptr || !handle->pixels) return;
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
+  if (w <= 0 || hL <= 0 || hR <= 0) return;
+
+  const int srcW = handle->width;
+  const int srcH = handle->height;
+  if (srcW <= 0 || srcH <= 0) return;
+
+  const int hMax = std::max(hL, hR);
+  const int screenW = getScreenWidth();
+  const int screenH = getScreenHeight();
+  const bool topDown = handle->topDown;
+
+  // Source pixels are already in 2bpp packed format in RAM; no scratch
+  // buffer or row read needed. Each source row is srcStride bytes.
+  const int srcStride = (srcW + 3) / 4;
+
+  for (int srcY = 0; srcY < srcH; srcY++) {
+    const int srcRowIndex = topDown ? srcY : (srcH - 1 - srcY);
+    const uint8_t* srcRow = handle->pixels.get() + srcY * srcStride;
+
+    for (int dx = 0; dx < w; dx++) {
+      const int colH = (w == 1) ? hL : (hL + (hR - hL) * dx / (w - 1));
+      if (colH <= 0) continue;
+      const int colTop = (hMax - colH) / 2;
+      const int screenX = x + dx;
+      if (screenX < 0 || screenX >= screenW) continue;
+
+      const int srcX = (dx * srcW) / w;
+      const uint8_t val = (srcRow[srcX / 4] >> (6 - ((srcX * 2) % 8))) & 0x3;
+
+      const int dstYStart = (srcRowIndex * colH) / srcH;
+      const int dstYEnd = ((srcRowIndex + 1) * colH) / srcH;
+      for (int dy = dstYStart; dy < dstYEnd; ++dy) {
+        const int screenY = y + colTop + dy;
+        if (screenY < 0 || screenY >= screenH) continue;
+
+        if (renderMode == BW && val < 3) {
+          drawPixel(screenX, screenY);
+        } else if (renderMode == GRAYSCALE_MSB && (val == 1 || val == 2)) {
+          drawPixel(screenX, screenY, false);
+        } else if (renderMode == GRAYSCALE_LSB && val == 1) {
+          drawPixel(screenX, screenY, false);
+        }
+      }
+    }
+  }
+}
+
 void GfxRenderer::fillPolygon(const int* xPoints, const int* yPoints, int numPoints, bool state) const {
   if (numPoints < 3) return;
 

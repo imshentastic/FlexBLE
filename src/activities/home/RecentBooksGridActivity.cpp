@@ -398,6 +398,13 @@ void RecentBooksGridActivity::onEnter() {
 void RecentBooksGridActivity::onExit() {
   Activity::onExit();
   recentBooks.clear();
+  // CrumBLE Phase A perf: drop the in-RAM cover-bitmap cache so it
+  // doesn't pin RAM through the next activity (reader, settings, BT
+  // pairing UI). Matches HomeActivity::onExit's reasoning -- the cache
+  // only reconciles on misses, so cross-activity transitions leave
+  // pinned entries that starve the heap. Next grid visit rebuilds
+  // cheaply.
+  renderer.clearImageCache();
 }
 
 void RecentBooksGridActivity::loop() {
@@ -667,19 +674,41 @@ void RecentBooksGridActivity::render(RenderLock&&) {
               ? ""
               : UITheme::getCoverThumbPath(recentBooks[bookIdx].book.coverBmpPath, COVER_WIDTH, COVER_HEIGHT);
       if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) {
-        FsFile file;
-        if (Storage.openFileForRead("RBGA", thumbPath, file)) {
-          Bitmap bmp(file);
-          if (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0) {
-            float cropX = 0.0f;
-            float cropY = 0.0f;
-            calculateCoverFillCrop(bmp, cropX, cropY);
-            renderer.fillRoundedRect(bx, by, bw, bh, kCoverCornerRadius, Color::White);
-            renderer.drawBitmap(bmp, bx, by, bw, bh, cropX, cropY);
-            renderer.maskRoundedRectOutsideCorners(bx, by, bw, bh, kCoverCornerRadius, Color::White);
-            drawn = true;
+        // CrumBLE Phase A perf: try the in-RAM cover cache first
+        // (~1-2 ms blit on hit, vs ~30-50 ms SD-load+decode on miss).
+        // Falls through to direct drawBitmap when the cache budget
+        // rejects (low heap / BLE on) so the cell still renders.
+        GfxRenderer::CachedBitmap* handle = renderer.lookupCachedBitmap(thumbPath);
+        int srcW = 0, srcH = 0;
+        if (renderer.getCachedBitmapDimensions(handle, &srcW, &srcH) && srcW > 0 && srcH > 0) {
+          const float srcRatio = static_cast<float>(srcW) / static_cast<float>(srcH);
+          const float targetRatio = static_cast<float>(COVER_WIDTH) / static_cast<float>(COVER_HEIGHT);
+          float cropX = 0.0f;
+          float cropY = 0.0f;
+          if (srcRatio > targetRatio) {
+            cropX = std::max(0.0f, 1.0f - (targetRatio / srcRatio));
+          } else if (srcRatio < targetRatio) {
+            cropY = std::max(0.0f, 1.0f - (srcRatio / targetRatio));
           }
-          file.close();
+          renderer.fillRoundedRect(bx, by, bw, bh, kCoverCornerRadius, Color::White);
+          renderer.drawCachedBitmap(handle, bx, by, bw, bh, cropX, cropY);
+          renderer.maskRoundedRectOutsideCorners(bx, by, bw, bh, kCoverCornerRadius, Color::White);
+          drawn = true;
+        } else {
+          FsFile file;
+          if (Storage.openFileForRead("RBGA", thumbPath, file)) {
+            Bitmap bmp(file);
+            if (bmp.parseHeaders() == BmpReaderError::Ok && bmp.getWidth() > 0 && bmp.getHeight() > 0) {
+              float cropX = 0.0f;
+              float cropY = 0.0f;
+              calculateCoverFillCrop(bmp, cropX, cropY);
+              renderer.fillRoundedRect(bx, by, bw, bh, kCoverCornerRadius, Color::White);
+              renderer.drawBitmap(bmp, bx, by, bw, bh, cropX, cropY);
+              renderer.maskRoundedRectOutsideCorners(bx, by, bw, bh, kCoverCornerRadius, Color::White);
+              drawn = true;
+            }
+            file.close();
+          }
         }
       }
       if (!drawn) {

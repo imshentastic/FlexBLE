@@ -395,6 +395,11 @@ class GfxRenderer {
   // each output column has its own height linearly interpolated from hL on the
   // left edge to hR on the right edge, vertically centered in the bbox.
   void drawPerspectiveBitmap(const Bitmap& bitmap, int x, int y, int w, int hL, int hR) const;
+  // CrumBLE Phase A perf: cached-bitmap source variant. Reads the 2bpp
+  // packed pixels directly out of the CachedBitmap entry (no SD I/O,
+  // no readNextRow). Used by Flow's carousel side covers so L/R
+  // navigation hits RAM for previously-seen books.
+  void drawPerspectiveBitmap(CachedBitmap* handle, int x, int y, int w, int hL, int hR) const;
   void fillPolygon(const int* xPoints, const int* yPoints, int numPoints, bool state = true) const;
 
   // Text

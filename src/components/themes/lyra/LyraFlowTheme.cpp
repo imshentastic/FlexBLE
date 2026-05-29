@@ -142,18 +142,30 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
     const std::string coverPath = UITheme::getCoverThumbPath(recentBooks[idx].coverBmpPath, centerCoverHeight);
     bool drawn = false;
     if (!coverPath.empty()) {
-      FsFile file;
-      if (Storage.openFileForRead("HOME", coverPath, file)) {
-        Bitmap bitmap(file);
-        if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-          // drawPerspectiveBitmap is OR-style (only writes black), so any
-          // white area of the cover would show through to whatever side
-          // cover was drawn beneath us. Pre-clear the bbox to opaque white.
-          renderer.fillRect(drawX, drawY, sideCoverWidth, hMax, false);
-          renderer.drawPerspectiveBitmap(bitmap, drawX, drawY, sideCoverWidth, hL, hR);
-          drawn = true;
+      // CrumBLE Phase A perf: try the in-RAM cache first. The Cached
+      // overload reads 2bpp packed pixels directly out of the cache
+      // entry, no SD I/O. Cache miss / budget-rejected -> fall back to
+      // direct SD-streamed drawPerspectiveBitmap.
+      GfxRenderer::CachedBitmap* handle = renderer.lookupCachedBitmap(coverPath);
+      int srcW = 0, srcH = 0;
+      if (renderer.getCachedBitmapDimensions(handle, &srcW, &srcH) && srcW > 0 && srcH > 0) {
+        // drawPerspectiveBitmap is OR-style (only writes black), so any
+        // white area of the cover would show through to whatever side
+        // cover was drawn beneath us. Pre-clear the bbox to opaque white.
+        renderer.fillRect(drawX, drawY, sideCoverWidth, hMax, false);
+        renderer.drawPerspectiveBitmap(handle, drawX, drawY, sideCoverWidth, hL, hR);
+        drawn = true;
+      } else {
+        FsFile file;
+        if (Storage.openFileForRead("HOME", coverPath, file)) {
+          Bitmap bitmap(file);
+          if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+            renderer.fillRect(drawX, drawY, sideCoverWidth, hMax, false);
+            renderer.drawPerspectiveBitmap(bitmap, drawX, drawY, sideCoverWidth, hL, hR);
+            drawn = true;
+          }
+          file.close();
         }
-        file.close();
       }
     }
     if (!drawn) {
@@ -204,34 +216,25 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
   //     true aspect ratio (otherwise drawBitmap aspect-fits but our 220×320
   //     chrome leaves a white sliver for narrower covers, e.g. 1720×2600
   //     which is taller than 220:320). ---
-  // CrumBLE Phase A perf: try the in-RAM cache first. Cache hit blits
-  // from a pre-scaled 1bpp buffer (~2 ms). Cache miss falls through to
-  // direct drawBitmap below -- the cache rejects loads when the budget
-  // is tight (BLE on, low heap) so we still need the legacy SD path.
+  // CrumBLE Phase A perf: the in-RAM cache lookup happens immediately
+  // before the draw call below -- NOT here. The side-cover loop below
+  // also lookups + may evict cache entries under budget pressure, so a
+  // CachedBitmap* held across that loop is a dangling-pointer trap.
+  // Dimensions come from a one-shot header probe of the cover file
+  // (cheap: BMP header only, no row data).
   const std::string cp = UITheme::getCoverThumbPath(recentBooks[curIdx].coverBmpPath, centerCoverHeight);
-  GfxRenderer::CachedBitmap* centerHandle = cp.empty() ? nullptr : renderer.lookupCachedBitmap(cp);
   int centerSrcW = 0, centerSrcH = 0;
-  bool centerParsed = renderer.getCachedBitmapDimensions(centerHandle, &centerSrcW, &centerSrcH);
-  // Direct-draw fallback file: only opened when the cache can't serve
-  // us (handle == nullptr). Bitmap is constructed once with the file
-  // ref inside the draw block below since the type's copy ctor /
-  // assignment are deleted. The file stays open for the whole
-  // function so drawBitmap can stream rows on demand.
-  FsFile centerFallbackFile;
-  bool centerFallbackOpened = false;
-  if (!centerParsed && !cp.empty()) {
-    if (Storage.openFileForRead("HOME", cp, centerFallbackFile)) {
-      centerFallbackOpened = true;
-      Bitmap probe(centerFallbackFile);
+  bool centerParsed = false;
+  if (!cp.empty()) {
+    FsFile probeFile;
+    if (Storage.openFileForRead("HOME", cp, probeFile)) {
+      Bitmap probe(probeFile);
       if (probe.parseHeaders() == BmpReaderError::Ok && probe.getWidth() > 0 && probe.getHeight() > 0) {
         centerSrcW = probe.getWidth();
         centerSrcH = probe.getHeight();
         centerParsed = true;
-        // Rewind so the draw below can re-read headers + row data from
-        // the start of the file. probe goes out of scope here but the
-        // file handle stays open.
-        centerFallbackFile.seek(0);
       }
+      probeFile.close();
     }
   }
   if (centerParsed) {
@@ -271,14 +274,26 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
     renderer.fillRect(clearX, clearY, clearW, clearH, false);
 
     if (centerParsed) {
+      // Lookup HERE (not earlier): the side-cover draws above also
+      // touch the cache and may evict, so any handle obtained before
+      // the side loop would be dangling. Re-lookup gives a fresh,
+      // promoted entry (and the side-cover loads have already biased
+      // LRU toward eviction of older entries, so this lookup is what
+      // pins the center for the next render).
+      GfxRenderer::CachedBitmap* centerHandle = cp.empty() ? nullptr : renderer.lookupCachedBitmap(cp);
       if (centerHandle) {
         renderer.drawCachedBitmap(centerHandle, cX, actualY, actualCoverWidth, actualCoverHeight);
       } else {
-        // Construct Bitmap inside this branch — its copy ctor is
-        // deleted so we can't hoist it out and assign to it.
-        Bitmap centerFallbackBitmap(centerFallbackFile);
-        if (centerFallbackBitmap.parseHeaders() == BmpReaderError::Ok) {
-          renderer.drawBitmap(centerFallbackBitmap, cX, actualY, actualCoverWidth, actualCoverHeight);
+        // Budget-tight fall through: stream the cover directly. Open the
+        // file fresh here -- we deliberately closed the probe file above
+        // to keep file-handle pressure bounded across the side-cover loop.
+        FsFile fallbackFile;
+        if (Storage.openFileForRead("HOME", cp, fallbackFile)) {
+          Bitmap centerFallbackBitmap(fallbackFile);
+          if (centerFallbackBitmap.parseHeaders() == BmpReaderError::Ok) {
+            renderer.drawBitmap(centerFallbackBitmap, cX, actualY, actualCoverWidth, actualCoverHeight);
+          }
+          fallbackFile.close();
         }
       }
       cutRoundedCorners(renderer, cX, actualY, actualCoverWidth, actualCoverHeight, bookCornerRadius);
@@ -340,11 +355,6 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
     }
 
   }  // end of if (!skipCarouselCoverLoads)
-
-  // Close the direct-draw fallback's open file (the cached path keeps no
-  // file open -- lookupCachedBitmap closed it the moment the 2bpp pixels
-  // were copied into the cache entry).
-  if (centerFallbackOpened) centerFallbackFile.close();
 
   // One-shot reset so the next render starts from a known default.
   skipCarouselCoverLoads = false;
