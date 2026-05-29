@@ -24,15 +24,4 @@ class EpdFont {
   /// as many following codepoints from text as possible. Returns the
   /// (possibly substituted) codepoint; advances text past consumed chars.
   uint32_t applyLigatures(uint32_t cp, const char*& text) const;
-
-  /// Sets the fallback font consulted when a codepoint is missing from
-  /// this font's coverage and from its on-demand miss handler. Single-
-  /// hop: the fallback's own fallback is not chased. `fallback_` is
-  /// mutable so callers holding `const EpdFont*` (e.g. EpdFontFamily)
-  /// can configure it. Port of rhythmerc/crosspoint-reader 023a8b1.
-  void setFallback(const EpdFont* fallback) const { fallback_ = fallback; }
-  const EpdFont* getFallback() const { return fallback_; }
-
- private:
-  mutable const EpdFont* fallback_ = nullptr;
 };

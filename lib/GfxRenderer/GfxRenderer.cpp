@@ -176,45 +176,6 @@ void GfxRenderer::insertFont(const int fontId, EpdFontFamily font) {
   auto result = fontMap.insert({fontId, font});
   if (!result.second) {
     LOG_ERR("GFX", "Font ID %d already registered, ignoring duplicate", fontId);
-    return;
-  }
-  // CrumBLE (port from rhythmerc 023a8b1): if a glyph fallback is already
-  // wired and this isn't it, point the new family at it. (When the fallback
-  // family itself is registered later, setGlyphFallbackFont retro-wires.)
-  if (glyphFallbackFontId_ != 0 && fontId != glyphFallbackFontId_) {
-    const auto fbIt = fontMap.find(glyphFallbackFontId_);
-    if (fbIt != fontMap.end()) {
-      result.first->second.setFallback(fbIt->second.getRegular());
-    }
-  }
-}
-
-void GfxRenderer::setGlyphFallbackFont(const int fontId) {
-  glyphFallbackFontId_ = fontId;
-  if (fontId == 0) {
-    // Clear: drop the fallback from every registered family.
-    for (auto& [id, family] : fontMap) {
-      family.setFallback(nullptr);
-    }
-    return;
-  }
-  const auto it = fontMap.find(fontId);
-  if (it == fontMap.end()) {
-    LOG_ERR("GFX", "Glyph fallback font %d not registered", fontId);
-    return;
-  }
-  const EpdFont* fallbackFont = it->second.getRegular();
-  if (!fallbackFont) {
-    LOG_ERR("GFX", "Glyph fallback font %d has no regular style", fontId);
-    return;
-  }
-  // Retro-wire fallback into every other registered family. Each family's
-  // setFallback propagates to all four style fonts (which are global
-  // EpdFont instances shared across registrations), so this single pass
-  // covers every EpdFont reachable through the renderer.
-  for (auto& [id, family] : fontMap) {
-    if (id == fontId) continue;
-    family.setFallback(fallbackFont);
   }
 }
 

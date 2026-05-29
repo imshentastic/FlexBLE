@@ -187,18 +187,6 @@ const EpdGlyph* EpdFont::getGlyph(const uint32_t cp) const {
     if (loaded) return loaded;
   }
 
-  // CrumBLE (port from rhythmerc 023a8b1): single-hop glyph fallback.
-  // When this font's own coverage misses, consult the registered
-  // fallback's interval table before substituting REPLACEMENT_GLYPH.
-  // Only findGlyph (interval-only) on the fallback -- not getGlyph --
-  // so we don't chase fallback chains or accidentally substitute the
-  // fallback's REPLACEMENT_GLYPH in place of ours.
-  if (fallback_ && fallback_ != this) {
-    if (const EpdGlyph* glyph = fallback_->findGlyph(cp)) {
-      return glyph;
-    }
-  }
-
   if (cp != REPLACEMENT_GLYPH) {
     return getGlyph(REPLACEMENT_GLYPH);
   }

@@ -201,29 +201,10 @@ EpdFontFamily::GlyphData EpdFontFamily::getGlyphData(const uint32_t cp, const St
     return glyphData;
   }
 
-  // CrumBLE (port from rhythmerc 023a8b1): consult the system-wide
-  // glyph fallback (set via setFallback / GfxRenderer::setGlyphFallbackFont)
-  // before substituting REPLACEMENT_GLYPH. Single-hop: we check the
-  // fallback's own interval table (findGlyph), not its full getGlyph
-  // chain, so the fallback's own fallback / replacement isn't chased.
-  const EpdFont* fb = regular ? regular->getFallback() : nullptr;
-  if (fb && fb != regular) {
-    if (const EpdGlyph* glyph = fb->findGlyph(cp)) {
-      return {fb->data, glyph};
-    }
-  }
-
   if (cp != REPLACEMENT_GLYPH) {
     return getGlyphData(REPLACEMENT_GLYPH, style);
   }
   return {nullptr, nullptr};
-}
-
-void EpdFontFamily::setFallback(const EpdFont* fallback) const {
-  if (regular) regular->setFallback(fallback);
-  if (bold) bold->setFallback(fallback);
-  if (italic) italic->setFallback(fallback);
-  if (boldItalic) boldItalic->setFallback(fallback);
 }
 
 const EpdGlyph* EpdFontFamily::getGlyph(const uint32_t cp, const Style style) const {
