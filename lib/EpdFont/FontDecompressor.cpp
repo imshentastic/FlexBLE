@@ -10,31 +10,12 @@ FontDecompressor::~FontDecompressor() { deinit(); }
 
 bool FontDecompressor::init() {
   clearCache();
-  // CrumBLE #69: reserve the slot-buffer pool while the heap is clean
-  // (before NimBLE / EPUB parser touch it). One-shot allocation; the pool
-  // lives until deinit(). If this fails we still work via per-slot malloc,
-  // just without the fragmentation defense.
-  if (!pageSlotPool) {
-    pageSlotPool = static_cast<uint8_t*>(malloc(kPageSlotPoolBytes));
-    if (pageSlotPool) {
-      LOG_INF("FDC", "Pre-allocated page-slot pool: %u bytes", static_cast<unsigned>(kPageSlotPoolBytes));
-    } else {
-      LOG_ERR("FDC", "Page-slot pool alloc failed (%u bytes); falling back to per-slot malloc",
-              static_cast<unsigned>(kPageSlotPoolBytes));
-    }
-    pageSlotPoolOffset = 0;
-  }
   return true;
 }
 
 void FontDecompressor::deinit() {
   freePageBuffer();
   freeHotGroup();
-  if (pageSlotPool) {
-    free(pageSlotPool);
-    pageSlotPool = nullptr;
-  }
-  pageSlotPoolOffset = 0;
 }
 
 void FontDecompressor::clearCache() {
@@ -49,18 +30,11 @@ void FontDecompressor::clearCache() {
 
 void FontDecompressor::freePageBuffer() {
   for (uint8_t i = 0; i < pageSlotCount; i++) {
-    // Pool-backed slots reset together via the offset rewind below; only
-    // malloc-backed fallback slots need an explicit free here.
-    if (!pageSlots[i].bufferFromPool) {
-      free(pageSlots[i].buffer);
-    }
+    free(pageSlots[i].buffer);
     free(pageSlots[i].glyphs);
     pageSlots[i] = {};
   }
   pageSlotCount = 0;
-  // All slot buffers freed -- rewind the pool's bump pointer so the next
-  // render starts fresh from offset 0.
-  pageSlotPoolOffset = 0;
 }
 
 void FontDecompressor::freeHotGroup() {
@@ -430,26 +404,13 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
 
   stats.uniqueGroupsAccessed = groupCount;
 
-  // Step 3: Allocate page buffer and lookup table.
-  // CrumBLE #69: try the pre-allocated pool first. The pool is one
-  // contiguous 12 KB block reserved at FDC::init() (heap clean, no BT yet),
-  // so even when NimBLE later fragments the heap into many small free
-  // blocks the slot allocation here still succeeds. Falls back to malloc
-  // for slots that don't fit -- typical pages take 3 slots × 2-3 KB so the
-  // pool covers them comfortably.
+  // Step 3: Allocate page buffer and lookup table
   PageSlot& slot = pageSlots[pageSlotCount];
-  slot.bufferFromPool = false;
-  if (pageSlotPool && pageSlotPoolOffset + totalBytes <= kPageSlotPoolBytes) {
-    slot.buffer = pageSlotPool + pageSlotPoolOffset;
-    pageSlotPoolOffset += totalBytes;
-    slot.bufferFromPool = true;
-  } else {
-    slot.buffer = static_cast<uint8_t*>(malloc(totalBytes));
-  }
+  slot.buffer = static_cast<uint8_t*>(malloc(totalBytes));
   slot.glyphs = static_cast<PageGlyphEntry*>(malloc(glyphCount * sizeof(PageGlyphEntry)));
   if (!slot.buffer || !slot.glyphs) {
     LOG_ERR("FDC", "Failed to allocate page buffer (%u bytes, %u glyphs)", totalBytes, glyphCount);
-    if (!slot.bufferFromPool) free(slot.buffer);
+    free(slot.buffer);
     free(slot.glyphs);
     slot = {};
     return glyphCount;
