@@ -282,7 +282,15 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
       // pins the center for the next render).
       GfxRenderer::CachedBitmap* centerHandle = cp.empty() ? nullptr : renderer.lookupCachedBitmap(cp);
       if (centerHandle) {
-        renderer.drawCachedBitmap(centerHandle, cX, actualY, actualCoverWidth, actualCoverHeight);
+        // rhythmerc perf hack #62016fba: Opaque=true writes both inks (the
+        // surrounding fillRect just painted white substrate, so we don't
+        // need the cover to leave white pixels visible). bookCornerRadius
+        // arg makes the blit skip the four corner triangles, which
+        // replaces the per-pixel cutRoundedCorners loop below for the
+        // cached path. Fallback path still pays the cutRoundedCorners cost
+        // since drawBitmap doesn't have the corner-skip arg yet.
+        renderer.drawCachedBitmap<true>(centerHandle, cX, actualY, actualCoverWidth, actualCoverHeight,
+                                        0.0f, 0.0f, bookCornerRadius);
       } else {
         // Budget-tight fall through: stream the cover directly. Open the
         // file fresh here -- we deliberately closed the probe file above
@@ -295,8 +303,8 @@ void LyraFlowTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const 
           }
           fallbackFile.close();
         }
+        cutRoundedCorners(renderer, cX, actualY, actualCoverWidth, actualCoverHeight, bookCornerRadius);
       }
-      cutRoundedCorners(renderer, cX, actualY, actualCoverWidth, actualCoverHeight, bookCornerRadius);
     } else {
     // Placeholder: black lower-2/3 with the cover icon centered just below
     // the divider, then the wrapped book title in white below the icon.

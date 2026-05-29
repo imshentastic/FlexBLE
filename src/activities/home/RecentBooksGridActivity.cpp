@@ -690,11 +690,18 @@ void RecentBooksGridActivity::render(RenderLock&&) {
           } else if (srcRatio < targetRatio) {
             cropY = std::max(0.0f, 1.0f - (srcRatio / targetRatio));
           }
+          // rhythmerc perf hack #62016fba: Opaque=true writes both inks, so
+          // the white substrate fill is only needed for the rounded corners
+          // (which drawCachedBitmap skips). cornerRadius arg on the blit
+          // replaces the follow-up maskRoundedRectOutsideCorners call --
+          // the same r^2 corner pixels are simply never written, instead of
+          // being written then masked back to white.
           renderer.fillRoundedRect(bx, by, bw, bh, kCoverCornerRadius, Color::White);
-          renderer.drawCachedBitmap(handle, bx, by, bw, bh, cropX, cropY);
-          renderer.maskRoundedRectOutsideCorners(bx, by, bw, bh, kCoverCornerRadius, Color::White);
+          renderer.drawCachedBitmap<true>(handle, bx, by, bw, bh, cropX, cropY, kCoverCornerRadius);
           drawn = true;
         } else {
+          // Non-cached fallback path still needs the post-mask because the
+          // direct drawBitmap overload has no cornerRadius arg (yet).
           FsFile file;
           if (Storage.openFileForRead("RBGA", thumbPath, file)) {
             Bitmap bmp(file);

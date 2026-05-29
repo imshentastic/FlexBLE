@@ -798,14 +798,19 @@ void GfxRenderer::drawRect(const int x, const int y, const int width, const int 
   drawLine(x, y, x, y + height - 1, state);
 }
 
-// Border is inside the rectangle
+// Border is inside the rectangle.
+// rhythmerc fix: each edge needs `width - 1 - i` (not `width - i`) so the
+// lineWidth==1 case matches the single-pixel drawRect overload above and
+// every pixel of the border lands strictly inside the (x,y,width,height)
+// box. The old form drew one row/column outside the box on the right and
+// bottom edges, producing an asymmetric 1px overhang.
 void GfxRenderer::drawRect(const int x, const int y, const int width, const int height, const int lineWidth,
                            const bool state) const {
   for (int i = 0; i < lineWidth; i++) {
-    drawLine(x + i, y + i, x + width - i, y + i, state);
-    drawLine(x + width - i, y + i, x + width - i, y + height - i, state);
-    drawLine(x + width - i, y + height - i, x + i, y + height - i, state);
-    drawLine(x + i, y + height - i, x + i, y + i, state);
+    drawLine(x + i, y + i, x + width - 1 - i, y + i, state);
+    drawLine(x + width - 1 - i, y + i, x + width - 1 - i, y + height - 1 - i, state);
+    drawLine(x + width - 1 - i, y + height - 1 - i, x + i, y + height - 1 - i, state);
+    drawLine(x + i, y + height - 1 - i, x + i, y + i, state);
   }
 }
 
@@ -1198,6 +1203,15 @@ void GfxRenderer::fillRoundedRect(const int x, const int y, const int width, con
                                   bool roundTopLeft, bool roundTopRight, bool roundBottomLeft, bool roundBottomRight,
                                   const Color color) const {
   if (width <= 0 || height <= 0) {
+    return;
+  }
+
+  // rhythmerc fast path: cornerRadius == 0 bypasses the roundedSides / maxRadius
+  // math entirely and degenerates to a flat fill. The maxRadius<=0 fallback
+  // below still catches cases where w/h are tiny enough to clamp the radius
+  // to zero, but the explicit-0 hot path is what most flat-rect callers hit.
+  if (cornerRadius <= 0) {
+    fillRectDither(x, y, width, height, color);
     return;
   }
 
