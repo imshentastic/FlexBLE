@@ -274,6 +274,9 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                           "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY));
     add(SettingInfo::Toggle(StrId::STR_CYCLE_SCREENSAVER_ON_TAP, &CrossPointSettings::cycleScreensaverOnTap,
                             "cycleScreensaverOnTap", StrId::STR_CAT_DISPLAY));
+    add(SettingInfo::Enum(StrId::STR_SLEEP_SCREEN_ORDER, &CrossPointSettings::sleepScreenOrder,
+                          {StrId::STR_SLEEP_ORDER_RANDOM, StrId::STR_SLEEP_ORDER_ALPHABETICAL}, "sleepScreenOrder",
+                          StrId::STR_CAT_DISPLAY));
     add(SettingInfo::Enum(StrId::STR_QUICK_RESUME_TIMEOUT, &CrossPointSettings::quickResumeSleepScreen,
                           {StrId::STR_STATE_OFF, StrId::STR_STATE_ON}, "quickResumeSleepScreen",
                           StrId::STR_CAT_DISPLAY));

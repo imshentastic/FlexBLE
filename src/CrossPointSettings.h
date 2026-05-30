@@ -37,6 +37,15 @@ class CrossPointSettings {
     INVERTED_BLACK_AND_WHITE = 2,
     SLEEP_SCREEN_COVER_FILTER_COUNT
   };
+  // Selection order shared by both the on-enter Custom-mode fallback and the
+  // deep-sleep tap-to-cycle path. RANDOM = 0 preserves the long-standing
+  // tap-to-cycle default for upgrading users; ALPHABETICAL walks /.sleep/
+  // in sorted order using a persisted cursor (sleepScreenCycleIndex).
+  enum SLEEP_SCREEN_ORDER : uint8_t {
+    SLEEP_ORDER_RANDOM = 0,
+    SLEEP_ORDER_ALPHABETICAL = 1,
+    SLEEP_SCREEN_ORDER_COUNT
+  };
 
   // Status bar enum - legacy
   enum STATUS_BAR_MODE {
@@ -284,6 +293,14 @@ class CrossPointSettings {
   // and the battery cost (one boot + e-ink half-refresh per cycle) is
   // small enough that opt-out is the right default for new users.
   uint8_t cycleScreensaverOnTap = 1;
+  // Persisted cursor for the SLEEP_ORDER_ALPHABETICAL fallback. Advances on
+  // each cycle and is taken modulo the current image count, so adds/removes
+  // degrade gracefully without needing a reset. Unused when order=Random.
+  uint16_t sleepScreenCycleIndex = 0;
+  // Selection order applied when the Custom sleep mode falls back to the
+  // /.sleep/ rotation (no pinned image, or pinned image missing) and to the
+  // deep-sleep tap-to-cycle path. Default RANDOM preserves prior behavior.
+  uint8_t sleepScreenOrder = SLEEP_ORDER_RANDOM;
   // Status bar settings (statusBar retained for migration only)
   uint8_t statusBar = FULL;
   uint8_t statusBarChapterPageCount = 1;
