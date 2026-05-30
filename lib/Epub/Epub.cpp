@@ -1174,6 +1174,12 @@ bool Epub::getItemSize(const std::string& itemHref, size_t* size) const {
   return ZipFile(filepath).getInflatedFileSize(path.c_str(), size);
 }
 
+bool Epub::getZipLocalHeaderOffset(const std::string& itemHref, uint32_t* offset) const {
+  if (itemHref.empty() || offset == nullptr) return false;
+  const std::string path = FsHelpers::normalisePath(itemHref);
+  return ZipFile(filepath).getLocalHeaderOffset(path.c_str(), offset);
+}
+
 bool Epub::isItemStored(const std::string& itemHref) const {
   const std::string path = FsHelpers::normalisePath(itemHref);
   uint16_t method = 0xFFFF;

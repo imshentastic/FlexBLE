@@ -65,6 +65,13 @@ class ZipFile {
   // The reader uses this to tell whether a chapter can cold-load without the
   // 32 KB inflate window (STORED) and therefore build in place under BLE.
   bool getCompressionMethod(const char* filename, uint16_t* method);
+  // CrumBLE #134: report a file's local-file-header offset in the
+  // ZIP. .cmb stores these to let the reader pull image bytes from
+  // the EPUB ZIP at display time without walking the central
+  // directory (~30 bytes per image read vs ~60 bytes per central-dir
+  // entry x N entries). Wraps the internal cached central-dir
+  // lookup; no behavioural change for existing callers.
+  bool getLocalHeaderOffset(const char* filename, uint32_t* offset);
   // Batch lookup: scan ZIP central dir once and fill sizes for matching targets.
   // targets must be sorted by (hash, len). sizes[target.index] receives uncompressedSize.
   // Returns number of targets matched.

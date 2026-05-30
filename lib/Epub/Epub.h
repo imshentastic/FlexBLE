@@ -110,6 +110,12 @@ class Epub {
                                    bool trailingNullByte = false) const;
   bool readItemContentsToStream(const std::string& itemHref, Print& out, size_t chunkSize) const;
   bool getItemSize(const std::string& itemHref, size_t* size) const;
+  // CrumBLE #134: look up an item's local-file-header offset in the
+  // EPUB ZIP. Used by the .cmb converter to record image refs --
+  // stored as offsets instead of paths so the reader can pull image
+  // bytes from the EPUB without walking the central directory at
+  // display time. Path normalised the same way as readItemContents*.
+  bool getZipLocalHeaderOffset(const std::string& itemHref, uint32_t* offset) const;
   // CrumBLE: true if the item is STORED (uncompressed) in the EPUB zip. A STORED
   // chapter needs no 32 KB DEFLATE window to cold-load, so the reader can build
   // it in place while BLE is connected instead of dropping/re-enabling BLE

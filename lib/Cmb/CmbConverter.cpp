@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "CmbWriter.h"
+#include "FsHelpers/FsHelpers.h"
 
 namespace cmb {
 
@@ -31,18 +32,30 @@ namespace {
 // attribute encountered within a paragraph (paragraph-boundary tag
 // OR a wrapping `<span>` / `<a>`).
 //
-// `<img>` and other media tags are deliberately ignored in this
-// commit -- they need an image ref resolver pass (to look up the
-// EPUB ZIP entry, get the local-file-header offset, register in the
-// .cmb image table) that arrives in the next checkpoint.
+// `<img>` records: the walker resolves the `src` attribute against
+// the chapter file's location, looks up the resulting path's
+// local-file-header offset in the EPUB ZIP (via
+// `Epub::getZipLocalHeaderOffset`), adds an entry to the .cmb image
+// table (`CmbWriter::add_image_ref`, dedup on offset+w+h), and emits
+// a `kCmbBlockImage` paragraph carrying the resulting image key.
+// `<hr>` emits a `kCmbBlockHr` record. Resolution failures (image
+// not in the EPUB ZIP, malformed src, etc.) skip the image silently;
+// the reader treats missing keys as placeholders.
 //
-// The output sink is a std::function<bool(const CmbParagraph&)> that
-// returns false to stop the parse (e.g. on writer I/O failure).
+// The walker holds raw pointers to its writer + Epub for the
+// duration of one feed/flush; lifetime is the caller's
+// responsibility (which is the convert_epub_to_cmb function below,
+// where both objects live on the stack).
 class XhtmlParagraphWalker {
  public:
   using Sink = bool (*)(void* ctx, const CmbParagraph&);
 
-  XhtmlParagraphWalker(Sink sink, void* ctx) : sink_(sink), ctx_(ctx) {}
+  XhtmlParagraphWalker(Sink sink, void* ctx, CmbWriter* writer, Epub* epub, std::string chapter_path)
+      : sink_(sink),
+        ctx_(ctx),
+        writer_(writer),
+        epub_(epub),
+        chapter_path_(std::move(chapter_path)) {}
 
   // Feed a chunk of XHTML bytes through expat. Returns false on
   // expat parse error or sink-rejection; partial state from previous
@@ -104,6 +117,44 @@ class XhtmlParagraphWalker {
   static bool is_underline_tag(const char* name) { return tag_eq(name, "u") || tag_eq(name, "ins"); }
   static bool is_strike_tag(const char* name) { return tag_eq(name, "s") || tag_eq(name, "strike") || tag_eq(name, "del"); }
   static bool is_hard_break_tag(const char* name) { return tag_eq(name, "br"); }
+  static bool is_image_tag(const char* name) { return tag_eq(name, "img") || tag_eq(name, "image"); }
+  static bool is_hr_tag(const char* name) { return tag_eq(name, "hr"); }
+
+  // Resolve a relative URL like "../images/cover.jpg" against the
+  // chapter file's full ZIP path (e.g. "OEBPS/Text/c1.xhtml"). Strips
+  // a leading "/" (treated as ZIP-root-absolute), joins the chapter's
+  // directory prefix onto the relative path, then runs through
+  // FsHelpers::normalisePath to collapse "./" and "../" components.
+  static std::string resolve_against_chapter(const std::string& chapter_path, std::string_view rel) {
+    if (rel.empty()) return {};
+    if (rel.front() == '/') {
+      return std::string(rel.substr(1));
+    }
+    const size_t slash = chapter_path.rfind('/');
+    std::string joined;
+    if (slash != std::string::npos) {
+      joined.assign(chapter_path, 0, slash + 1);
+    }
+    joined.append(rel);
+    return FsHelpers::normalisePath(joined);
+  }
+
+  // Parse a non-negative integer attribute (e.g. width="100"). Strips
+  // a trailing "px" suffix that EPUBs sometimes carry. Returns 0 on
+  // any parse failure -- the .cmb image-ref table interprets 0 as
+  // "resolve at display time" so we can't accidentally store a bad
+  // dimension.
+  static uint16_t parse_dimension_attr(const char* value) {
+    if (value == nullptr) return 0;
+    uint32_t n = 0;
+    const char* p = value;
+    while (*p >= '0' && *p <= '9') {
+      n = n * 10 + static_cast<uint32_t>(*p - '0');
+      if (n > 0xFFFF) return 0;
+      ++p;
+    }
+    return static_cast<uint16_t>(n);
+  }
 
   // ---- event handlers ----
 
@@ -147,9 +198,67 @@ class XhtmlParagraphWalker {
       ++strike_depth_;
       return;
     }
-    // <img>, <hr>, etc. are intentionally not handled here -- left for
-    // a follow-up image-ref + block emitter that needs more EPUB
-    // context than the walker has.
+    if (is_image_tag(name)) {
+      // Emit any text paragraph in progress so the image sits as its
+      // own block. Then resolve the src + width/height attrs and
+      // record an image-ref entry; the writer dedups on (offset, w, h).
+      std::string src;
+      uint16_t attr_w = 0;
+      uint16_t attr_h = 0;
+      std::string anchor_id;
+      for (int i = 0; atts && atts[i]; i += 2) {
+        if (tag_eq(atts[i], "src")) {
+          src = atts[i + 1];
+        } else if (tag_eq(atts[i], "width")) {
+          attr_w = parse_dimension_attr(atts[i + 1]);
+        } else if (tag_eq(atts[i], "height")) {
+          attr_h = parse_dimension_attr(atts[i + 1]);
+        } else if (tag_eq(atts[i], "id")) {
+          anchor_id = atts[i + 1];
+        } else if (tag_eq(atts[i], "xlink:href")) {
+          // SVG <image> uses xlink:href instead of src.
+          if (src.empty()) src = atts[i + 1];
+        }
+      }
+
+      // Flush any pending text paragraph. If src resolution fails,
+      // we still keep the flush -- the image markup is consumed
+      // either way (no point keeping it accumulating in text).
+      emit_pending();
+
+      if (src.empty() || writer_ == nullptr || epub_ == nullptr) {
+        return;
+      }
+      const std::string resolved = resolve_against_chapter(chapter_path_, src);
+      if (resolved.empty()) return;
+
+      uint32_t local_header_offset = 0;
+      if (!epub_->getZipLocalHeaderOffset(resolved, &local_header_offset)) {
+        // Image referenced by the XHTML but not present in the ZIP
+        // (broken EPUB) -- skip silently; reader handles missing key
+        // by showing a placeholder.
+        return;
+      }
+      const uint16_t image_key = writer_->add_image_ref(local_header_offset, attr_w, attr_h);
+
+      CmbParagraph p;
+      p.type = kCmbBlockImage;
+      p.image_key = image_key;
+      p.anchor_id = std::move(anchor_id);
+      if (sink_ != nullptr && !sink_(ctx_, p)) {
+        sink_failed_ = true;
+      }
+      return;
+    }
+    if (is_hr_tag(name)) {
+      emit_pending();
+      CmbParagraph p;
+      p.type = kCmbBlockHr;
+      if (sink_ != nullptr && !sink_(ctx_, p)) {
+        sink_failed_ = true;
+      }
+      return;
+    }
   }
 
   void on_end(const char* name) {
@@ -288,6 +397,13 @@ class XhtmlParagraphWalker {
   void* ctx_ = nullptr;
   bool sink_failed_ = false;
 
+  // For <img> resolution: chapter file's path inside the EPUB ZIP
+  // (full path; relative srcs are resolved against this), plus the
+  // Epub + CmbWriter used to look up + register image refs.
+  CmbWriter* writer_ = nullptr;
+  Epub* epub_ = nullptr;
+  std::string chapter_path_;
+
   // Per-paragraph accumulator.
   std::string current_text_;
   std::vector<CmbStyleRun> current_runs_;
@@ -337,8 +453,11 @@ bool convert_epub_to_cmb(Epub& book, const char* output_path) {
     if (raw != nullptr && raw_size > 0) {
       // Fresh walker per chapter -- expat carries some per-document
       // state (DTD declarations, namespace tables) we don't want to
-      // bleed across spine items.
-      XhtmlParagraphWalker walker(writer_sink, &ctx);
+      // bleed across spine items. The chapter's normalised full path
+      // is what <img src> resolution joins against.
+      const std::string chapter_full_path =
+          FsHelpers::normalisePath(book.getBasePath() + entry.href);
+      XhtmlParagraphWalker walker(writer_sink, &ctx, &w, &book, chapter_full_path);
       const bool parsed_ok = walker.feed(reinterpret_cast<const char*>(raw), raw_size, /*is_final=*/true);
       // Flush whatever the walker buffered past its last paragraph
       // close (handles XHTML that ends without a closing </p>).
