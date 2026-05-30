@@ -49,13 +49,15 @@ class Epub {
   // mirror the slow path's: bookMetadataCache is loaded, cssFiles
   // is set, sections cache is invalidated if !skipLoadingCss.
   bool tryLoadFromCmb(bool skipLoadingCss);
-  // Sibling path: `foo.epub` -> `foo.cmb`. Returns empty when the
-  // input has no detectable extension.
-  static std::string deriveCmbPath(const std::string& epubPath);
 
  public:
   explicit Epub(std::string filepath, const std::string& cacheDir);
   ~Epub() = default;
+  // Sibling path: `foo.epub` -> `foo.cmb`. Returns empty when the
+  // input has no detectable extension. Public so other parts of the
+  // reader (e.g. Section::createSectionFile's CMB fast-path dispatch)
+  // can locate the sidecar without re-implementing the suffix swap.
+  static std::string deriveCmbPath(const std::string& epubPath);
   static std::string cachePathForFilePath(const std::string& filepath, const std::string& cacheDir);
   std::string& getBasePath() { return contentBasePath; }
   bool load(bool buildIfMissing = true, bool skipLoadingCss = false);

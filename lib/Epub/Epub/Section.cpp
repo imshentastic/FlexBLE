@@ -9,6 +9,7 @@
 #include "Epub/css/CssParser.h"
 #include "Page.h"
 #include "hyphenation/Hyphenator.h"
+#include "parsers/ChapterCmbSlimBuilder.h"
 #include "parsers/ChapterHtmlSlimParser.h"
 
 namespace {
@@ -250,6 +251,31 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
   {
     const auto sectionsDir = epub->getCachePath() + "/sections";
     Storage.mkdir(sectionsDir.c_str());
+  }
+
+  // CrumBLE: Slice 2 attempt A -- if the book has a .cmb sidecar, try to
+  // build the section cache from it directly. Skips the readItemContentsToStream
+  // call (and therefore the 32 KB inflate window), and skips the expat parse
+  // entirely. On any failure, fall through to the XHTML path so the chapter
+  // still renders.
+  {
+    const std::string cmbPath = Epub::deriveCmbPath(epub->getPath());
+    if (!cmbPath.empty() && Storage.exists(cmbPath.c_str())) {
+      if (tryBuildSectionFromCmb(cmbPath, tmpSectionPath, fontId, lineCompression, extraParagraphSpacing,
+                                 forceParagraphIndents, paragraphAlignment, viewportWidth, viewportHeight,
+                                 hyphenationEnabled, embeddedStyle, imageRendering, bionicReadingEnabled,
+                                 guideReadingEnabled, popupFn, buildStartMaxAlloc, imagesWereSuppressed,
+                                 layoutAbortedForLowMemory)) {
+        return true;
+      }
+      LOG_INF("SCT", ".cmb build failed for spine=%d, falling back to XHTML parser", spineIndex);
+      // tryBuildSectionFromCmb is responsible for cleaning up its own temp file
+      // on failure, but be defensive in case any path leaked the tmpSection.
+      if (Storage.exists(tmpSectionPath.c_str())) {
+        Storage.remove(tmpSectionPath.c_str());
+      }
+      pageCount = 0;
+    }
   }
 
   // Retry logic for SD card timing issues
@@ -679,4 +705,140 @@ std::optional<uint16_t> Section::getPageForListItemIndex(const uint16_t liIndex)
   }
 
   return resultPage;
+}
+
+bool Section::tryBuildSectionFromCmb(const std::string& cmbPath, const std::string& tmpSectionPath, const int fontId,
+                                     const float lineCompression, const bool extraParagraphSpacing,
+                                     const bool forceParagraphIndents, const uint8_t paragraphAlignment,
+                                     const uint16_t viewportWidth, const uint16_t viewportHeight,
+                                     const bool hyphenationEnabled, const bool embeddedStyle,
+                                     const uint8_t imageRendering, const bool bionicReadingEnabled,
+                                     const bool guideReadingEnabled, const std::function<void()>& popupFn,
+                                     const uint32_t buildStartMaxAlloc, bool* imagesWereSuppressed,
+                                     bool* layoutAbortedForLowMemory) {
+  if (Storage.exists(tmpSectionPath.c_str())) {
+    Storage.remove(tmpSectionPath.c_str());
+  }
+  if (!Storage.openFileForWrite("SCT", tmpSectionPath, file)) {
+    return false;
+  }
+  if (!writeSectionFileHeader(fontId, lineCompression, extraParagraphSpacing, forceParagraphIndents, paragraphAlignment,
+                              viewportWidth, viewportHeight, hyphenationEnabled, embeddedStyle, imageRendering,
+                              bionicReadingEnabled, guideReadingEnabled)) {
+    LOG_ERR("SCT", "Failed to write section header (CMB path)");
+    file.close();
+    Storage.remove(tmpSectionPath.c_str());
+    return false;
+  }
+
+  std::vector<PageLutEntry> lut = {};
+
+  LOG_DBG("SCT", "CMB build start: spine=%d free=%u maxAlloc=%u", spineIndex, ESP.getFreeHeap(),
+          ESP.getMaxAllocHeap());
+
+  ChapterCmbSlimBuilder builder(
+      cmbPath, renderer, fontId, lineCompression, extraParagraphSpacing, forceParagraphIndents, paragraphAlignment,
+      viewportWidth, viewportHeight, hyphenationEnabled, bionicReadingEnabled, guideReadingEnabled, spineIndex,
+      [this, &lut](std::unique_ptr<Page> page, const uint16_t paragraphIndex, const uint16_t listItemIndex) {
+        lut.push_back({this->onPageComplete(std::move(page)), paragraphIndex, listItemIndex});
+      },
+      popupFn);
+  Hyphenator::setPreferredLanguage(epub->getLanguage());
+  const bool success = builder.parseAndBuildPages();
+  LOG_DBG("SCT", "CMB build done: spine=%d success=%u pages=%u free=%u maxAlloc=%u", spineIndex, success, pageCount,
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+  if (!success) {
+    LOG_ERR("SCT", "CMB build failed (spine=%d)", spineIndex);
+    file.close();
+    Storage.remove(tmpSectionPath.c_str());
+    return false;
+  }
+
+  const bool builtImagesSuppressed = builder.wasLowMemoryFallbackTriggered();
+  if (imagesWereSuppressed) *imagesWereSuppressed = builtImagesSuppressed;
+  if (layoutAbortedForLowMemory) *layoutAbortedForLowMemory = builder.wasLowMemoryAbortTriggered();
+
+  // The remainder mirrors the XHTML path: LUT, anchor table, paragraph LUT,
+  // li LUT, then patch the header with finalized offsets and pageCount.
+  const uint32_t lutOffset = file.position();
+  bool hasFailedLutRecords = false;
+  for (const auto& entry : lut) {
+    if (entry.fileOffset == 0) {
+      hasFailedLutRecords = true;
+      break;
+    }
+    if (!serialization::tryWritePod(file, entry.fileOffset)) {
+      hasFailedLutRecords = true;
+      break;
+    }
+  }
+  if (hasFailedLutRecords) {
+    LOG_ERR("SCT", "CMB build: failed LUT writes");
+    file.close();
+    Storage.remove(tmpSectionPath.c_str());
+    return false;
+  }
+
+  const uint32_t anchorMapOffset = file.position();
+  const auto& anchors = builder.getAnchors();
+  if (!serialization::tryWritePod(file, static_cast<uint16_t>(anchors.size()))) {
+    file.close();
+    Storage.remove(tmpSectionPath.c_str());
+    return false;
+  }
+  for (const auto& [anchor, page] : anchors) {
+    if (!serialization::tryWriteString(file, anchor) || !serialization::tryWritePod(file, page)) {
+      file.close();
+      Storage.remove(tmpSectionPath.c_str());
+      return false;
+    }
+  }
+
+  const uint32_t paragraphLutOffset = file.position();
+  if (!serialization::tryWritePod(file, static_cast<uint16_t>(lut.size()))) {
+    file.close();
+    Storage.remove(tmpSectionPath.c_str());
+    return false;
+  }
+  for (const auto& entry : lut) {
+    if (!serialization::tryWritePod(file, entry.paragraphIndex)) {
+      file.close();
+      Storage.remove(tmpSectionPath.c_str());
+      return false;
+    }
+  }
+
+  const uint32_t liLutFileOffset = static_cast<uint32_t>(file.position());
+  for (const auto& entry : lut) {
+    if (!serialization::tryWritePod(file, entry.listItemIndex)) {
+      file.close();
+      Storage.remove(tmpSectionPath.c_str());
+      return false;
+    }
+  }
+
+  if (!file.seek(HEADER_SIZE - sizeof(uint32_t) * 4 - sizeof(pageCount) - sizeof(uint32_t) - sizeof(bool)) ||
+      !serialization::tryWritePod(file, builtImagesSuppressed) ||
+      !serialization::tryWritePod(file, buildStartMaxAlloc) || !serialization::tryWritePod(file, pageCount) ||
+      !serialization::tryWritePod(file, lutOffset) || !serialization::tryWritePod(file, anchorMapOffset) ||
+      !serialization::tryWritePod(file, paragraphLutOffset) ||
+      !serialization::tryWritePod(file, liLutFileOffset) || !file.sync()) {
+    LOG_ERR("SCT", "Failed to finalize CMB section cache");
+    file.close();
+    Storage.remove(tmpSectionPath.c_str());
+    return false;
+  }
+  file.close();
+  if (Storage.exists(filePath.c_str())) {
+    Storage.remove(filePath.c_str());
+  }
+  if (!Storage.rename(tmpSectionPath.c_str(), filePath.c_str())) {
+    LOG_ERR("SCT", "Failed to promote CMB section cache into place");
+    Storage.remove(tmpSectionPath.c_str());
+    return false;
+  }
+  LOG_DBG("SCT", "Create section done (CMB): spine=%d pages=%u free=%u maxAlloc=%u", spineIndex, pageCount,
+          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  return true;
 }
