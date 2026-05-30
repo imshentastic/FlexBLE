@@ -134,6 +134,23 @@ class Epub {
   const std::string& getCoverItemHref() const;
   const std::string& getTextReferenceHref() const;
   const std::vector<std::string>& getCssFiles() const { return cssFiles; }
+  // CrumBLE #134: opportunistic .cmb writer. If no .cmb sidecar
+  // exists next to the EPUB, converts the currently-loaded book and
+  // writes one alongside the .epub. Subsequent opens (or post-
+  // cache-clear reopens) pick it up via the .cmb fast path in
+  // load(). Caller is expected to call this AFTER a successful
+  // load() -- the conversion path depends on bookMetadataCache
+  // being populated.
+  //
+  // Best-effort: returns true if a .cmb file exists (already there
+  // OR just written), false on any failure. On failure, partial
+  // output is removed so the next call retries cleanly.
+  //
+  // Synchronous and can take several seconds on big books (one
+  // expat pass per chapter). Called automatically at the end of
+  // load() so the next open hits the fast path; reader / utility
+  // code can call it explicitly if they want to force a refresh.
+  bool ensureCmbExists();
   // CrumBLE: true if the item is STORED (uncompressed) in the EPUB zip. A STORED
   // chapter needs no 32 KB DEFLATE window to cold-load, so the reader can build
   // it in place while BLE is connected instead of dropping/re-enabling BLE

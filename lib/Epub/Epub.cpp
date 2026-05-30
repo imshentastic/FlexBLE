@@ -1,5 +1,6 @@
 #include "Epub.h"
 
+#include <CmbConverter.h>
 #include <CmbReader.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
@@ -647,6 +648,11 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
       }
     }
     LOG_DBG("EBP", "Loaded ePub: %s", filepath.c_str());
+    // CrumBLE #134: opportunistic .cmb write. No-op on subsequent
+    // book-bin reloads (file already exists). On post-cache-clear
+    // reload it'd be slow but the user just cleared their cache, so
+    // they're already in "this is going to take a moment" territory.
+    ensureCmbExists();
     return true;
   }
 
@@ -763,6 +769,12 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
   }
 
   LOG_DBG("EBP", "Loaded ePub: %s", filepath.c_str());
+  // CrumBLE #134: after a successful slow-path build, write a .cmb
+  // sidecar so the next post-cache-clear reopen (or any user with
+  // multiple devices sharing the SD) hits the fast path. Synchronous
+  // here -- the slow path already took several seconds on big books,
+  // so the additional conversion time is in similar territory.
+  ensureCmbExists();
   return true;
 }
 
@@ -1317,6 +1329,39 @@ bool Epub::tryLoadFromCmb(const bool skipLoadingCss) {
     parseCssFiles();
     Storage.removeDir((cachePath + "/sections").c_str());
   }
+  return true;
+}
+
+bool Epub::ensureCmbExists() {
+  const std::string cmbPath = deriveCmbPath(filepath);
+  if (cmbPath.empty()) return false;
+  if (Storage.exists(cmbPath.c_str())) return true;
+
+  // Conversion needs bookMetadataCache loaded (the converter reads
+  // spine + metadata via Epub accessors which all go through the
+  // cache). Bail rather than write a broken .cmb.
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+    LOG_DBG("EBP", "ensureCmbExists: cache not loaded; skipping");
+    return false;
+  }
+
+  const uint32_t start = millis();
+  LOG_DBG("EBP", "ensureCmbExists: converting %s -> %s", filepath.c_str(), cmbPath.c_str());
+
+  const bool ok = cmb::convert_epub_to_cmb(*this, cmbPath.c_str());
+  if (!ok) {
+    LOG_ERR("EBP", "ensureCmbExists: conversion failed for %s", filepath.c_str());
+    // Remove any partial output so the next call retries cleanly. If
+    // the file was created and partially written before failure, the
+    // CmbReader's magic-check would reject it; but cleaning up keeps
+    // SD tidy.
+    if (Storage.exists(cmbPath.c_str())) {
+      Storage.remove(cmbPath.c_str());
+    }
+    return false;
+  }
+
+  LOG_INF("EBP", "ensureCmbExists: wrote .cmb in %lu ms: %s", millis() - start, cmbPath.c_str());
   return true;
 }
 
