@@ -105,7 +105,14 @@ class CmbWriter {
   // chapter table, image refs, metadata) and patches the header in
   // at offset 0. Must be called once after all chapters are done;
   // subsequent close() will leave the file valid.
-  bool finish(const std::string& metadata_title, const std::string& metadata_author);
+  //
+  // spine_files MUST be `chapter_count`-long (one href per chapter,
+  // in spine order). These are the EPUB-internal paths the reader
+  // uses to identify chapter content -- v2 of the format carries
+  // them so `Epub::load()` can populate `BookMetadataCache` from
+  // the .cmb without re-parsing content.opf.
+  bool finish(const std::string& metadata_title, const std::string& metadata_author,
+              const std::vector<std::string>& spine_files);
 
  private:
   BufferedFileWriter bw_;

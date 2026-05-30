@@ -63,11 +63,18 @@ inline constexpr uint8_t kCmbMagic[4] = {'C', 'M', 'B', '1'};
 
 // Version history:
 //   1  -- initial layout (header + chapter table + image refs + anchors
-//         + metadata). Per-chapter content is opaque blob.
-//   2  -- (planned) adds cover_thumb_offset + thumb table for pre-baked
+//         + metadata{title, author}). Internal-only; never shipped.
+//   2  -- metadata blob extended with spine entry hrefs so the reader
+//         can populate Epub::BookMetadataCache from .cmb without
+//         walking the EPUB ZIP central directory + content.opf.
+//         Layout: title_len/title, author_len/author, spine_count,
+//         spine_entries[{href_len, href}], toc_count (stub for now).
+//   3  -- (planned) adds TOC entries (title + href + anchor + level
+//         per entry) so chapter selection UI works from .cmb alone.
+//   4  -- (planned) adds cover_thumb_offset + thumb table for pre-baked
 //         cover BMPs at all device-rendered sizes. See companion task
 //         "Pre-bake cover thumbs inside .cmb file".
-inline constexpr uint16_t kCmbVersion = 1;
+inline constexpr uint16_t kCmbVersion = 2;
 
 // ---------------------------------------------------------------------------
 // Header (32 bytes, fixed)

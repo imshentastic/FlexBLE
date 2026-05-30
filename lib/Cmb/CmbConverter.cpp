@@ -442,7 +442,12 @@ bool convert_epub_to_cmb(Epub& book, const char* output_path) {
 
   WriterSinkCtx ctx{&w, false};
 
+  // Collect spine hrefs as we walk so the writer can serialise them
+  // into the .cmb v2 metadata blob. Indexed by spine order (= the
+  // chapter index in .cmb), matching what BookMetadataCache expects.
   const int chapter_count = book.getSpineItemsCount();
+  std::vector<std::string> spine_hrefs;
+  spine_hrefs.reserve(chapter_count);
   for (int ci = 0; ci < chapter_count; ++ci) {
     const auto entry = book.getSpineItem(ci);
 
@@ -473,9 +478,10 @@ bool convert_epub_to_cmb(Epub& book, const char* output_path) {
     }
     std::free(raw);
     w.end_chapter();
+    spine_hrefs.push_back(entry.href);
   }
 
-  if (!w.finish(book.getTitle(), book.getAuthor())) {
+  if (!w.finish(book.getTitle(), book.getAuthor(), spine_hrefs)) {
     w.close();
     return false;
   }

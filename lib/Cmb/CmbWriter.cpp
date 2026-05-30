@@ -285,9 +285,17 @@ uint16_t CmbWriter::add_image_ref(uint32_t local_header_offset, uint16_t width, 
   return static_cast<uint16_t>(images_.size() - 1);
 }
 
-bool CmbWriter::finish(const std::string& metadata_title, const std::string& metadata_author) {
+bool CmbWriter::finish(const std::string& metadata_title, const std::string& metadata_author,
+                       const std::vector<std::string>& spine_files) {
   if (!bw_.is_open()) return false;
   if (in_chapter_) return false;  // caller forgot end_chapter()
+  // Spine count is u16 in the metadata blob.
+  if (spine_files.size() > 0xFFFF) return false;
+  // The spine table is keyed by chapter index; the two MUST match in
+  // length so Epub::load can populate BookMetadataCache one entry
+  // per chapter. The caller is responsible (typically the EPUB->.cmb
+  // converter passes book.getSpineItem(i).href in order).
+  if (!spine_files.empty() && spine_files.size() != chapters_.size()) return false;
 
   // ---- chapter table ----
   const uint32_t chapter_offset = bw_.tell();
@@ -319,22 +327,42 @@ bool CmbWriter::finish(const std::string& metadata_title, const std::string& met
   cmb_write_u32(anchor_count_buf, 0);
   if (!bw_.write(anchor_count_buf, sizeof(anchor_count_buf))) return false;
 
-  // ---- metadata + TOC blob ----
-  // Minimal v1 layout:
+  // ---- metadata + TOC blob (v2 layout) ----
   //   title_len:u16, title:bytes
   //   author_len:u16, author:bytes
-  //   toc_entry_count:u16, toc_entries...  (toc reserved for follow-up)
+  //   spine_count:u16
+  //   spine_entries[spine_count]: { href_len:u16, href:bytes }
+  //   toc_count:u16, toc_entries... (TOC entries stub for v2; populated
+  //                                  in a later format bump)
+  //
+  // v1 stored only title + author + (mislabelled) toc_count. v2 inserts
+  // the spine table between author and toc_count -- v1 readers fail the
+  // version check and bail before reaching this blob.
   const uint32_t meta_offset = bw_.tell();
   {
     uint8_t lenbuf[2];
+
+    // title
     cmb_write_u16(lenbuf, static_cast<uint16_t>(metadata_title.size()));
     if (!bw_.write(lenbuf, sizeof(lenbuf))) return false;
     if (!metadata_title.empty() && !bw_.write(metadata_title.data(), metadata_title.size())) return false;
 
+    // author
     cmb_write_u16(lenbuf, static_cast<uint16_t>(metadata_author.size()));
     if (!bw_.write(lenbuf, sizeof(lenbuf))) return false;
     if (!metadata_author.empty() && !bw_.write(metadata_author.data(), metadata_author.size())) return false;
 
+    // spine_count + spine_entries
+    cmb_write_u16(lenbuf, static_cast<uint16_t>(spine_files.size()));
+    if (!bw_.write(lenbuf, sizeof(lenbuf))) return false;
+    for (const std::string& href : spine_files) {
+      if (href.size() > 0xFFFF) return false;  // href_len is u16
+      cmb_write_u16(lenbuf, static_cast<uint16_t>(href.size()));
+      if (!bw_.write(lenbuf, sizeof(lenbuf))) return false;
+      if (!href.empty() && !bw_.write(href.data(), href.size())) return false;
+    }
+
+    // toc_count (stub)
     uint8_t toc_count[2];
     cmb_write_u16(toc_count, 0);
     if (!bw_.write(toc_count, sizeof(toc_count))) return false;

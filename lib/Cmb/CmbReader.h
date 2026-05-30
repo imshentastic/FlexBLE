@@ -75,6 +75,10 @@ class CmbReader {
   // Metadata loaded at open(). Empty if the file didn't include them.
   const std::string& metadata_title() const { return metadata_title_; }
   const std::string& metadata_author() const { return metadata_author_; }
+  // Spine entry hrefs in spine order (same indexing as chapter_count).
+  // Used by Epub::load to populate BookMetadataCache without parsing
+  // the EPUB's content.opf. Empty when the .cmb predates v2.
+  const std::vector<std::string>& spine_files() const { return spine_files_; }
 
  private:
   FILE* f_ = nullptr;
@@ -85,6 +89,7 @@ class CmbReader {
   std::vector<CmbImageRef> images_;
   std::string metadata_title_;
   std::string metadata_author_;
+  std::vector<std::string> spine_files_;
 
   // Helper: seek + read one paragraph record at a known absolute
   // file offset. Used by load_paragraph after the descriptor lookup.

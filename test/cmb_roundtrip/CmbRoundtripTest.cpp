@@ -43,7 +43,7 @@ void test_empty_book(const char* path) {
   {
     cmb::CmbWriter w;
     CMB_EXPECT(w.open(path));
-    CMB_EXPECT(w.finish("Title", "Author"));
+    CMB_EXPECT(w.finish("Title", "Author", {}));
   }
   cmb::CmbReader r;
   CMB_EXPECT(r.open(path));
@@ -77,12 +77,19 @@ void test_text_paragraphs(const char* path) {
       }
       w.end_chapter();
     }
-    CMB_EXPECT(w.finish("Round Trip", "Test Author"));
+    const std::vector<std::string> spine = {"OEBPS/c0.xhtml", "OEBPS/c1.xhtml", "OEBPS/c2.xhtml"};
+    CMB_EXPECT(w.finish("Round Trip", "Test Author", spine));
   }
 
   cmb::CmbReader r;
   CMB_EXPECT(r.open(path));
   CMB_EXPECT_EQ(r.chapter_count(), static_cast<uint16_t>(chapters.size()));
+
+  // v2 spine file round-trip.
+  CMB_EXPECT_EQ(r.spine_files().size(), static_cast<size_t>(3));
+  CMB_EXPECT_EQ(r.spine_files()[0], std::string("OEBPS/c0.xhtml"));
+  CMB_EXPECT_EQ(r.spine_files()[1], std::string("OEBPS/c1.xhtml"));
+  CMB_EXPECT_EQ(r.spine_files()[2], std::string("OEBPS/c2.xhtml"));
 
   uint32_t expected_total = 0;
   for (size_t ci = 0; ci < chapters.size(); ++ci) {
@@ -151,7 +158,7 @@ void test_image_refs_and_blocks(const char* path) {
       CMB_EXPECT(w.write_paragraph(p));
     }
     w.end_chapter();
-    CMB_EXPECT(w.finish("Mixed Blocks", "Author"));
+    CMB_EXPECT(w.finish("Mixed Blocks", "Author", {"OEBPS/single.xhtml"}));
   }
 
   cmb::CmbReader r;
@@ -236,7 +243,7 @@ void test_styled_paragraphs(const char* path) {
     }
 
     w.end_chapter();
-    CMB_EXPECT(w.finish("Styled", "Tester"));
+    CMB_EXPECT(w.finish("Styled", "Tester", {"OEBPS/ch.xhtml"}));
   }
 
   cmb::CmbReader r;
