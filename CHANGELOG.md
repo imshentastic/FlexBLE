@@ -1,5 +1,13 @@
 # Changelog
 
+## [crumble-v3.7.1] - 2026-05-30
+
+### Added
+- **Sleep Screen Order**: new Display setting (Random / Alphabetical) shared by both the Custom-mode fallback (no pinned image) and the deep-sleep tap-to-cycle path. Random (default) preserves prior behavior — anti-recent-repeat random pick from `/.sleep/`. Alphabetical walks `/.sleep/` in sorted order using a persisted cursor that survives reboot, so curated collections rotate in deterministic order.
+
+### Fixed
+- Transparent PNG sleep images now compose over the last reader page even when sleeping from Home/Settings, not only when sleeping from inside a reader. The `/.crosspoint/last_reader_page.bin` snapshot is already written on reader-to-home exit, but `composePngOverReaderPage` was gating its use on the current activity being a reader, so non-reader sleep entries dropped the cached page and showed the PNG over a blank background. Cache restoration now relies on the snapshot file's own existence check — safe because the file is only ever written from reader contexts, never from Home/Settings, so it can't surface a stale non-book background.
+
 ## [crumble-v3.7.0] - 2026-05-30
 
 ### Added
