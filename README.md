@@ -2,7 +2,7 @@
 
 # CrumBLE
 
-**A personal fork of [CrossInk](https://github.com/uxjulia/CrossInk) for the Xteink X4 / X3 — adds a Bluetooth page-turner, a Collections system + Bookshelf grid, an EPUB optimizer that pre-renders images for Bluetooth reading, an on-demand sleep-screen cycler, and a quick-settings drawer inside books (among other things!).**
+**A personal fork of [CrossInk](https://github.com/uxjulia/CrossInk) for the Xteink X4 — adds a Bluetooth page-turner, a Collections system, Bookshelf grid, an EPUB optimizer that pre-renders images for Bluetooth reading, an on-demand sleep-screen cycler, and a quick-settings drawer inside books (among other things!).**
 
 </div>
 
@@ -18,16 +18,12 @@ As of v3.0.0, CrumBLE is rebased onto **CrossInk 1.3** (a fresh upstream base ra
 
 ### Collections
 
-A full collections system with virtual + user-defined collections, all "swipeable" from the home shelf:
+Not a fan of always digging into file explorer to find your books? Want to group your books in a display on the home screen that makes sense? Fully customizable collection system that helps you access, organize, and display your books regardless of your file structure.
 
-- **Virtual collections** computed lazily: **All Books**, **Favorites**, **Recent**, **Currently Reading**, **Finished**, **Unopened**
-- **User collections** you create and rename freely
-- **Long-press Confirm** on a book → toggle membership in any collection
-- **Long-press shelf header** → New collection, Sort by, Rearrange, Show/Hide virtuals, Rescan library
-- **Rearrange flow** lets you set the L/R cycle order by tapping collections in your desired sequence (Confirm reads "Mark 1", "Mark 2", ..., Back reads "Undo" mid-flow). Persisted across reboots.
-- **Add/Remove Books** multi-select picker so you can curate a whole collection in one pass
+- **Default collections**: **All Books**, **Recently Added**, **Unopened**, and **Finished**
+- **User collections** Make your own and add any books of your choosing
 - **Per-collection sort** (A–Z / Z–A / Author A–Z / Author Z–A / Date Added), persisted in `collections.json`
-- Optional **series collapse** that folds same-series books into one spine glyph on the shelf; tapping the spine opens a mini-picker of the series members
+- Optional **series collapse** that folds same-series books into one spine glyph on the shelf; tapping the spine opens a mini-picker of the series members (in Beta)
 
 ### Bookshelf grid
 
@@ -37,7 +33,6 @@ Browse the active collection as a 3×3 grid of cover thumbnails instead of cycli
 - **Short-press** the carousel header (collection title) opens the same grid
 - **Long-press** the Bookshelf icon brings up a full-screen picker to switch collections without leaving the grid
 - Cover thumbs are pre-cached at exact cell dimensions, so revisits don't flash a "Loading" popup looking for thumbs that already exist
-- Failed cover thumbnails are remembered (per book) so a corrupt cover doesn't trigger an infinite retry loop on every render
 
 <p align="center">
   <img src="./docs/images/crumble/03-collections-shelf.png" alt="Collections shelf with series collapse" width="280"/>
@@ -46,25 +41,24 @@ Browse the active collection as a 3×3 grid of cover thumbnails instead of cycli
 
 ### Bluetooth remote page-turner
 
-Pairing is done from WITHIN A BOOK ONLY! Click on the "Confirm" button while inside a book to open the reader menu. Navigate to Bluetooth and follow the instructions there to pair a BT HID remote (e.g. an [IINE GameBrick](https://www.amazon.com/dp/B0CK4DNQM4)) and use it as a wireless page-turner. BLE auto-disables when you exit the book to keep heap pressure off the parser, so you will need to reconect again when you enter a new book.
+Pairing is done from WITHIN A BOOK ONLY! Click on the "Confirm" button while inside a book to open the reader menu. Navigate to Bluetooth and follow the instructions there to pair a BT HID remote (e.g. an [IINE GameBrick](https://www.amazon.com/dp/B0CK4DNQM4) or Free2) and use it as a wireless page-turner. BLE auto-disables when you exit the book to keep heap pressure off the parser, so you will need to reconnect again when you enter a new book.
 
-Shout-out to [thedrunkpenguin](https://github.com/thedrunkpenguin/crosspoint-reader-ble/) for his BT changes which I learned much from and added some memory changes to make it all fit.
+A **BT Quick Connect** action lives at the bottom of the [Global Book Settings drawer](#global-book-settings-drawer) for one-step re-connect to your last bonded remote without re-navigating the menu tree (long-press confirm when inside book). Once connected, the option becomes **BT Disconnect**. When I read, I open my book, open the drawer, press up twice and use the BT Quick Connect button to fast pair with my controller.
 
-A **BT Quick Connect** action lives in the [Global Book Settings drawer](#global-book-settings-drawer) for one-step re-connect to your last bonded remote without re-navigating the menu tree. Once linked, the same entry becomes **BT Disconnect**. A persistent "Connecting Bluetooth..." popup spans the NimBLE init and GATT handshake so the page doesn't sit unchanged for several seconds without feedback.
-
-For image-heavy books, two complementary paths keep the link stable:
-- **EPUB optimizer Bluetooth pre-rendering** (web optimizer at `/optimizer`) pre-renders each image to a per-device pixel cache (`.pxc`) at your screen's exact viewport, then bakes a small manifest of the settings the bake was made against. Image-heavy chapters then render over Bluetooth without thrashing the link or needing the JPEG/PNG decoder. If your current font/margin/image-rendering/orientation differs from the bake, the reader prompts on Quick Connect: switch back to the baked layout, keep your settings and reflow, or cancel.
-- **BT No Images Quick Connect** is a one-tap drawer action for books that weren't pre-rendered. It suppresses image decode at render time (image regions show a thin placeholder border) so the heap stays clear for NimBLE.
+Bluetooth will always be a challenge for this device, but I'm trying to bring the capability forth without disabling WiFi, full image/css disabling, etc. There are still some books (and I expect most manga/comics) that BLE will not work for but I'm continuing to optimize. Two additional options:
+- **EPUB optimizer Bluetooth enhancement**: The built-in EPUB optimizer (during File Transfer) now has some additional capabilities through the highly recommended BT toggle. Besides the baseline JPEG conversion that is already done, we can pre-render each image to a per-device pixel cache (`.pxc`) at your screen's exact viewport, then bake a small manifest of the current settings while also flattening chapter structure layout. This HEAVILY helps with image-heavy chapters as we avoid needing the JPEG/PNG decoder while maintaining BLE abilities. If your current font/margin/image-rendering/orientation differs from the bake, the reader will prompt you on BT connection, advising you to switch back to the baked layout for maximum BT operability. EPUB optimizing will slightly increase file size depending on the number and size of images, but will make BT reading much smoother.
+- **BT No Images Quick Connect**: Located about BT Quick Connect, this one-tap drawer action will temporarily suppress image decoding at render time (uses placeholder border) while BT is connected. It will automatically revert back once BT is disconnected, so just another option to have without any long-term commitment.
 
 <p align="center">
   <img src="https://github.com/imshentastic/CrumBLE/releases/download/readme-assets/02-bt-pairing.gif" alt="Bluetooth pairing UI" width="280"/>
 </p>
+Shout-out to [thedrunkpenguin](https://github.com/thedrunkpenguin/crosspoint-reader-ble/) for his BLE changes which I learned much from and added some memory changes to make it all fit.
 
 ### On-demand sleep-screen cycling
 
 A new display setting — **Tap Power While Asleep to Cycle** — lets you flip through your `/.sleep` images without fully waking the device. A brief power-button tap picks a fresh random image and re-enters deep sleep. Off by default (each cycle costs a boot + e-ink half-refresh worth of battery); pinned sleep images are skipped in cycle mode.
 
-`.png` sleep images (with transparency) are also supported in **Custom** mode now, not just Page Overlay. Transparent regions compose over the clean last reader page, so a translucent PNG sleep screen reveals the book underneath.
+`.png` sleep images (with transparency) are also supported in **Custom** mode, not just BMP Page Overlay. Transparent regions compose over the clean last reader page, so a translucent PNG sleep screen reveals the page of the most recently accessed book underneath.
 
 <p align="center">
   <img src="https://github.com/imshentastic/CrumBLE/releases/download/readme-assets/05-sleep-cycle.gif" alt="Sleep screen cycling" width="280"/>
@@ -84,9 +78,8 @@ Architecture adapted from [inx by Dave Allie](https://github.com/obijuankenobiii
 
 ## Other improvements
 
-- **Faster home + book open** — Phase 1 fast book open defers non-critical reader setup (settings cache, .pxc manifest parse, font glyph prewarm) to after the first page actually paints. In-RAM cover bitmap cache wired across the Flow carousel and Bookshelf grid so navigation hits memory instead of re-decoding from SD on every cell.
-- **Author shown under carousel books** — the Flow carousel displays the author name under each cover above the progress bar.
-- **Reading Stats redesign** — bigger covers, an index-0 cookie-logo summary card, and the multi-book totals when global stats exist.
+- **Faster home + book open** — Faster book opening by deferring non-critical reader setup (settings cache, .pxc manifest parse, font glyph prewarm) to after the first page actually paints. In-RAM cover bitmap cache wired across the Flow carousel and Bookshelf grid so navigation hits memory instead of re-decoding from SD on every cell.
+- **Reading Stats redesign** — Still in progress, but some changes already made with larger covers and the multi-book totals when global stats exist.
 - **Reading time accuracy** — deep-sleep commit path flushes the active session so power-off never loses minutes. The 10-second minimum-session floor was dropped; very short sessions count too. Idempotent re-commit prevents double-counting. Ported from [aalu's reading-stats fix](https://github.com/aaludon/crosspoint-reader-aalu) (MIT).
 - **Persistent cursor recall** — leaving home for Settings / File Browser / Bookshelf and coming back puts the cursor back where you left it on each side (carousel + shelf + menu row), instead of resetting to index 0.
 - **Recents auto-heal** — if a foreign firmware writes an incompatible recent.json shape between CrumBLE boots, the first home visit walks per-book stats.bin sidecars and rebuilds the carousel from them (sorted newest first).
@@ -125,8 +118,6 @@ CrossPoint Reader  →  CrossInk (uxjulia)  →  CrossInk Carousel (chintanvajar
 - **[CrossInk](https://github.com/uxjulia/CrossInk)** — uxjulia's fork. UI polish, localization, additional reader fonts. CrumBLE is rebased onto CrossInk 1.3 as of v3.0.0.
 - **[CrossInk Carousel](https://github.com/chintanvajariya/CrossInk-Carousel)** — chintanvajariya's fork. Adds the Flow theme (3D book carousel), 3×3 Recent Books grid, and the multi-book Reading Stats redesign.
 - **CrumBLE** — this fork. Adds BLE, Collections, sleep-screen cycling, and the in-book quick-settings drawer.
-
-CrumBLE is named after — and themed around — the chocolate-chip cookie boot logo. The "BLE" remained from the previous fork name (FlexBLE) because that's still the headline feature.
 
 ---
 
