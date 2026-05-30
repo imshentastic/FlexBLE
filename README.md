@@ -2,11 +2,11 @@
 
 # CrumBLE
 
-**A personal fork of [CrossInk](https://github.com/uxjulia/CrossInk) for the Xteink X4 — adds a Bluetooth page-turner, a Collections system, Bookshelf grid, an EPUB optimizer that pre-renders images for Bluetooth reading, an on-demand sleep-screen cycler, and a quick-settings drawer inside books (among other things!).**
+**A personal fork of [CrossInk](https://github.com/uxjulia/CrossInk) for the Xteink X4 — adds full BLE support, on-demand sleep-screen cycling, customized Collections, Bookshelf display, an EPUB optimizer with optional BT pre-caching, and a quick-settings overlay drawer! Supports 23 languages and custom fonts.**
 
 </div>
 
-> **Runs on the Xteink X4 (X3 in development) ** — one firmware, auto-detected at boot. **Back up your device before flashing.** See [Install firmware](#install-firmware) below.
+> **Runs on the Xteink X4 (X3 in development) ** **Back up your device before flashing.** See [Install firmware](#install-firmware) below.
 
 ---
 
@@ -104,7 +104,7 @@ Belarusian, Catalan, Czech, Danish, Dutch, English, Finnish, French, German, Hun
 
 English, French, German, Italian, Polish, Russian, Spanish, Swedish, Ukrainian.
 
-**Bundled reader fonts** — Bitter, Charein, Inter, Lexend Deca — each in regular / bold / italic / bold-italic at three sizes (12, 14, 16 pt). For other fonts, drop a `.cpfont` file in `/fonts` on the SD card and it shows up in the reader's font picker.
+**Bundled reader fonts** — Bitter, Charein, Lexend Deca — each in regular / bold / italic / bold-italic at four sizes (10, 12, 14, 16 pt). For other fonts, drop a `.cpfont` file in `/fonts` on the SD card and it shows up in the reader's font picker.
 
 ---
 
