@@ -1,5 +1,25 @@
 # Changelog
 
+## [crumble-v3.7.0] - 2026-05-30
+
+### Added
+- **Bookshelf grid Layout option**: 3x3, 4x4 (default), or 2x2. Toggle from the "Layout" row at the bottom of the Bookshelf collection picker (hold Back inside the grid to open). The setting persists across reboots. 4x4 shares its 100x150 cell size with the Flow shelf so transitioning Home -> Bookshelf hits a warm thumbnail cache. 3x3 uses bigger 130x190 cells with generous spacing; 2x2 uses 220x320 (shares the cache with the carousel center cover + Reading Stats).
+- **Title Placement option**: the focused-book label strip (title / author / read+remaining times) can now sit above the books OR below them. Pairs with the page-dot indicator: above-mode anchors the dots to the screen bottom; below-mode stacks dots just above the strip. Toggle from "Title Placement" in the Bookshelf collection picker, below the Layout row.
+- Bookshelf grid cover loading is much more resilient on cold collections. Generation uses the same fast `epub.generateThumbBmpNoIndex` path the Flow shelf uses (content.opf-only parse, no spine/TOC index build) with a heavy `epub.load + generateThumbBmp` fallback for stubborn books. The 48 KB framebuffer snapshot and the in-RAM image cache are freed before gen so the JPG/PNG decoder + scaled-BMP write buffer has up to 112 KB more contiguous heap — what used to leave half a 16-cell page on placeholder now renders fully.
+
+### Fixed
+- Books stuck on placeholder covers from prior builds. The "thumb_failed" marker filename was bumped (suffix `_v2`) so markers set by older builds — which sometimes mis-fired on transient heap-OOM gen failures during 16-book sequential gens at 4x4 / 220x320 at 2x2 — are silently ignored. Combined with the new heap-pressure-relief before `loadPageCovers` (snapshot + image cache freed) and the NoIndex + heavy fallback gen pair, transient failures are rare and only permanent failures (no cover image / unsupported cover format) get marked.
+- Bookshelf page-dot indicator clipping the bottom row's progress bar in 2x2 mode. The 2x2 inter-row geometry now leaves a clean gap; the dot size shrinks from 8 px to 6 px in 2x2 to keep the bar clear without changing the dot Y position.
+- Carousel left/right navigation rebuilt the perspective side covers from scratch every press. Side tiles are now pre-rendered to a packed 1bpp cache and blitted on subsequent presses, eliminating ~70k per-side pixel walks per navigation.
+- Returning to Home from the reader sometimes left the cursor on the wrong icon-bar entry. Cursor recall order is now: caller-set entry > saved cursor from the previous visit > opened-book highlight > default; the reader clears the saved cursor on entry so a re-open uses the freshly-opened book as the recall target.
+
+### Changed
+- 4x4 is now the default Bookshelf layout (was 3x3). Existing users keep whatever layout they had set; new installs land on 4x4.
+- Bookshelf cells use a unified double-stroke selection ring (3 px inner + 1 px outer with a gap) that matches the carousel center cover and the Reading Stats main cover. 2x2 gets a slightly tighter ring (4 px outer extent vs 6 px) so it clears the inter-row gap on the wider covers.
+- LyraTheme header is more compact (52 px tall vs 84 px) which gives Bookshelf and Reading Stats more vertical room for cells / cover.
+- Reading Stats cover sized to 220x320 to match the carousel center cover. Opening Stats from a focused carousel book is now an immediate cache hit instead of a re-decode. Stats are cached per book during the All Books navigation filter pass so cycling through the list doesn't re-read `stats.bin` for every step.
+- Bookshelf and Flow shelf both detect "same page, focused-cell changed only" state on a press and restore a framebuffer snapshot + repaint just the selection ring + title strip, instead of a full clearScreen + redraw. Per-press cost is O(1) in steady state.
+
 ## [crumble-v3.6.0] - 2026-05-29
 
 ### Added
