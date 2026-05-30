@@ -24,9 +24,9 @@
 // font/margin settings -- the produced .cmb is layout-independent
 // per the format design.
 
-#include <string>
+#include <Epub.h>
 
-#include "../Epub/Epub.h"
+#include <string>
 
 namespace cmb {
 

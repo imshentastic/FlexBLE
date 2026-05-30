@@ -8,8 +8,10 @@
 #include <string_view>
 #include <vector>
 
+#include <FsHelpers.h>
+#include <HalStorage.h>  // pulled transitively by Epub.h; declared explicitly so PIO chain LDF tracks the dep
+
 #include "CmbWriter.h"
-#include "FsHelpers/FsHelpers.h"
 
 namespace cmb {
 

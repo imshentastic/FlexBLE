@@ -1,5 +1,6 @@
 #include "Epub.h"
 
+#include <CmbReader.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
 #include <JpegToBmpConverter.h>
@@ -654,6 +655,20 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
     return false;
   }
 
+  // CrumBLE #134: try the .cmb sidecar fast path before doing the
+  // full EPUB ZIP + content.opf parse. On a hit we get to skip:
+  //   - ZIP central-dir walk (~30 KB on big books)
+  //   - content.opf XML parse
+  //   - TOC NCX / nav XML parse
+  //   - CSS rule build (the .cmb carries the CSS file list so we
+  //     can still parse them on first open, but the metadata
+  //     gather pass is gone)
+  // Falls through to the slow path on any failure.
+  if (tryLoadFromCmb(skipLoadingCss)) {
+    LOG_DBG("EBP", "Loaded ePub via .cmb fast path: %s", filepath.c_str());
+    return true;
+  }
+
   // Cache doesn't exist or is invalid, build it
   LOG_DBG("EBP", "Cache not found, building spine/TOC cache");
   setupCacheDir();
@@ -1192,6 +1207,117 @@ const std::string& Epub::getCoverItemHref() const {
 const std::string& Epub::getTextReferenceHref() const {
   if (!bookMetadataCache || !bookMetadataCache->isLoaded()) return kEmptyString;
   return bookMetadataCache->coreMetadata.textReferenceHref;
+}
+
+std::string Epub::deriveCmbPath(const std::string& epubPath) {
+  // foo.epub -> foo.cmb. Mirrors the .pxc derivation pattern in
+  // ImageBlock (replace the extension); not "foo.epub.cmb" so user-
+  // visible names stay clean.
+  const size_t dot = epubPath.rfind('.');
+  // Also confirm the dot is past the last path separator so we don't
+  // mangle paths like "/foo.dir/book" (no extension).
+  const size_t slash = epubPath.find_last_of("/\\");
+  if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) {
+    return {};
+  }
+  return epubPath.substr(0, dot) + ".cmb";
+}
+
+bool Epub::tryLoadFromCmb(const bool skipLoadingCss) {
+  const std::string cmbPath = deriveCmbPath(filepath);
+  if (cmbPath.empty() || !Storage.exists(cmbPath.c_str())) return false;
+
+  cmb::CmbReader reader;
+  if (!reader.open(cmbPath.c_str())) {
+    LOG_DBG("EBP", ".cmb open failed: %s", cmbPath.c_str());
+    return false;
+  }
+  const cmb::CmbBookMetadata& md = reader.metadata();
+  if (md.spine.empty()) {
+    LOG_DBG("EBP", ".cmb has empty spine; falling back to slow path: %s", cmbPath.c_str());
+    return false;
+  }
+
+  setupCacheDir();
+
+  // Populate BookMetadataCache via its builder API. Same call shape
+  // as the slow path's beginWrite -> spine/TOC -> endWrite -> buildBookBin,
+  // just sourced from .cmb instead of EPUB parsing.
+  if (!bookMetadataCache->beginWrite()) {
+    LOG_ERR("EBP", ".cmb fast path: beginWrite failed");
+    return false;
+  }
+  if (!bookMetadataCache->beginContentOpfPass()) {
+    LOG_ERR("EBP", ".cmb fast path: beginContentOpfPass failed");
+    return false;
+  }
+  for (const auto& entry : md.spine) {
+    bookMetadataCache->createSpineEntry(entry.href);
+  }
+  if (!bookMetadataCache->endContentOpfPass()) {
+    LOG_ERR("EBP", ".cmb fast path: endContentOpfPass failed");
+    return false;
+  }
+  if (!bookMetadataCache->beginTocPass()) {
+    LOG_ERR("EBP", ".cmb fast path: beginTocPass failed");
+    return false;
+  }
+  for (const auto& entry : md.toc) {
+    bookMetadataCache->createTocEntry(entry.title, entry.href, entry.anchor, entry.level);
+  }
+  if (!bookMetadataCache->endTocPass()) {
+    LOG_ERR("EBP", ".cmb fast path: endTocPass failed");
+    return false;
+  }
+  if (!bookMetadataCache->endWrite()) {
+    LOG_ERR("EBP", ".cmb fast path: endWrite failed");
+    return false;
+  }
+
+  // Populate the BookMetadata struct + pre-computed cumulative sizes
+  // for buildBookBin. The precomputed vector lets buildBookBin skip
+  // the ZIP central-dir walk -- the actual heap-win lever.
+  BookMetadataCache::BookMetadata bookMetadata;
+  bookMetadata.title = md.title;
+  bookMetadata.author = md.author;
+  bookMetadata.language = md.language;
+  bookMetadata.coverItemHref = md.cover_href;
+  bookMetadata.textReferenceHref = md.text_reference_href;
+
+  std::deque<uint32_t> sizes;
+  sizes.resize(md.spine.size());
+  for (size_t i = 0; i < md.spine.size(); ++i) sizes[i] = md.spine[i].cumulative_size;
+
+  if (!bookMetadataCache->buildBookBin(filepath, bookMetadata, &sizes)) {
+    LOG_ERR("EBP", ".cmb fast path: buildBookBin failed");
+    return false;
+  }
+
+  if (!bookMetadataCache->cleanupTmpFiles()) {
+    LOG_DBG("EBP", ".cmb fast path: cleanupTmpFiles ignored failure");
+  }
+
+  // Reload the cache from disk so its in-memory state matches what
+  // the slow path leaves behind.
+  bookMetadataCache.reset(new BookMetadataCache(cachePath));
+  if (!bookMetadataCache->load()) {
+    LOG_ERR("EBP", ".cmb fast path: post-build reload failed");
+    return false;
+  }
+
+  // Hand the CSS file list to the EPUB instance so parseCssFiles
+  // knows what to walk on first open. Note: parseCssFiles still
+  // reads the actual CSS bytes from the EPUB ZIP -- the .cmb only
+  // tells us WHICH files to read. Saving the per-file parse cost
+  // would require embedding parsed CSS rules in .cmb (a future
+  // format bump).
+  cssFiles = md.css_files;
+
+  if (!skipLoadingCss) {
+    parseCssFiles();
+    Storage.removeDir((cachePath + "/sections").c_str());
+  }
+  return true;
 }
 
 bool Epub::isItemStored(const std::string& itemHref) const {

@@ -42,6 +42,16 @@ class Epub {
   bool parseTocNcxFile() const;
   bool parseTocNavFile() const;
   void parseCssFiles() const;
+  // CrumBLE #134: cold-open fast path. If a .cmb sidecar lives next
+  // to the EPUB, populates `bookMetadataCache` from it (no ZIP +
+  // OPF + CSS + TOC parse) and returns true. Returns false on any
+  // failure -- caller falls through to the slow path. Side-effects
+  // mirror the slow path's: bookMetadataCache is loaded, cssFiles
+  // is set, sections cache is invalidated if !skipLoadingCss.
+  bool tryLoadFromCmb(bool skipLoadingCss);
+  // Sibling path: `foo.epub` -> `foo.cmb`. Returns empty when the
+  // input has no detectable extension.
+  static std::string deriveCmbPath(const std::string& epubPath);
 
  public:
   explicit Epub(std::string filepath, const std::string& cacheDir);
