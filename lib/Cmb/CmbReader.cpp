@@ -156,9 +156,30 @@ bool CmbReader::open(const char* path) {
     }
   }
 
-  // toc_count slot exists in v3 but is always 0 (v4 populates).
-  // Not consumed here -- if a caller cares it's at the current file
-  // position; for now we just leave the cursor sitting on it.
+  // TOC entries (v4).
+  {
+    uint8_t lenbuf[2];
+    if (!read_exact(f_, lenbuf, sizeof(lenbuf))) {
+      close();
+      return false;
+    }
+    const uint16_t toc_count = cmb_read_u16(lenbuf);
+    metadata_.toc.resize(toc_count);
+    for (uint16_t i = 0; i < toc_count; ++i) {
+      CmbTocEntry& e = metadata_.toc[i];
+      if (!read_lp_string_u16(e.title) || !read_lp_string_u16(e.href) || !read_lp_string_u16(e.anchor)) {
+        close();
+        return false;
+      }
+      uint8_t lvl = 0;
+      if (!read_exact(f_, &lvl, 1)) {
+        close();
+        return false;
+      }
+      e.level = lvl;
+    }
+  }
+
   return true;
 }
 

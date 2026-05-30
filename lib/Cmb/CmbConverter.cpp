@@ -456,6 +456,20 @@ bool convert_epub_to_cmb(Epub& book, const char* output_path) {
   metadata.cover_href = book.getCoverItemHref();
   metadata.text_reference_href = book.getTextReferenceHref();
   metadata.css_files = book.getCssFiles();
+  // TOC entries: flat list with `level` carrying nesting. spine_index
+  // isn't stored on disk -- the reader resolves it from href at load
+  // time (matches BookMetadataCache::buildBookBin).
+  const int toc_count = book.getTocItemsCount();
+  metadata.toc.reserve(toc_count);
+  for (int ti = 0; ti < toc_count; ++ti) {
+    const auto src = book.getTocItem(ti);
+    CmbTocEntry dst;
+    dst.title = src.title;
+    dst.href = src.href;
+    dst.anchor = src.anchor;
+    dst.level = src.level;
+    metadata.toc.push_back(std::move(dst));
+  }
   metadata.spine.reserve(chapter_count);
   uint32_t cumulative = 0;
   for (int ci = 0; ci < chapter_count; ++ci) {

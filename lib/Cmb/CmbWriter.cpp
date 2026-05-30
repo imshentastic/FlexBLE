@@ -296,6 +296,7 @@ bool CmbWriter::finish(const CmbBookMetadata& metadata) {
   // converter walks book.getSpineItem(i) in order).
   if (!metadata.spine.empty() && metadata.spine.size() != chapters_.size()) return false;
   if (metadata.css_files.size() > 0xFFFF) return false;
+  if (metadata.toc.size() > 0xFFFF) return false;
 
   // ---- chapter table ----
   const uint32_t chapter_offset = bw_.tell();
@@ -363,10 +364,16 @@ bool CmbWriter::finish(const CmbBookMetadata& metadata) {
       if (!write_lp_string_u16(path)) return false;
     }
 
-    // toc_count (stub for v3; v4 will populate the entries here)
-    uint8_t toc_count[2];
-    cmb_write_u16(toc_count, 0);
-    if (!bw_.write(toc_count, sizeof(toc_count))) return false;
+    // toc_count + toc_entries (v4)
+    cmb_write_u16(lenbuf, static_cast<uint16_t>(metadata.toc.size()));
+    if (!bw_.write(lenbuf, sizeof(lenbuf))) return false;
+    for (const CmbTocEntry& entry : metadata.toc) {
+      if (!write_lp_string_u16(entry.title)) return false;
+      if (!write_lp_string_u16(entry.href)) return false;
+      if (!write_lp_string_u16(entry.anchor)) return false;
+      uint8_t lvl = entry.level;
+      if (!bw_.write(&lvl, 1)) return false;
+    }
   }
 
   // ---- patch header at offset 0 ----

@@ -72,12 +72,13 @@ inline constexpr uint8_t kCmbMagic[4] = {'C', 'M', 'B', '1'};
 //         files list at the top of the metadata blob. Skipping those
 //         queries is the actual ~30 KB cold-open heap win on big
 //         books.
-//   4  -- (planned) TOC entries (title + href + anchor + level per
-//         entry) so chapter selection UI works from .cmb alone.
+//   4  -- TOC entries (title + href + anchor + level per entry) so
+//         chapter selection UI works from .cmb alone. Replaces v3's
+//         toc_count:u16 = 0 stub.
 //   5  -- (planned) cover_thumb_offset + thumb table for pre-baked
 //         cover BMPs at all device-rendered sizes. See companion
 //         task "Pre-bake cover thumbs inside .cmb file".
-inline constexpr uint16_t kCmbVersion = 3;
+inline constexpr uint16_t kCmbVersion = 4;
 
 // ---------------------------------------------------------------------------
 // Header (32 bytes, fixed)
@@ -333,7 +334,17 @@ struct CmbStyleRun {
 //                                  item (matches BookMetadataCache::SpineEntry)
 //   css_count:u16
 //   css_files[css_count]: { path_len:u16, path:bytes }
-//   toc_count:u16                -- 0 in v3; v4 populates the entries
+//   toc_count:u16
+//   toc_entries[toc_count]:
+//     title_len:u16, title:bytes
+//     href_len:u16, href:bytes    -- EPUB-relative path; resolved to
+//                                    spine_index at load time by
+//                                    matching against the spine table
+//     anchor_len:u16, anchor:bytes -- fragment portion of the TOC link
+//                                    (the part after '#'); empty when
+//                                    the TOC entry points at a whole
+//                                    spine item
+//     level:u8                    -- nesting depth (1 = top-level)
 
 struct CmbSpineEntry {
   std::string href;
@@ -341,6 +352,18 @@ struct CmbSpineEntry {
   // item. Used by the reader for reading-progress math + chapter
   // pre-allocation. Set during conversion via Epub::getItemSize.
   uint32_t cumulative_size = 0;
+};
+
+// TOC tree entry. The on-disk format is FLAT -- nesting is expressed
+// by `level` (e.g. level=1 is a top-level entry, level=2 nested
+// under the previous level=1, etc.). spine_index isn't stored on
+// disk; the reader resolves it from `href` by linear-scanning the
+// spine table at load time (matches BookMetadataCache::buildBookBin).
+struct CmbTocEntry {
+  std::string title;
+  std::string href;
+  std::string anchor;
+  uint8_t level = 1;
 };
 
 struct CmbBookMetadata {
@@ -360,6 +383,9 @@ struct CmbBookMetadata {
   // reader pulls these from the EPUB ZIP at first open to populate
   // its CSS rule cache.
   std::vector<std::string> css_files;
+  // Flat TOC entries; nesting via the level field. Empty when the
+  // EPUB lacks a TOC or the converter couldn't parse one.
+  std::vector<CmbTocEntry> toc;
 };
 
 struct CmbParagraph {

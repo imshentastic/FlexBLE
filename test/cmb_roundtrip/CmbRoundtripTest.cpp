@@ -92,6 +92,12 @@ void test_text_paragraphs(const char* path) {
         {"OEBPS/c2.xhtml", 5000},
     };
     md.css_files = {"OEBPS/styles.css", "OEBPS/print.css"};
+    md.toc = {
+        {"Cover", "OEBPS/c0.xhtml", "", 1},
+        {"Chapter One", "OEBPS/c1.xhtml", "", 1},
+        {"Section 1.1", "OEBPS/c1.xhtml", "sec1-1", 2},
+        {"Chapter Two", "OEBPS/c2.xhtml", "", 1},
+    };
     CMB_EXPECT(w.finish(md));
   }
 
@@ -117,6 +123,16 @@ void test_text_paragraphs(const char* path) {
   CMB_EXPECT_EQ(md_out.css_files.size(), static_cast<size_t>(2));
   CMB_EXPECT_EQ(md_out.css_files[0], std::string("OEBPS/styles.css"));
   CMB_EXPECT_EQ(md_out.css_files[1], std::string("OEBPS/print.css"));
+  // v4 toc round-trip.
+  CMB_EXPECT_EQ(md_out.toc.size(), static_cast<size_t>(4));
+  CMB_EXPECT_EQ(md_out.toc[0].title, std::string("Cover"));
+  CMB_EXPECT_EQ(md_out.toc[0].href, std::string("OEBPS/c0.xhtml"));
+  CMB_EXPECT_EQ(md_out.toc[0].anchor, std::string(""));
+  CMB_EXPECT_EQ(static_cast<int>(md_out.toc[0].level), 1);
+  CMB_EXPECT_EQ(md_out.toc[2].title, std::string("Section 1.1"));
+  CMB_EXPECT_EQ(md_out.toc[2].href, std::string("OEBPS/c1.xhtml"));
+  CMB_EXPECT_EQ(md_out.toc[2].anchor, std::string("sec1-1"));
+  CMB_EXPECT_EQ(static_cast<int>(md_out.toc[2].level), 2);
 
   uint32_t expected_total = 0;
   for (size_t ci = 0; ci < chapters.size(); ++ci) {
