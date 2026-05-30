@@ -47,6 +47,8 @@
 
 #include <cstdint>
 #include <cstring>
+#include <string>
+#include <vector>
 
 namespace cmb {
 
@@ -230,5 +232,43 @@ inline void cmb_read_header(const uint8_t in[32], CmbHeader& h) {
 inline bool cmb_magic_matches(const uint8_t magic[4]) {
   return magic[0] == 'C' && magic[1] == 'M' && magic[2] == 'B' && magic[3] == '1';
 }
+
+// ---------------------------------------------------------------------------
+// In-memory paragraph representation
+// ---------------------------------------------------------------------------
+//
+// Layout-independent: text is UTF-8 with no embedded line breaks (the
+// reader runs layout at chapter-load time). Style information starts
+// minimal -- text, optional inline image ref, paragraph type -- and
+// will grow over follow-up commits (style runs for bold/italic,
+// alignment, heading level, anchor ids for in-book links). Encoded
+// on disk inside a chapter's content blob as a tagged record:
+//
+//   {type:u8, payload_length:u16, payload:bytes[payload_length]}
+//
+// Where the payload layout depends on the type tag. Readers must
+// SKIP unknown type tags using the length prefix -- this is what
+// keeps v1 readers forward-compatible with future block kinds.
+//
+// Payload layouts (subject to extension in subsequent commits):
+//
+//   kCmbBlockText:
+//     text_len:u32
+//     text:bytes[text_len]      -- UTF-8
+//
+//   kCmbBlockImage:
+//     image_key:u16             -- index into image ref table
+//
+//   kCmbBlockHr, kCmbBlockPageBreak:
+//     (empty payload)
+
+struct CmbParagraph {
+  uint8_t type = kCmbBlockText;
+  // For kCmbBlockText: UTF-8 paragraph contents. Empty for non-text.
+  std::string text;
+  // For kCmbBlockImage: index into the file's image-ref table.
+  // kCmbNoImage when not an image block.
+  uint16_t image_key = kCmbNoImage;
+};
 
 }  // namespace cmb
