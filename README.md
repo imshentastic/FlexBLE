@@ -2,7 +2,7 @@
 
 # CrumBLE
 
-**A personal fork of [CrossInk](https://github.com/uxjulia/CrossInk) for the Xteink X4 / X3 — adds a Bluetooth page-turner, a Collections system, an on-demand sleep-screen cycler, and a quick-settings drawer inside books (among other things!).**
+**A personal fork of [CrossInk](https://github.com/uxjulia/CrossInk) for the Xteink X4 / X3 — adds a Bluetooth page-turner, a Collections system + Bookshelf grid, an EPUB optimizer that pre-renders images for Bluetooth reading, an on-demand sleep-screen cycler, and a quick-settings drawer inside books (among other things!).**
 
 </div>
 
@@ -20,13 +20,24 @@ As of v3.0.0, CrumBLE is rebased onto **CrossInk 1.3** (a fresh upstream base ra
 
 A full collections system with virtual + user-defined collections, all "swipeable" from the home shelf:
 
-- **Virtual collections** computed lazily: **All Books**, **Favorites**, **Recent**, **Currently Reading**, **Finished**
+- **Virtual collections** computed lazily: **All Books**, **Favorites**, **Recent**, **Currently Reading**, **Finished**, **Unopened**
 - **User collections** you create and rename freely
 - **Long-press Confirm** on a book → toggle membership in any collection
-- **Long-press shelf header** → rename, delete, sort, add/remove books in batch
+- **Long-press shelf header** → New collection, Sort by, Rearrange, Show/Hide virtuals, Rescan library
+- **Rearrange flow** lets you set the L/R cycle order by tapping collections in your desired sequence (Confirm reads "Mark 1", "Mark 2", ..., Back reads "Undo" mid-flow). Persisted across reboots.
 - **Add/Remove Books** multi-select picker so you can curate a whole collection in one pass
-- **Per-collection sort** (A–Z / Z–A / Author / Date Added), persisted in `collections.json`
-- Optional **series collapse** that folds same-series books into one spine glyph on the shelf
+- **Per-collection sort** (A–Z / Z–A / Author A–Z / Author Z–A / Date Added), persisted in `collections.json`
+- Optional **series collapse** that folds same-series books into one spine glyph on the shelf; tapping the spine opens a mini-picker of the series members
+
+### Bookshelf grid
+
+Browse the active collection as a 3×3 grid of cover thumbnails instead of cycling through the carousel:
+
+- **Bookshelf** entry on the home icon bar opens the grid over your current collection
+- **Short-press** the carousel header (collection title) opens the same grid
+- **Long-press** the Bookshelf icon brings up a full-screen picker to switch collections without leaving the grid
+- Cover thumbs are pre-cached at exact cell dimensions, so revisits don't flash a "Loading" popup looking for thumbs that already exist
+- Failed cover thumbnails are remembered (per book) so a corrupt cover doesn't trigger an infinite retry loop on every render
 
 <p align="center">
   <img src="./docs/images/crumble/03-collections-shelf.png" alt="Collections shelf with series collapse" width="280"/>
@@ -39,7 +50,11 @@ Pairing is done from WITHIN A BOOK ONLY! Click on the "Confirm" button while ins
 
 Shout-out to [thedrunkpenguin](https://github.com/thedrunkpenguin/crosspoint-reader-ble/) for his BT changes which I learned much from and added some memory changes to make it all fit.
 
-A **BT Quick Connect** action lives in the [Global Book Settings drawer](#global-book-settings-drawer) for one-step re-connect to your last bonded remote without re-navigating the menu tree. Check out the gif below
+A **BT Quick Connect** action lives in the [Global Book Settings drawer](#global-book-settings-drawer) for one-step re-connect to your last bonded remote without re-navigating the menu tree. Once linked, the same entry becomes **BT Disconnect**. A persistent "Connecting Bluetooth..." popup spans the NimBLE init and GATT handshake so the page doesn't sit unchanged for several seconds without feedback.
+
+For image-heavy books, two complementary paths keep the link stable:
+- **EPUB optimizer Bluetooth pre-rendering** (web optimizer at `/optimizer`) pre-renders each image to a per-device pixel cache (`.pxc`) at your screen's exact viewport, then bakes a small manifest of the settings the bake was made against. Image-heavy chapters then render over Bluetooth without thrashing the link or needing the JPEG/PNG decoder. If your current font/margin/image-rendering/orientation differs from the bake, the reader prompts on Quick Connect: switch back to the baked layout, keep your settings and reflow, or cancel.
+- **BT No Images Quick Connect** is a one-tap drawer action for books that weren't pre-rendered. It suppresses image decode at render time (image regions show a thin placeholder border) so the heap stays clear for NimBLE.
 
 <p align="center">
   <img src="https://github.com/imshentastic/CrumBLE/releases/download/readme-assets/02-bt-pairing.gif" alt="Bluetooth pairing UI" width="280"/>
@@ -69,14 +84,34 @@ Architecture adapted from [inx by Dave Allie](https://github.com/obijuankenobiii
 
 ## Other improvements
 
+- **Faster home + book open** — Phase 1 fast book open defers non-critical reader setup (settings cache, .pxc manifest parse, font glyph prewarm) to after the first page actually paints. In-RAM cover bitmap cache wired across the Flow carousel and Bookshelf grid so navigation hits memory instead of re-decoding from SD on every cell.
+- **Author shown under carousel books** — the Flow carousel displays the author name under each cover above the progress bar.
+- **Reading Stats redesign** — bigger covers, an index-0 cookie-logo summary card, and the multi-book totals when global stats exist.
 - **Reading time accuracy** — deep-sleep commit path flushes the active session so power-off never loses minutes. The 10-second minimum-session floor was dropped; very short sessions count too. Idempotent re-commit prevents double-counting. Ported from [aalu's reading-stats fix](https://github.com/aaludon/crosspoint-reader-aalu) (MIT).
-- **Carousel ghosting fixes** on the Lyra Flow theme — max-size cover-slot clear before each paint, thinned selection border (4 px → 2 px), and dropped the always-on inner frame so successive scrolls don't leave outline residue.
-- **Remember last position** — switching between the shelf and the bottom menu row restores your previous position on each side instead of jumping to index 0.
+- **Persistent cursor recall** — leaving home for Settings / File Browser / Bookshelf and coming back puts the cursor back where you left it on each side (carousel + shelf + menu row), instead of resetting to index 0.
+- **Recents auto-heal** — if a foreign firmware writes an incompatible recent.json shape between CrumBLE boots, the first home visit walks per-book stats.bin sidecars and rebuilds the carousel from them (sorted newest first).
+- **PNG previews in the file browser** — `.png` files render as a preview over the last book page; you can also set any PNG as a sleep image.
+- **Carousel ghosting fixes** on the Lyra Flow theme — max-size cover-slot clear before each paint, thinned selection border, dropped the always-on inner frame so successive scrolls don't leave outline residue, and the side covers no longer clip at the screen edges.
 - **PackBits-compressed BW backup** for the grayscale AA pass — a single 16–32 KB bounded buffer replaces the chunked 12 × 4 KB lazy allocation, dropping the fragmentation pressure that made grayscale fail when BLE was active.
 - **Auto-retry on chapter-layout abort** — if the parser trips the low-heap floor with BLE consuming its ~58 KB share, CrumBLE silently drops BLE, retries the layout with the recovered headroom, and lets the existing auto-reconnect logic re-pair on your next remote press.
+- **Glyph buffer pre-grown at every BT-enable site** so the font scratch's high-water mark is allocated BEFORE NimBLE eats heap, preventing the mid-page-turn allocation failures that used to drop the BT link on text-heavy chapters.
 - **Large-library + home stability** (v3.0.x) — streaming library index that survives big libraries, crash-proofed series detection, a Lyra Carousel heap-race crash fix, cover-thumbnail revalidation so a single book can't get stuck on a placeholder, and transparent-PNG sleep screens that reliably show the clean last book page.
 
 For the full changelog, see [CHANGELOG.md](./CHANGELOG.md).
+
+---
+
+## Languages
+
+**UI translations (23 languages)** — the menus, buttons, and prompts are translated. Missing strings fall back to English automatically.
+
+Belarusian, Catalan, Czech, Danish, Dutch, English, Finnish, French, German, Hungarian, Italian, Kazakh, Lithuanian, Polish, Portuguese, Romanian, Russian, Slovenian, Spanish, Swedish, Turkish, Ukrainian, Vietnamese.
+
+**Hyphenation dictionaries (9 languages)** — used by the EPUB renderer to insert soft hyphens at language-correct break points so justified text doesn't leave huge gaps.
+
+English, French, German, Italian, Polish, Russian, Spanish, Swedish, Ukrainian.
+
+**Bundled reader fonts** — Bitter, Charein, Inter, Lexend Deca — each in regular / bold / italic / bold-italic at three sizes (12, 14, 16 pt). For other fonts, drop a `.cpfont` file in `/fonts` on the SD card and it shows up in the reader's font picker.
 
 ---
 
