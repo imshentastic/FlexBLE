@@ -1180,6 +1180,20 @@ bool Epub::getZipLocalHeaderOffset(const std::string& itemHref, uint32_t* offset
   return ZipFile(filepath).getLocalHeaderOffset(path.c_str(), offset);
 }
 
+namespace {
+const std::string kEmptyString;
+}  // namespace
+
+const std::string& Epub::getCoverItemHref() const {
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) return kEmptyString;
+  return bookMetadataCache->coreMetadata.coverItemHref;
+}
+
+const std::string& Epub::getTextReferenceHref() const {
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) return kEmptyString;
+  return bookMetadataCache->coreMetadata.textReferenceHref;
+}
+
 bool Epub::isItemStored(const std::string& itemHref) const {
   const std::string path = FsHelpers::normalisePath(itemHref);
   uint16_t method = 0xFFFF;

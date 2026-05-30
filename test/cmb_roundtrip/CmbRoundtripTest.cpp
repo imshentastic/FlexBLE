@@ -43,7 +43,10 @@ void test_empty_book(const char* path) {
   {
     cmb::CmbWriter w;
     CMB_EXPECT(w.open(path));
-    CMB_EXPECT(w.finish("Title", "Author", {}));
+    cmb::CmbBookMetadata md;
+    md.title = "Title";
+    md.author = "Author";
+    CMB_EXPECT(w.finish(md));
   }
   cmb::CmbReader r;
   CMB_EXPECT(r.open(path));
@@ -77,19 +80,43 @@ void test_text_paragraphs(const char* path) {
       }
       w.end_chapter();
     }
-    const std::vector<std::string> spine = {"OEBPS/c0.xhtml", "OEBPS/c1.xhtml", "OEBPS/c2.xhtml"};
-    CMB_EXPECT(w.finish("Round Trip", "Test Author", spine));
+    cmb::CmbBookMetadata md;
+    md.title = "Round Trip";
+    md.author = "Test Author";
+    md.language = "en-US";
+    md.cover_href = "OEBPS/cover.jpg";
+    md.text_reference_href = "OEBPS/c0.xhtml";
+    md.spine = {
+        {"OEBPS/c0.xhtml", 1000},
+        {"OEBPS/c1.xhtml", 2500},
+        {"OEBPS/c2.xhtml", 5000},
+    };
+    md.css_files = {"OEBPS/styles.css", "OEBPS/print.css"};
+    CMB_EXPECT(w.finish(md));
   }
 
   cmb::CmbReader r;
   CMB_EXPECT(r.open(path));
   CMB_EXPECT_EQ(r.chapter_count(), static_cast<uint16_t>(chapters.size()));
 
-  // v2 spine file round-trip.
-  CMB_EXPECT_EQ(r.spine_files().size(), static_cast<size_t>(3));
-  CMB_EXPECT_EQ(r.spine_files()[0], std::string("OEBPS/c0.xhtml"));
-  CMB_EXPECT_EQ(r.spine_files()[1], std::string("OEBPS/c1.xhtml"));
-  CMB_EXPECT_EQ(r.spine_files()[2], std::string("OEBPS/c2.xhtml"));
+  // v3 metadata round-trip: title/author/language/cover/text-ref +
+  // spine entries (href + cumulative_size) + css files list.
+  const auto& md_out = r.metadata();
+  CMB_EXPECT_EQ(md_out.title, std::string("Round Trip"));
+  CMB_EXPECT_EQ(md_out.author, std::string("Test Author"));
+  CMB_EXPECT_EQ(md_out.language, std::string("en-US"));
+  CMB_EXPECT_EQ(md_out.cover_href, std::string("OEBPS/cover.jpg"));
+  CMB_EXPECT_EQ(md_out.text_reference_href, std::string("OEBPS/c0.xhtml"));
+  CMB_EXPECT_EQ(md_out.spine.size(), static_cast<size_t>(3));
+  CMB_EXPECT_EQ(md_out.spine[0].href, std::string("OEBPS/c0.xhtml"));
+  CMB_EXPECT_EQ(md_out.spine[0].cumulative_size, 1000u);
+  CMB_EXPECT_EQ(md_out.spine[1].href, std::string("OEBPS/c1.xhtml"));
+  CMB_EXPECT_EQ(md_out.spine[1].cumulative_size, 2500u);
+  CMB_EXPECT_EQ(md_out.spine[2].href, std::string("OEBPS/c2.xhtml"));
+  CMB_EXPECT_EQ(md_out.spine[2].cumulative_size, 5000u);
+  CMB_EXPECT_EQ(md_out.css_files.size(), static_cast<size_t>(2));
+  CMB_EXPECT_EQ(md_out.css_files[0], std::string("OEBPS/styles.css"));
+  CMB_EXPECT_EQ(md_out.css_files[1], std::string("OEBPS/print.css"));
 
   uint32_t expected_total = 0;
   for (size_t ci = 0; ci < chapters.size(); ++ci) {
@@ -158,7 +185,11 @@ void test_image_refs_and_blocks(const char* path) {
       CMB_EXPECT(w.write_paragraph(p));
     }
     w.end_chapter();
-    CMB_EXPECT(w.finish("Mixed Blocks", "Author", {"OEBPS/single.xhtml"}));
+    cmb::CmbBookMetadata md;
+    md.title = "Mixed Blocks";
+    md.author = "Author";
+    md.spine = {{"OEBPS/single.xhtml", 800}};
+    CMB_EXPECT(w.finish(md));
   }
 
   cmb::CmbReader r;
@@ -243,7 +274,11 @@ void test_styled_paragraphs(const char* path) {
     }
 
     w.end_chapter();
-    CMB_EXPECT(w.finish("Styled", "Tester", {"OEBPS/ch.xhtml"}));
+    cmb::CmbBookMetadata md;
+    md.title = "Styled";
+    md.author = "Tester";
+    md.spine = {{"OEBPS/ch.xhtml", 1200}};
+    CMB_EXPECT(w.finish(md));
   }
 
   cmb::CmbReader r;

@@ -442,12 +442,22 @@ bool convert_epub_to_cmb(Epub& book, const char* output_path) {
 
   WriterSinkCtx ctx{&w, false};
 
-  // Collect spine hrefs as we walk so the writer can serialise them
-  // into the .cmb v2 metadata blob. Indexed by spine order (= the
-  // chapter index in .cmb), matching what BookMetadataCache expects.
+  // Collect the full BookMetadataCache-equivalent set as we walk so
+  // the writer can serialise it into the .cmb v3 metadata blob.
+  // spine[i].href + spine[i].cumulative_size match what
+  // BookMetadataCache::SpineEntry holds; cumulative_size is summed
+  // across spine entries via Epub::getItemSize, mirroring what
+  // BookMetadataCache::buildBookBin computes from the EPUB ZIP.
   const int chapter_count = book.getSpineItemsCount();
-  std::vector<std::string> spine_hrefs;
-  spine_hrefs.reserve(chapter_count);
+  CmbBookMetadata metadata;
+  metadata.title = book.getTitle();
+  metadata.author = book.getAuthor();
+  metadata.language = book.getLanguage();
+  metadata.cover_href = book.getCoverItemHref();
+  metadata.text_reference_href = book.getTextReferenceHref();
+  metadata.css_files = book.getCssFiles();
+  metadata.spine.reserve(chapter_count);
+  uint32_t cumulative = 0;
   for (int ci = 0; ci < chapter_count; ++ci) {
     const auto entry = book.getSpineItem(ci);
 
@@ -478,10 +488,25 @@ bool convert_epub_to_cmb(Epub& book, const char* output_path) {
     }
     std::free(raw);
     w.end_chapter();
-    spine_hrefs.push_back(entry.href);
+
+    // cumulative_size matches BookMetadataCache::SpineEntry semantics:
+    // running sum of inflated ZIP-entry sizes through and INCLUDING
+    // this spine item. The reader uses it for reading-progress math.
+    // getItemSize() failures (entry missing from ZIP -- unusual,
+    // implies a malformed EPUB) leave cumulative unchanged, which is
+    // a graceful degradation: the entry records the prior cumulative,
+    // which is wrong but not crash-y.
+    size_t inflated = 0;
+    if (book.getItemSize(entry.href, &inflated)) {
+      cumulative += static_cast<uint32_t>(inflated);
+    }
+    CmbSpineEntry cmb_entry;
+    cmb_entry.href = entry.href;
+    cmb_entry.cumulative_size = cumulative;
+    metadata.spine.push_back(std::move(cmb_entry));
   }
 
-  if (!w.finish(book.getTitle(), book.getAuthor(), spine_hrefs)) {
+  if (!w.finish(metadata)) {
     w.close();
     return false;
   }

@@ -116,6 +116,14 @@ class Epub {
   // bytes from the EPUB without walking the central directory at
   // display time. Path normalised the same way as readItemContents*.
   bool getZipLocalHeaderOffset(const std::string& itemHref, uint32_t* offset) const;
+  // CrumBLE #134: accessors for metadata fields the .cmb converter
+  // needs to capture into the .cmb v3 metadata blob. Cover href and
+  // text-reference href live inside the BookMetadataCache; the CSS
+  // files vector lives on Epub itself. Pure additions; no
+  // behavioural change for existing callers.
+  const std::string& getCoverItemHref() const;
+  const std::string& getTextReferenceHref() const;
+  const std::vector<std::string>& getCssFiles() const { return cssFiles; }
   // CrumBLE: true if the item is STORED (uncompressed) in the EPUB zip. A STORED
   // chapter needs no 32 KB DEFLATE window to cold-load, so the reader can build
   // it in place while BLE is connected instead of dropping/re-enabling BLE

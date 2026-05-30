@@ -64,17 +64,20 @@ inline constexpr uint8_t kCmbMagic[4] = {'C', 'M', 'B', '1'};
 // Version history:
 //   1  -- initial layout (header + chapter table + image refs + anchors
 //         + metadata{title, author}). Internal-only; never shipped.
-//   2  -- metadata blob extended with spine entry hrefs so the reader
-//         can populate Epub::BookMetadataCache from .cmb without
-//         walking the EPUB ZIP central directory + content.opf.
-//         Layout: title_len/title, author_len/author, spine_count,
-//         spine_entries[{href_len, href}], toc_count (stub for now).
-//   3  -- (planned) adds TOC entries (title + href + anchor + level
-//         per entry) so chapter selection UI works from .cmb alone.
-//   4  -- (planned) adds cover_thumb_offset + thumb table for pre-baked
-//         cover BMPs at all device-rendered sizes. See companion task
-//         "Pre-bake cover thumbs inside .cmb file".
-inline constexpr uint16_t kCmbVersion = 2;
+//   2  -- metadata blob extended with spine entry hrefs.
+//   3  -- the full BookMetadataCache set: spine entries gain
+//         cumulative_size (so the reader skips the per-entry ZIP
+//         inflated-size query during Epub::load -> buildBookBin),
+//         plus language / cover_href / text_reference_href / css
+//         files list at the top of the metadata blob. Skipping those
+//         queries is the actual ~30 KB cold-open heap win on big
+//         books.
+//   4  -- (planned) TOC entries (title + href + anchor + level per
+//         entry) so chapter selection UI works from .cmb alone.
+//   5  -- (planned) cover_thumb_offset + thumb table for pre-baked
+//         cover BMPs at all device-rendered sizes. See companion
+//         task "Pre-bake cover thumbs inside .cmb file".
+inline constexpr uint16_t kCmbVersion = 3;
 
 // ---------------------------------------------------------------------------
 // Header (32 bytes, fixed)
@@ -304,6 +307,59 @@ struct CmbStyleRun {
   uint16_t start = 0;   // byte offset into CmbParagraph::text
   uint16_t length = 0;  // byte length of the styled span
   uint8_t style = 0;    // kCmbStyle* bitmask
+};
+
+// ---------------------------------------------------------------------------
+// In-memory book metadata (v3)
+// ---------------------------------------------------------------------------
+//
+// Mirrors the subset of EPUB metadata that Epub::BookMetadataCache
+// holds. Populated by the converter from the open EPUB; consumed by
+// the reader to short-circuit Epub::load's ZIP-central-dir +
+// content.opf parse.
+//
+// On-disk layout (lives inside the metadata blob region pointed at by
+// header.meta_offset):
+//
+//   title_len:u16, title:bytes
+//   author_len:u16, author:bytes
+//   language_len:u16, language:bytes
+//   cover_href_len:u16, cover_href:bytes
+//   text_reference_href_len:u16, text_reference_href:bytes
+//   spine_count:u16
+//   spine_entries[spine_count]:
+//     href_len:u16, href:bytes
+//     cumulative_size:u32       -- sum of inflated sizes through this spine
+//                                  item (matches BookMetadataCache::SpineEntry)
+//   css_count:u16
+//   css_files[css_count]: { path_len:u16, path:bytes }
+//   toc_count:u16                -- 0 in v3; v4 populates the entries
+
+struct CmbSpineEntry {
+  std::string href;
+  // Sum of inflated ZIP-entry sizes through and INCLUDING this spine
+  // item. Used by the reader for reading-progress math + chapter
+  // pre-allocation. Set during conversion via Epub::getItemSize.
+  uint32_t cumulative_size = 0;
+};
+
+struct CmbBookMetadata {
+  std::string title;
+  std::string author;
+  std::string language;
+  // EPUB-relative href of the cover image item (e.g. "OEBPS/cover.jpg").
+  // Empty when the EPUB lacks a cover.
+  std::string cover_href;
+  // The "main text starts here" reference from the OPF guide (legacy
+  // EPUB 2). Empty for most modern EPUBs.
+  std::string text_reference_href;
+  // Spine entries in spine order; size must match the converter's
+  // chapter_count (one entry per spine item).
+  std::vector<CmbSpineEntry> spine;
+  // CSS file paths (EPUB-relative) found in the OPF manifest. The
+  // reader pulls these from the EPUB ZIP at first open to populate
+  // its CSS rule cache.
+  std::vector<std::string> css_files;
 };
 
 struct CmbParagraph {

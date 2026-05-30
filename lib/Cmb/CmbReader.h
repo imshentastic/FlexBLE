@@ -72,13 +72,26 @@ class CmbReader {
   // the EPUB-declared values; 0 means "resolve at display time".
   bool image_ref(uint16_t image_idx, CmbImageRef& out) const;
 
-  // Metadata loaded at open(). Empty if the file didn't include them.
-  const std::string& metadata_title() const { return metadata_title_; }
-  const std::string& metadata_author() const { return metadata_author_; }
-  // Spine entry hrefs in spine order (same indexing as chapter_count).
-  // Used by Epub::load to populate BookMetadataCache without parsing
-  // the EPUB's content.opf. Empty when the .cmb predates v2.
-  const std::vector<std::string>& spine_files() const { return spine_files_; }
+  // Aggregate metadata loaded at open(). Title/author/language/cover/
+  // text-ref strings + spine entries (with cumulative sizes) + CSS
+  // file paths -- everything Epub::load needs to populate
+  // BookMetadataCache without parsing the EPUB.
+  const CmbBookMetadata& metadata() const { return metadata_; }
+
+  // Convenience shorthands kept for the round-trip tests and for the
+  // converter / stats-style callers that only need a single field.
+  const std::string& metadata_title() const { return metadata_.title; }
+  const std::string& metadata_author() const { return metadata_.author; }
+  // Spine entry hrefs in spine order; legacy accessor that returns a
+  // freshly-built vector of just the hrefs for callers that don't
+  // need the cumulative_size data. Prefer metadata().spine for new
+  // code.
+  std::vector<std::string> spine_files() const {
+    std::vector<std::string> out;
+    out.reserve(metadata_.spine.size());
+    for (const auto& e : metadata_.spine) out.push_back(e.href);
+    return out;
+  }
 
  private:
   FILE* f_ = nullptr;
@@ -87,9 +100,7 @@ class CmbReader {
   // In-RAM tables. Sized at open() and never resized after.
   std::vector<CmbChapterEntry> chapters_;
   std::vector<CmbImageRef> images_;
-  std::string metadata_title_;
-  std::string metadata_author_;
-  std::vector<std::string> spine_files_;
+  CmbBookMetadata metadata_;
 
   // Helper: seek + read one paragraph record at a known absolute
   // file offset. Used by load_paragraph after the descriptor lookup.

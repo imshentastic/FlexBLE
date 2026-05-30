@@ -91,11 +91,8 @@ bool CmbReader::open(const char* path) {
     }
   }
 
-  // ---- metadata blob (v2) ----
-  //   title_len:u16, title:bytes
-  //   author_len:u16, author:bytes
-  //   spine_count:u16, spine_entries[{href_len:u16, href:bytes}]
-  //   toc_count:u16 (reserved; not consumed yet)
+  // ---- metadata blob (v3) ----
+  // Layout documented in CmbFormat.h's CmbBookMetadata section.
   if (!seek_to(f_, header_.meta_offset)) {
     close();
     return false;
@@ -111,14 +108,15 @@ bool CmbReader::open(const char* path) {
     }
     return true;
   };
-  if (!read_lp_string_u16(metadata_title_) || !read_lp_string_u16(metadata_author_)) {
+
+  if (!read_lp_string_u16(metadata_.title) || !read_lp_string_u16(metadata_.author) ||
+      !read_lp_string_u16(metadata_.language) || !read_lp_string_u16(metadata_.cover_href) ||
+      !read_lp_string_u16(metadata_.text_reference_href)) {
     close();
     return false;
   }
 
-  // Spine table (v2). If chapter_count and spine_count disagree the
-  // writer was buggy -- accept whatever the file says and trust the
-  // reader's later bounds checks to handle out-of-range access.
+  // Spine table: {href, cumulative_size} per entry.
   {
     uint8_t lenbuf[2];
     if (!read_exact(f_, lenbuf, sizeof(lenbuf))) {
@@ -126,19 +124,41 @@ bool CmbReader::open(const char* path) {
       return false;
     }
     const uint16_t spine_count = cmb_read_u16(lenbuf);
-    spine_files_.resize(spine_count);
+    metadata_.spine.resize(spine_count);
     for (uint16_t i = 0; i < spine_count; ++i) {
-      if (!read_lp_string_u16(spine_files_[i])) {
+      if (!read_lp_string_u16(metadata_.spine[i].href)) {
+        close();
+        return false;
+      }
+      uint8_t cum_buf[4];
+      if (!read_exact(f_, cum_buf, sizeof(cum_buf))) {
+        close();
+        return false;
+      }
+      metadata_.spine[i].cumulative_size = cmb_read_u32(cum_buf);
+    }
+  }
+
+  // CSS files list.
+  {
+    uint8_t lenbuf[2];
+    if (!read_exact(f_, lenbuf, sizeof(lenbuf))) {
+      close();
+      return false;
+    }
+    const uint16_t css_count = cmb_read_u16(lenbuf);
+    metadata_.css_files.resize(css_count);
+    for (uint16_t i = 0; i < css_count; ++i) {
+      if (!read_lp_string_u16(metadata_.css_files[i])) {
         close();
         return false;
       }
     }
   }
 
-  // toc_count slot exists in v2 but is always 0 here. v3 of the
-  // format populates entries beyond it; the reader reads + ignores
-  // them when toc_count > 0 (skip-by-length over their fields).
-  // For v2 specifically: don't bother reading it, we don't use it.
+  // toc_count slot exists in v3 but is always 0 (v4 populates).
+  // Not consumed here -- if a caller cares it's at the current file
+  // position; for now we just leave the cursor sitting on it.
   return true;
 }
 
@@ -150,9 +170,7 @@ void CmbReader::close() {
   header_ = CmbHeader{};
   chapters_.clear();
   images_.clear();
-  metadata_title_.clear();
-  metadata_author_.clear();
-  spine_files_.clear();
+  metadata_ = CmbBookMetadata{};
 }
 
 uint16_t CmbReader::chapter_paragraph_count(uint16_t chapter_idx) const {
