@@ -303,6 +303,17 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
             }));
     add(SettingInfo::Enum(StrId::STR_RECENT_BOOKS_VIEW, &CrossPointSettings::recentBooksView,
                           {StrId::STR_LIST_VIEW, StrId::STR_GRID_VIEW}, "recentBooksView", StrId::STR_CAT_DISPLAY));
+    // CrumBLE #133: persistence-only registration. Category left as
+    // STR_NONE_OPT so SettingsActivity skips it (line ~140 filters those
+    // out); the user-facing toggle lives in BookshelfPickerActivity's
+    // "Layout" row instead. JsonSettingsIO still picks it up because it
+    // iterates the registered list regardless of category.
+    add(SettingInfo::Enum(StrId::STR_BOOKSHELF_LAYOUT, &CrossPointSettings::bookshelfLayout,
+                          {StrId::STR_LAYOUT_3X3, StrId::STR_LAYOUT_4X4, StrId::STR_LAYOUT_2X2}, "bookshelfLayout"));
+    // CrumBLE #133 follow-up: also persistence-only. Toggle lives in
+    // the BookshelfPicker's "Title Placement" row, not in Settings UI.
+    add(SettingInfo::Enum(StrId::STR_BOOKSHELF_TITLE_PLACEMENT, &CrossPointSettings::bookshelfTitlePlacement,
+                          {StrId::STR_PLACEMENT_BOTTOM, StrId::STR_PLACEMENT_TOP}, "bookshelfTitlePlacement"));
     add(SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
                             StrId::STR_CAT_DISPLAY));
 

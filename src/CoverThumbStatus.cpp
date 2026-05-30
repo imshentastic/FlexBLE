@@ -12,7 +12,14 @@ namespace {
 // firmware has ever seen is /.crosspoint/<format>_<hash>; the marker
 // is a sibling of stats.bin / thumb_*.bmp inside that dir.
 constexpr char kCacheDir[] = "/.crosspoint";
-constexpr char kMarkerSuffix[] = "/thumb_failed.marker";
+// CrumBLE #133 follow-up: suffix bumped to _v2 so markers written by
+// earlier builds (which set them on transient heap-OOM failures during
+// 16-book sequential gens at 4x4 / 220x320 at 2x2) get silently
+// ignored. The old .marker files leak as zero-byte files on SD --
+// acceptable; isMarkedFailed only checks the new path. Books that
+// genuinely lack a cover get re-marked under _v2 on first attempt
+// with this build, then stop retrying as the marker system intends.
+constexpr char kMarkerSuffix[] = "/thumb_failed_v2.marker";
 
 std::string markerPathForBook(const std::string& bookPath) {
   if (FsHelpers::hasEpubExtension(bookPath)) {
