@@ -112,13 +112,28 @@ size_t CmbWriter::serialize_paragraph(const CmbParagraph& p) {
   // Compute payload length first so the {tag, length, payload}
   // envelope is correct -- and so readers can SKIP unknown tags by
   // jumping length bytes forward without parsing the payload.
+  //
+  // Payload sizes per type (in bytes):
+  //   Text:
+  //     alignment(1) + heading_level(1) + text_len(4) + text(N)
+  //       + run_count(2) + runs(R*5) + anchor_id_len(1) + anchor_id(A)
+  //   Image:
+  //     image_key(2) + anchor_id_len(1) + anchor_id(A)
+  //   Hr / PageBreak:
+  //     (empty)
+
+  const size_t anchor_len = p.anchor_id.size();
+  if (anchor_len > 255) return 0;  // anchor_id_len is a u8
+
   uint32_t payload_len = 0;
   switch (p.type) {
     case kCmbBlockText:
-      payload_len = 4 + static_cast<uint32_t>(p.text.size());
+      payload_len = 1 + 1 + 4 + static_cast<uint32_t>(p.text.size()) + 2 +
+                    static_cast<uint32_t>(p.runs.size()) * 5 + 1 +
+                    static_cast<uint32_t>(anchor_len);
       break;
     case kCmbBlockImage:
-      payload_len = 2;
+      payload_len = 2 + 1 + static_cast<uint32_t>(anchor_len);
       break;
     case kCmbBlockHr:
     case kCmbBlockPageBreak:
@@ -126,9 +141,9 @@ size_t CmbWriter::serialize_paragraph(const CmbParagraph& p) {
       break;
     default:
       // Unknown type tag -- writer refuses to emit ambiguous records.
-      // Phase A.1 only knows the four standard tags. Higher-level
-      // converters should map their own block kinds onto these or
-      // negotiate a vendor-extension tag (>= 128) with the format.
+      // Standard tags only; higher-level converters should map their
+      // block kinds onto these or negotiate a vendor-extension tag
+      // (>= 128) with the format.
       return 0;
   }
 
@@ -138,6 +153,7 @@ size_t CmbWriter::serialize_paragraph(const CmbParagraph& p) {
     // than silently truncating.
     return 0;
   }
+  if (p.runs.size() > 0xFFFF) return 0;  // run_count is u16
 
   uint8_t envelope[3];
   envelope[0] = p.type;
@@ -146,18 +162,42 @@ size_t CmbWriter::serialize_paragraph(const CmbParagraph& p) {
 
   switch (p.type) {
     case kCmbBlockText: {
-      uint8_t hdr[4];
-      cmb_write_u32(hdr, static_cast<uint32_t>(p.text.size()));
-      if (!bw_.write(hdr, sizeof(hdr))) return 0;
+      // Fixed-size head: alignment + heading_level + text_len.
+      uint8_t head[6];
+      head[0] = p.alignment;
+      head[1] = p.heading_level;
+      cmb_write_u32(head + 2, static_cast<uint32_t>(p.text.size()));
+      if (!bw_.write(head, sizeof(head))) return 0;
+
+      // Variable-length text body.
       if (!p.text.empty()) {
         if (!bw_.write(p.text.data(), p.text.size())) return 0;
       }
+
+      // Run table.
+      uint8_t run_count_buf[2];
+      cmb_write_u16(run_count_buf, static_cast<uint16_t>(p.runs.size()));
+      if (!bw_.write(run_count_buf, sizeof(run_count_buf))) return 0;
+      for (const auto& r : p.runs) {
+        uint8_t run_buf[5];
+        cmb_write_u16(run_buf, r.start);
+        cmb_write_u16(run_buf + 2, r.length);
+        run_buf[4] = r.style;
+        if (!bw_.write(run_buf, sizeof(run_buf))) return 0;
+      }
+
+      // Trailing anchor_id (length-prefixed u8).
+      uint8_t anchor_len_buf = static_cast<uint8_t>(anchor_len);
+      if (!bw_.write(&anchor_len_buf, 1)) return 0;
+      if (anchor_len > 0 && !bw_.write(p.anchor_id.data(), anchor_len)) return 0;
       break;
     }
     case kCmbBlockImage: {
-      uint8_t hdr[2];
-      cmb_write_u16(hdr, p.image_key);
-      if (!bw_.write(hdr, sizeof(hdr))) return 0;
+      uint8_t head[3];
+      cmb_write_u16(head, p.image_key);
+      head[2] = static_cast<uint8_t>(anchor_len);
+      if (!bw_.write(head, sizeof(head))) return 0;
+      if (anchor_len > 0 && !bw_.write(p.anchor_id.data(), anchor_len)) return 0;
       break;
     }
     case kCmbBlockHr:

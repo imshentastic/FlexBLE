@@ -158,6 +158,24 @@ inline constexpr uint16_t kCmbSpacingDefault = 0xFFFF;
 inline constexpr uint16_t kCmbNoImage = 0xFFFF;
 
 // ---------------------------------------------------------------------------
+// Alignment values for CmbParagraph::alignment
+// ---------------------------------------------------------------------------
+
+inline constexpr uint8_t kCmbAlignLeft = 0;
+inline constexpr uint8_t kCmbAlignCenter = 1;
+inline constexpr uint8_t kCmbAlignRight = 2;
+inline constexpr uint8_t kCmbAlignJustify = 3;
+
+// ---------------------------------------------------------------------------
+// Style mask bits for CmbStyleRun::style
+// ---------------------------------------------------------------------------
+
+inline constexpr uint8_t kCmbStyleBold = 0x01;
+inline constexpr uint8_t kCmbStyleItalic = 0x02;
+inline constexpr uint8_t kCmbStyleUnderline = 0x04;
+inline constexpr uint8_t kCmbStyleStrikethrough = 0x08;
+
+// ---------------------------------------------------------------------------
 // Little-endian serialization helpers
 // ---------------------------------------------------------------------------
 //
@@ -253,22 +271,54 @@ inline bool cmb_magic_matches(const uint8_t magic[4]) {
 // Payload layouts (subject to extension in subsequent commits):
 //
 //   kCmbBlockText:
+//     alignment:u8              -- kCmbAlignLeft/Center/Right/Justify/Default
+//     heading_level:u8          -- 0 = normal, 1..6 = h1..h6
 //     text_len:u32
 //     text:bytes[text_len]      -- UTF-8
+//     run_count:u16
+//     runs[run_count]:
+//       start:u16   -- byte offset into text where the run begins
+//       length:u16  -- byte length of the run
+//       style:u8    -- kCmbStyleBold | kCmbStyleItalic | kCmbStyleUnderline | ...
+//     anchor_id_len:u8
+//     anchor_id:bytes[anchor_id_len]
 //
 //   kCmbBlockImage:
 //     image_key:u16             -- index into image ref table
+//     anchor_id_len:u8
+//     anchor_id:bytes[anchor_id_len]
 //
 //   kCmbBlockHr, kCmbBlockPageBreak:
 //     (empty payload)
+
+// One styled run inside a kCmbBlockText paragraph. Encodes
+// non-overlapping spans of bold/italic/underline/strikethrough.
+struct CmbStyleRun {
+  uint16_t start = 0;   // byte offset into CmbParagraph::text
+  uint16_t length = 0;  // byte length of the styled span
+  uint8_t style = 0;    // kCmbStyle* bitmask
+};
 
 struct CmbParagraph {
   uint8_t type = kCmbBlockText;
   // For kCmbBlockText: UTF-8 paragraph contents. Empty for non-text.
   std::string text;
+  // For kCmbBlockText: non-overlapping styled byte ranges within text.
+  // Empty when the paragraph has no inline styling.
+  std::vector<CmbStyleRun> runs;
+  // For kCmbBlockText: paragraph-level alignment. kCmbAlignDefault
+  // means "use the reader's default" (justify under most settings).
+  uint8_t alignment = kCmbAlignDefault;
+  // For kCmbBlockText: 0 for body text, 1..6 for h1..h6.
+  uint8_t heading_level = 0;
   // For kCmbBlockImage: index into the file's image-ref table.
   // kCmbNoImage when not an image block.
   uint16_t image_key = kCmbNoImage;
+  // For any block type: the HTML id attribute of the source element,
+  // if any. The converter records this per-paragraph for the global
+  // anchor table (id -> para_index) used by in-book link nav.
+  // Empty when no id attribute was present.
+  std::string anchor_id;
 };
 
 }  // namespace cmb

@@ -175,27 +175,69 @@ bool CmbReader::read_paragraph_at(uint32_t file_offset, CmbParagraph& out) {
   // Default-init payload fields so unknown / empty types come back
   // in a defined state.
   out.text.clear();
+  out.runs.clear();
+  out.alignment = kCmbAlignDefault;
+  out.heading_level = 0;
   out.image_key = kCmbNoImage;
+  out.anchor_id.clear();
 
   switch (out.type) {
     case kCmbBlockText: {
-      if (payload_len < 4) return false;
-      uint8_t hdr[4];
-      if (!read_exact(f_, hdr, sizeof(hdr))) return false;
-      const uint32_t text_len = cmb_read_u32(hdr);
-      if (text_len + 4 > payload_len) return false;
+      // Min text payload: alignment(1) + heading(1) + text_len(4) +
+      // run_count(2) + anchor_len(1) = 9 bytes.
+      if (payload_len < 9) return false;
+      uint8_t head[6];
+      if (!read_exact(f_, head, sizeof(head))) return false;
+      out.alignment = head[0];
+      out.heading_level = head[1];
+      const uint32_t text_len = cmb_read_u32(head + 2);
+      // Bounds-check against the envelope length to avoid trusting a
+      // corrupt text_len that would read past the record.
+      if (static_cast<uint64_t>(text_len) + 6 + 2 + 1 > payload_len) return false;
       out.text.resize(text_len);
       if (text_len > 0 && !read_exact(f_, out.text.data(), text_len)) {
         out.text.clear();
         return false;
       }
+
+      uint8_t run_count_buf[2];
+      if (!read_exact(f_, run_count_buf, sizeof(run_count_buf))) return false;
+      const uint16_t run_count = cmb_read_u16(run_count_buf);
+      out.runs.reserve(run_count);
+      for (uint16_t i = 0; i < run_count; ++i) {
+        uint8_t run_buf[5];
+        if (!read_exact(f_, run_buf, sizeof(run_buf))) return false;
+        CmbStyleRun r;
+        r.start = cmb_read_u16(run_buf);
+        r.length = cmb_read_u16(run_buf + 2);
+        r.style = run_buf[4];
+        out.runs.push_back(r);
+      }
+
+      uint8_t anchor_len = 0;
+      if (!read_exact(f_, &anchor_len, 1)) return false;
+      if (anchor_len > 0) {
+        out.anchor_id.resize(anchor_len);
+        if (!read_exact(f_, out.anchor_id.data(), anchor_len)) {
+          out.anchor_id.clear();
+          return false;
+        }
+      }
       break;
     }
     case kCmbBlockImage: {
-      if (payload_len < 2) return false;
-      uint8_t hdr[2];
-      if (!read_exact(f_, hdr, sizeof(hdr))) return false;
-      out.image_key = cmb_read_u16(hdr);
+      if (payload_len < 3) return false;
+      uint8_t head[3];
+      if (!read_exact(f_, head, sizeof(head))) return false;
+      out.image_key = cmb_read_u16(head);
+      const uint8_t anchor_len = head[2];
+      if (anchor_len > 0) {
+        out.anchor_id.resize(anchor_len);
+        if (!read_exact(f_, out.anchor_id.data(), anchor_len)) {
+          out.anchor_id.clear();
+          return false;
+        }
+      }
       break;
     }
     case kCmbBlockHr:

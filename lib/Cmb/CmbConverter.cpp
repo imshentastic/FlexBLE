@@ -1,10 +1,12 @@
 #include "CmbConverter.h"
 
-#include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <expat.h>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "CmbWriter.h"
 
@@ -12,171 +14,308 @@ namespace cmb {
 
 namespace {
 
-// Strip XHTML/HTML tags from a UTF-8 byte buffer and return the
-// resulting plain-text content. Single-pass, no regex, no expat
-// dependency. Handles:
-//   - Tags <foo> and </foo> -- skipped entirely (including attributes
-//     and self-closing forms like <br/>). Doesn't parse the tag name;
-//     just consumes characters until the matching '>'.
-//   - Comments <!-- ... --> -- skipped.
-//   - The common named entities (&amp;, &lt;, &gt;, &quot;, &apos;,
-//     &nbsp;) and numeric refs &#N; / &#xH;.
-//   - Whitespace collapse: any run of ASCII whitespace (space, tab,
-//     newline, CR, FF) becomes a single space. Leading + trailing
-//     whitespace is trimmed.
+// ===========================================================================
+// XhtmlParagraphWalker
+// ===========================================================================
 //
-// Phase A.C v0 limitation: paragraph boundaries (<p>, <div>, <h1..6>,
-// <br/>) are NOT preserved -- the whole chapter collapses into one
-// run of words separated by spaces. Acceptable for round-trip testing
-// the writer/reader; v1 of the converter splits on these boundaries.
-std::string strip_html_to_plain_text(std::string_view src) {
-  std::string out;
-  // Reserve a guess: stripped text is usually 60-80% of source size.
-  out.reserve(src.size() * 3 / 4);
+// Streams XHTML through expat and emits one CmbParagraph per
+// paragraph-boundary tag (`<p>`, `<div>`, `<h1>` .. `<h6>`, `<li>`,
+// `<blockquote>`) plus on `<br/>` boundaries. Inline-style tags
+// (`<b>` / `<strong>`, `<i>` / `<em>`, `<u>`, `<s>` / `<strike>`)
+// build style runs inside the current paragraph; the runs persist
+// inside `CmbParagraph::runs` as non-overlapping `{start, length, mask}`
+// triples.
+//
+// Heading level is captured from the source tag name: `<h1>` -> 1,
+// `<h2>` -> 2, etc. Anchor ids are captured from the first `id`
+// attribute encountered within a paragraph (paragraph-boundary tag
+// OR a wrapping `<span>` / `<a>`).
+//
+// `<img>` and other media tags are deliberately ignored in this
+// commit -- they need an image ref resolver pass (to look up the
+// EPUB ZIP entry, get the local-file-header offset, register in the
+// .cmb image table) that arrives in the next checkpoint.
+//
+// The output sink is a std::function<bool(const CmbParagraph&)> that
+// returns false to stop the parse (e.g. on writer I/O failure).
+class XhtmlParagraphWalker {
+ public:
+  using Sink = bool (*)(void* ctx, const CmbParagraph&);
 
-  const size_t n = src.size();
-  size_t i = 0;
-  bool last_was_space = true;  // emits no leading whitespace
+  XhtmlParagraphWalker(Sink sink, void* ctx) : sink_(sink), ctx_(ctx) {}
 
-  auto emit_char = [&](char c) {
-    if (c == '\0') return;
-    if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f') {
-      if (!last_was_space) {
-        out.push_back(' ');
-        last_was_space = true;
+  // Feed a chunk of XHTML bytes through expat. Returns false on
+  // expat parse error or sink-rejection; partial state from previous
+  // chunks is retained across calls.
+  bool feed(const char* data, size_t size, bool is_final) {
+    if (parser_ == nullptr) {
+      parser_ = XML_ParserCreate(nullptr);
+      if (parser_ == nullptr) return false;
+      XML_SetUserData(parser_, this);
+      XML_SetElementHandler(parser_, &XhtmlParagraphWalker::start_thunk, &XhtmlParagraphWalker::end_thunk);
+      XML_SetCharacterDataHandler(parser_, &XhtmlParagraphWalker::chars_thunk);
+    }
+    if (XML_Parse(parser_, data, static_cast<int>(size), is_final ? 1 : 0) == XML_STATUS_ERROR) {
+      return false;
+    }
+    return !sink_failed_;
+  }
+
+  // Emit any leftover paragraph the walker has buffered (e.g. when
+  // the source XHTML doesn't close its last <p> before EOF).
+  bool flush() {
+    return emit_pending();
+  }
+
+  ~XhtmlParagraphWalker() {
+    if (parser_ != nullptr) XML_ParserFree(parser_);
+  }
+
+ private:
+  // ---- expat thunks ----
+
+  static void XMLCALL start_thunk(void* ud, const XML_Char* name, const XML_Char** atts) {
+    static_cast<XhtmlParagraphWalker*>(ud)->on_start(name, atts);
+  }
+  static void XMLCALL end_thunk(void* ud, const XML_Char* name) {
+    static_cast<XhtmlParagraphWalker*>(ud)->on_end(name);
+  }
+  static void XMLCALL chars_thunk(void* ud, const XML_Char* text, int len) {
+    static_cast<XhtmlParagraphWalker*>(ud)->on_chars(text, len);
+  }
+
+  // ---- tag classification ----
+
+  static bool tag_eq(const char* a, const char* b) { return std::strcmp(a, b) == 0; }
+
+  static bool is_paragraph_boundary(const char* name) {
+    return tag_eq(name, "p") || tag_eq(name, "div") || tag_eq(name, "li") || tag_eq(name, "blockquote") ||
+           tag_eq(name, "h1") || tag_eq(name, "h2") || tag_eq(name, "h3") || tag_eq(name, "h4") ||
+           tag_eq(name, "h5") || tag_eq(name, "h6");
+  }
+  static uint8_t heading_level_for_tag(const char* name) {
+    if (name[0] == 'h' && name[1] >= '1' && name[1] <= '6' && name[2] == '\0') {
+      return static_cast<uint8_t>(name[1] - '0');
+    }
+    return 0;
+  }
+  static bool is_bold_tag(const char* name) { return tag_eq(name, "b") || tag_eq(name, "strong"); }
+  static bool is_italic_tag(const char* name) { return tag_eq(name, "i") || tag_eq(name, "em"); }
+  static bool is_underline_tag(const char* name) { return tag_eq(name, "u") || tag_eq(name, "ins"); }
+  static bool is_strike_tag(const char* name) { return tag_eq(name, "s") || tag_eq(name, "strike") || tag_eq(name, "del"); }
+  static bool is_hard_break_tag(const char* name) { return tag_eq(name, "br"); }
+
+  // ---- event handlers ----
+
+  void on_start(const char* name, const XML_Char** atts) {
+    // Capture id attribute if the current paragraph doesn't already
+    // have one. First-id-wins keeps the behaviour stable for nested
+    // wrappers like <a id="..."> <span ...>...</span> </a>.
+    if (current_anchor_.empty()) {
+      for (int i = 0; atts && atts[i]; i += 2) {
+        if (tag_eq(atts[i], "id")) {
+          current_anchor_ = atts[i + 1];
+          break;
+        }
       }
+    }
+
+    if (is_paragraph_boundary(name)) {
+      // Boundary opens a new paragraph -- flush whatever was in
+      // progress (handles the unclosed-<p> + <p>-as-sibling pattern).
+      emit_pending();
+      pending_heading_ = heading_level_for_tag(name);
       return;
     }
-    out.push_back(c);
-    last_was_space = false;
-  };
-
-  auto emit_codepoint = [&](uint32_t cp) {
-    // Re-encode codepoint as UTF-8 bytes. Common case: ASCII falls
-    // through emit_char's whitespace handling cleanly.
-    if (cp < 0x80) {
-      emit_char(static_cast<char>(cp));
-    } else if (cp < 0x800) {
-      out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
-      out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-      last_was_space = false;
-    } else if (cp < 0x10000) {
-      out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
-      out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-      out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-      last_was_space = false;
-    } else if (cp < 0x110000) {
-      out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
-      out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
-      out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-      out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-      last_was_space = false;
+    if (is_hard_break_tag(name)) {
+      emit_pending();
+      return;
     }
-    // Codepoints >= 0x110000 are illegal -- silently drop.
-  };
+    if (is_bold_tag(name)) {
+      ++bold_depth_;
+      return;
+    }
+    if (is_italic_tag(name)) {
+      ++italic_depth_;
+      return;
+    }
+    if (is_underline_tag(name)) {
+      ++underline_depth_;
+      return;
+    }
+    if (is_strike_tag(name)) {
+      ++strike_depth_;
+      return;
+    }
+    // <img>, <hr>, etc. are intentionally not handled here -- left for
+    // a follow-up image-ref + block emitter that needs more EPUB
+    // context than the walker has.
+  }
 
-  while (i < n) {
-    const char c = src[i];
-    if (c == '<') {
-      // Comment? <!-- ... -->
-      if (i + 3 < n && src[i + 1] == '!' && src[i + 2] == '-' && src[i + 3] == '-') {
-        // Scan for "-->"
-        size_t j = i + 4;
-        while (j + 2 < n && !(src[j] == '-' && src[j + 1] == '-' && src[j + 2] == '>')) {
-          ++j;
-        }
-        i = (j + 2 < n) ? j + 3 : n;
-        // Treat comment as a separator (emit space so adjacent text
-        // doesn't run together when a comment splits it).
+  void on_end(const char* name) {
+    if (is_paragraph_boundary(name)) {
+      emit_pending();
+      return;
+    }
+    if (is_bold_tag(name)) {
+      if (bold_depth_ > 0) --bold_depth_;
+      return;
+    }
+    if (is_italic_tag(name)) {
+      if (italic_depth_ > 0) --italic_depth_;
+      return;
+    }
+    if (is_underline_tag(name)) {
+      if (underline_depth_ > 0) --underline_depth_;
+      return;
+    }
+    if (is_strike_tag(name)) {
+      if (strike_depth_ > 0) --strike_depth_;
+      return;
+    }
+  }
+
+  void on_chars(const XML_Char* text, int len) {
+    if (len <= 0) return;
+    // Skip leading whitespace when the paragraph is fresh -- avoids
+    // synthesising a "paragraph" of just whitespace between tags.
+    size_t start = 0;
+    if (current_text_.empty()) {
+      while (start < static_cast<size_t>(len) && is_xml_space(text[start])) ++start;
+      if (start == static_cast<size_t>(len)) return;
+    }
+
+    const size_t before = current_text_.size();
+    const uint8_t mask = current_style_mask();
+    // Collapse runs of whitespace into a single space character as we
+    // append. Cheap normalisation that matches how readers will lay
+    // out the text anyway.
+    bool last_was_space = !current_text_.empty() && current_text_.back() == ' ';
+    for (size_t i = start; i < static_cast<size_t>(len); ++i) {
+      const char c = text[i];
+      if (is_xml_space(c)) {
         if (!last_was_space) {
-          out.push_back(' ');
+          current_text_.push_back(' ');
           last_was_space = true;
         }
-        continue;
+      } else {
+        current_text_.push_back(c);
+        last_was_space = false;
       }
-      // Generic tag: skip to matching '>'. Doesn't try to parse the
-      // tag; intentionally permissive on malformed HTML.
-      while (i < n && src[i] != '>') ++i;
-      if (i < n) ++i;  // consume '>'
-      // Tags act as soft separators between text runs.
-      if (!last_was_space) {
-        out.push_back(' ');
-        last_was_space = true;
-      }
-      continue;
     }
-    if (c == '&') {
-      // Entity. Common named refs + numeric refs.
-      // Scan for terminating ';' (cap at 8 chars to stay safe on
-      // malformed input).
-      size_t end = i + 1;
-      while (end < n && end < i + 10 && src[end] != ';' && src[end] != '<' && src[end] != '&') {
-        ++end;
-      }
-      if (end < n && src[end] == ';') {
-        const std::string_view entity = src.substr(i + 1, end - i - 1);
-        if (entity == "amp") {
-          emit_char('&');
-        } else if (entity == "lt") {
-          emit_char('<');
-        } else if (entity == "gt") {
-          emit_char('>');
-        } else if (entity == "quot") {
-          emit_char('"');
-        } else if (entity == "apos") {
-          emit_char('\'');
-        } else if (entity == "nbsp") {
-          emit_char(' ');
-        } else if (entity.size() >= 2 && entity[0] == '#') {
-          // Numeric ref: &#N; (decimal) or &#xH; / &#XH; (hex).
-          uint32_t cp = 0;
-          if (entity[1] == 'x' || entity[1] == 'X') {
-            for (size_t k = 2; k < entity.size(); ++k) {
-              const char d = entity[k];
-              if (d >= '0' && d <= '9') {
-                cp = cp * 16 + static_cast<uint32_t>(d - '0');
-              } else if (d >= 'a' && d <= 'f') {
-                cp = cp * 16 + static_cast<uint32_t>(d - 'a' + 10);
-              } else if (d >= 'A' && d <= 'F') {
-                cp = cp * 16 + static_cast<uint32_t>(d - 'A' + 10);
-              } else {
-                cp = 0;
-                break;
-              }
-            }
-          } else {
-            for (size_t k = 1; k < entity.size(); ++k) {
-              const char d = entity[k];
-              if (d < '0' || d > '9') {
-                cp = 0;
-                break;
-              }
-              cp = cp * 10 + static_cast<uint32_t>(d - '0');
-            }
-          }
-          if (cp != 0) emit_codepoint(cp);
+
+    if (mask != 0) {
+      const size_t added = current_text_.size() - before;
+      if (added > 0) {
+        // Extend the last run if it ends at the same byte position
+        // AND carries the same style mask. Otherwise start a fresh
+        // run at `before`.
+        if (!current_runs_.empty() && current_runs_.back().style == mask &&
+            static_cast<size_t>(current_runs_.back().start) + current_runs_.back().length == before) {
+          current_runs_.back().length = static_cast<uint16_t>(current_runs_.back().length + added);
+        } else if (before <= 0xFFFF && added <= 0xFFFF) {
+          CmbStyleRun r;
+          r.start = static_cast<uint16_t>(before);
+          r.length = static_cast<uint16_t>(added);
+          r.style = mask;
+          current_runs_.push_back(r);
         }
-        // Unknown named entity -- drop silently. (Could fall back to
-        // emitting the raw '&...;' but that confuses downstream
-        // text-content callers more than dropping does.)
-        i = end + 1;
-        continue;
+        // If a paragraph's text length exceeds 64 KB, run-position
+        // overflows the u16 fields. We drop the affected run (the
+        // text itself is still kept). This is fine for the first
+        // converter version; production EPUBs don't have 64 KB
+        // single-paragraph runs.
       }
-      // No terminating ';' -- treat '&' as literal.
-      emit_char('&');
-      ++i;
-      continue;
     }
-    emit_char(c);
-    ++i;
   }
 
-  // Trim trailing whitespace (we always emit a single space for runs,
-  // so at most one trailing space to peel off).
-  if (!out.empty() && out.back() == ' ') {
-    out.pop_back();
+  // ---- state helpers ----
+
+  bool emit_pending() {
+    // Trim trailing whitespace (we always collapse internal whitespace
+    // to a single space; at most one trailing space to peel).
+    while (!current_text_.empty() && current_text_.back() == ' ') {
+      current_text_.pop_back();
+    }
+    if (current_text_.empty() && current_anchor_.empty() && pending_heading_ == 0) {
+      // Nothing accumulated -- common when paragraph-boundary tags
+      // wrap empty / whitespace-only spans. No paragraph emitted.
+      reset_pending();
+      return true;
+    }
+
+    CmbParagraph p;
+    p.type = kCmbBlockText;
+    p.text = std::move(current_text_);
+    p.runs = std::move(current_runs_);
+    p.heading_level = pending_heading_;
+    p.anchor_id = std::move(current_anchor_);
+    // alignment defaults to kCmbAlignDefault; CSS-driven alignment is
+    // a future enhancement (would require a CSS parse pass).
+
+    reset_pending();
+    if (sink_ != nullptr) {
+      if (!sink_(ctx_, p)) {
+        sink_failed_ = true;
+        return false;
+      }
+    }
+    return true;
   }
-  return out;
+
+  void reset_pending() {
+    current_text_.clear();
+    current_runs_.clear();
+    current_anchor_.clear();
+    pending_heading_ = 0;
+  }
+
+  uint8_t current_style_mask() const {
+    uint8_t m = 0;
+    if (bold_depth_ > 0) m |= kCmbStyleBold;
+    if (italic_depth_ > 0) m |= kCmbStyleItalic;
+    if (underline_depth_ > 0) m |= kCmbStyleUnderline;
+    if (strike_depth_ > 0) m |= kCmbStyleStrikethrough;
+    return m;
+  }
+
+  static bool is_xml_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f'; }
+
+  // ---- members ----
+
+  XML_Parser parser_ = nullptr;
+  Sink sink_ = nullptr;
+  void* ctx_ = nullptr;
+  bool sink_failed_ = false;
+
+  // Per-paragraph accumulator.
+  std::string current_text_;
+  std::vector<CmbStyleRun> current_runs_;
+  std::string current_anchor_;
+  uint8_t pending_heading_ = 0;
+
+  // Open-depth counters for inline-style tags.
+  int bold_depth_ = 0;
+  int italic_depth_ = 0;
+  int underline_depth_ = 0;
+  int strike_depth_ = 0;
+};
+
+// Adapter that lets the walker push paragraphs straight into a
+// CmbWriter without a std::function indirection.
+struct WriterSinkCtx {
+  CmbWriter* writer;
+  bool any_failure;
+};
+
+bool writer_sink(void* ctx_v, const CmbParagraph& p) {
+  auto* ctx = static_cast<WriterSinkCtx*>(ctx_v);
+  if (ctx->any_failure) return false;
+  if (!ctx->writer->write_paragraph(p)) {
+    ctx->any_failure = true;
+    return false;
+  }
+  return true;
 }
 
 }  // namespace
@@ -184,6 +323,8 @@ std::string strip_html_to_plain_text(std::string_view src) {
 bool convert_epub_to_cmb(Epub& book, const char* output_path) {
   CmbWriter w;
   if (!w.open(output_path)) return false;
+
+  WriterSinkCtx ctx{&w, false};
 
   const int chapter_count = book.getSpineItemsCount();
   for (int ci = 0; ci < chapter_count; ++ci) {
@@ -194,24 +335,21 @@ bool convert_epub_to_cmb(Epub& book, const char* output_path) {
 
     w.begin_chapter();
     if (raw != nullptr && raw_size > 0) {
-      // Phase A.C v0: one paragraph per chapter containing all the
-      // stripped-of-tags text. Subsequent commits split on <p>/<div>/<h*>
-      // boundaries and capture inline styling.
-      std::string text = strip_html_to_plain_text(
-          std::string_view{reinterpret_cast<const char*>(raw), raw_size});
-      if (!text.empty()) {
-        CmbParagraph p;
-        p.type = kCmbBlockText;
-        p.text = std::move(text);
-        if (!w.write_paragraph(p)) {
-          // Write failure on this paragraph -- skip rest of chapter
-          // (end_chapter still writes the descriptor table for what
-          // we did emit) but treat the overall conversion as failed.
-          std::free(raw);
-          w.end_chapter();
-          w.close();
-          return false;
-        }
+      // Fresh walker per chapter -- expat carries some per-document
+      // state (DTD declarations, namespace tables) we don't want to
+      // bleed across spine items.
+      XhtmlParagraphWalker walker(writer_sink, &ctx);
+      const bool parsed_ok = walker.feed(reinterpret_cast<const char*>(raw), raw_size, /*is_final=*/true);
+      // Flush whatever the walker buffered past its last paragraph
+      // close (handles XHTML that ends without a closing </p>).
+      const bool flushed_ok = walker.flush();
+      if (!parsed_ok || !flushed_ok || ctx.any_failure) {
+        // Parse error / writer error -- finalize the chapter so the
+        // descriptor table is consistent, then bail.
+        std::free(raw);
+        w.end_chapter();
+        w.close();
+        return false;
       }
     }
     std::free(raw);

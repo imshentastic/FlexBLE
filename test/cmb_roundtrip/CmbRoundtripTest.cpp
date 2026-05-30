@@ -190,6 +190,96 @@ void test_image_refs_and_blocks(const char* path) {
   CMB_EXPECT_EQ(p.image_key, 1u);
 }
 
+void test_styled_paragraphs(const char* path) {
+  std::cout << "[test] styled paragraphs (runs + heading + alignment + anchor)\n";
+  {
+    cmb::CmbWriter w;
+    CMB_EXPECT(w.open(path));
+
+    w.begin_chapter();
+
+    // Paragraph 1: a heading with an anchor id and centered alignment.
+    {
+      cmb::CmbParagraph p;
+      p.type = cmb::kCmbBlockText;
+      p.text = "Chapter One";
+      p.heading_level = 1;
+      p.alignment = cmb::kCmbAlignCenter;
+      p.anchor_id = "ch1";
+      CMB_EXPECT(w.write_paragraph(p));
+    }
+
+    // Paragraph 2: body text with mixed bold + italic runs and a
+    // trailing left-aligned setting.
+    {
+      cmb::CmbParagraph p;
+      p.type = cmb::kCmbBlockText;
+      p.text = "The quick brown fox jumps over the lazy dog.";
+      p.alignment = cmb::kCmbAlignLeft;
+      // "quick" (offset 4, length 5) -- bold
+      p.runs.push_back({4, 5, cmb::kCmbStyleBold});
+      // "brown fox" (offset 10, length 9) -- italic
+      p.runs.push_back({10, 9, cmb::kCmbStyleItalic});
+      // "lazy" (offset 35, length 4) -- bold + italic + underline
+      p.runs.push_back({35, 4, static_cast<uint8_t>(cmb::kCmbStyleBold | cmb::kCmbStyleItalic | cmb::kCmbStyleUnderline)});
+      CMB_EXPECT(w.write_paragraph(p));
+    }
+
+    // Paragraph 3: image block with an anchor id.
+    const uint16_t img_key = w.add_image_ref(0x4000, 100, 150);
+    {
+      cmb::CmbParagraph p;
+      p.type = cmb::kCmbBlockImage;
+      p.image_key = img_key;
+      p.anchor_id = "cover";
+      CMB_EXPECT(w.write_paragraph(p));
+    }
+
+    w.end_chapter();
+    CMB_EXPECT(w.finish("Styled", "Tester"));
+  }
+
+  cmb::CmbReader r;
+  CMB_EXPECT(r.open(path));
+  CMB_EXPECT_EQ(r.chapter_count(), 1u);
+  CMB_EXPECT_EQ(r.chapter_paragraph_count(0), 3u);
+
+  cmb::CmbParagraph p;
+  // Paragraph 1 -- heading.
+  CMB_EXPECT(r.load_paragraph(0, 0, p));
+  CMB_EXPECT_EQ(p.type, static_cast<uint8_t>(cmb::kCmbBlockText));
+  CMB_EXPECT_EQ(p.text, std::string("Chapter One"));
+  CMB_EXPECT_EQ(static_cast<int>(p.heading_level), 1);
+  CMB_EXPECT_EQ(static_cast<int>(p.alignment), static_cast<int>(cmb::kCmbAlignCenter));
+  CMB_EXPECT_EQ(p.anchor_id, std::string("ch1"));
+  CMB_EXPECT_EQ(p.runs.size(), 0u);
+
+  // Paragraph 2 -- styled body.
+  CMB_EXPECT(r.load_paragraph(0, 1, p));
+  CMB_EXPECT_EQ(p.type, static_cast<uint8_t>(cmb::kCmbBlockText));
+  CMB_EXPECT_EQ(p.text, std::string("The quick brown fox jumps over the lazy dog."));
+  CMB_EXPECT_EQ(static_cast<int>(p.heading_level), 0);
+  CMB_EXPECT_EQ(static_cast<int>(p.alignment), static_cast<int>(cmb::kCmbAlignLeft));
+  CMB_EXPECT_EQ(p.anchor_id, std::string(""));
+  CMB_EXPECT_EQ(p.runs.size(), 3u);
+  CMB_EXPECT_EQ(p.runs[0].start, 4u);
+  CMB_EXPECT_EQ(p.runs[0].length, 5u);
+  CMB_EXPECT_EQ(static_cast<int>(p.runs[0].style), static_cast<int>(cmb::kCmbStyleBold));
+  CMB_EXPECT_EQ(p.runs[1].start, 10u);
+  CMB_EXPECT_EQ(p.runs[1].length, 9u);
+  CMB_EXPECT_EQ(static_cast<int>(p.runs[1].style), static_cast<int>(cmb::kCmbStyleItalic));
+  CMB_EXPECT_EQ(p.runs[2].start, 35u);
+  CMB_EXPECT_EQ(p.runs[2].length, 4u);
+  CMB_EXPECT_EQ(static_cast<int>(p.runs[2].style),
+                static_cast<int>(cmb::kCmbStyleBold | cmb::kCmbStyleItalic | cmb::kCmbStyleUnderline));
+
+  // Paragraph 3 -- image with anchor.
+  CMB_EXPECT(r.load_paragraph(0, 2, p));
+  CMB_EXPECT_EQ(p.type, static_cast<uint8_t>(cmb::kCmbBlockImage));
+  CMB_EXPECT_EQ(p.image_key, 0u);
+  CMB_EXPECT_EQ(p.anchor_id, std::string("cover"));
+}
+
 void test_magic_rejection(const char* path) {
   std::cout << "[test] reader rejects non-cmb files\n";
   // Write a file that starts with the wrong magic.
@@ -218,6 +308,7 @@ int main(int argc, char** argv) {
   test_empty_book(tmp_path);
   test_text_paragraphs(tmp_path);
   test_image_refs_and_blocks(tmp_path);
+  test_styled_paragraphs(tmp_path);
   test_magic_rejection(tmp_path);
 
   std::remove(tmp_path);
