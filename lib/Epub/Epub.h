@@ -42,10 +42,34 @@ class Epub {
   bool parseTocNcxFile() const;
   bool parseTocNavFile() const;
   void parseCssFiles() const;
+  // CrumBLE #134: cold-open fast path. If a .cmb sidecar lives next
+  // to the EPUB, populates `bookMetadataCache` from it (no ZIP +
+  // OPF + CSS + TOC parse) and returns true. Returns false on any
+  // failure -- caller falls through to the slow path. Side-effects
+  // mirror the slow path's: bookMetadataCache is loaded, cssFiles
+  // is set, sections cache is invalidated if !skipLoadingCss.
+  bool tryLoadFromCmb(bool skipLoadingCss);
+  // Legacy sibling layout used in early CrumBLE builds: `foo.epub` ->
+  // `foo.cmb` next to the original. Visible to anyone mounting the SD
+  // card, which is confusing. Kept ONLY so migrateLegacyCmbSidecar()
+  // can find old files and move them into the per-book cache dir.
+  // Returns empty when the input has no detectable extension.
+  static std::string legacyCmbSiblingPath(const std::string& epubPath);
+  // If a legacy sibling `foo.cmb` exists, move it into the per-book
+  // cache directory (or delete it as an orphan if the cache copy
+  // already exists). One-time per book; subsequent loads see no
+  // sibling and the check is a single Storage.exists call. Called
+  // from the top of Epub::load before any cache work runs.
+  void migrateLegacyCmbSidecar();
 
  public:
   explicit Epub(std::string filepath, const std::string& cacheDir);
   ~Epub() = default;
+  // Path to the .cmb sidecar inside this book's cache directory. Lives
+  // alongside book.bin / cover.bmp / thumbs so users mounting their SD
+  // card never see a stray sidecar next to their epub files. Empty
+  // when cachePath is unset (should not happen post-construction).
+  std::string getCmbPath() const;
   static std::string cachePathForFilePath(const std::string& filepath, const std::string& cacheDir);
   std::string& getBasePath() { return contentBasePath; }
   bool load(bool buildIfMissing = true, bool skipLoadingCss = false);
@@ -110,6 +134,37 @@ class Epub {
                                    bool trailingNullByte = false) const;
   bool readItemContentsToStream(const std::string& itemHref, Print& out, size_t chunkSize) const;
   bool getItemSize(const std::string& itemHref, size_t* size) const;
+  // CrumBLE #134: look up an item's local-file-header offset in the
+  // EPUB ZIP. Used by the .cmb converter to record image refs --
+  // stored as offsets instead of paths so the reader can pull image
+  // bytes from the EPUB without walking the central directory at
+  // display time. Path normalised the same way as readItemContents*.
+  bool getZipLocalHeaderOffset(const std::string& itemHref, uint32_t* offset) const;
+  // CrumBLE #134: accessors for metadata fields the .cmb converter
+  // needs to capture into the .cmb v3 metadata blob. Cover href and
+  // text-reference href live inside the BookMetadataCache; the CSS
+  // files vector lives on Epub itself. Pure additions; no
+  // behavioural change for existing callers.
+  const std::string& getCoverItemHref() const;
+  const std::string& getTextReferenceHref() const;
+  const std::vector<std::string>& getCssFiles() const { return cssFiles; }
+  // CrumBLE #134: opportunistic .cmb writer. If no .cmb sidecar
+  // exists next to the EPUB, converts the currently-loaded book and
+  // writes one alongside the .epub. Subsequent opens (or post-
+  // cache-clear reopens) pick it up via the .cmb fast path in
+  // load(). Caller is expected to call this AFTER a successful
+  // load() -- the conversion path depends on bookMetadataCache
+  // being populated.
+  //
+  // Best-effort: returns true if a .cmb file exists (already there
+  // OR just written), false on any failure. On failure, partial
+  // output is removed so the next call retries cleanly.
+  //
+  // Synchronous and can take several seconds on big books (one
+  // expat pass per chapter). Called automatically at the end of
+  // load() so the next open hits the fast path; reader / utility
+  // code can call it explicitly if they want to force a refresh.
+  bool ensureCmbExists();
   // CrumBLE: true if the item is STORED (uncompressed) in the EPUB zip. A STORED
   // chapter needs no 32 KB DEFLATE window to cold-load, so the reader can build
   // it in place while BLE is connected instead of dropping/re-enabling BLE

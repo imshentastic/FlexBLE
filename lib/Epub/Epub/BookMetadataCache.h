@@ -99,8 +99,18 @@ class BookMetadataCache {
   bool endWrite();
   bool cleanupTmpFiles() const;
 
-  // Post-processing to update mappings and sizes
-  bool buildBookBin(const std::string& epubPath, const BookMetadata& metadata);
+  // Post-processing to update mappings and sizes.
+  // CrumBLE #134: optional `precomputedCumulativeSizes` lets callers
+  // pass in already-known cumulative inflated-size totals (one per
+  // spine entry) and skip opening the EPUB ZIP for size queries.
+  // When non-null, the vector MUST be `spineCount`-long; the function
+  // uses its entries verbatim (no per-item additions). When null
+  // (the default), behaviour matches the original: open the ZIP,
+  // query per-entry inflated sizes, accumulate. The .cmb fast path
+  // in Epub::load uses this to avoid the ~30 KB ZIP-central-dir walk
+  // on books that have a .cmb sidecar.
+  bool buildBookBin(const std::string& epubPath, const BookMetadata& metadata,
+                    const std::deque<uint32_t>* precomputedCumulativeSizes = nullptr);
 
   // Reading phase (read mode)
   bool load();
