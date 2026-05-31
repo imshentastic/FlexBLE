@@ -307,14 +307,6 @@ bool ZipFile::getCompressionMethod(const char* filename, uint16_t* method) {
   return true;
 }
 
-bool ZipFile::getLocalHeaderOffset(const char* filename, uint32_t* offset) {
-  if (filename == nullptr || offset == nullptr) return false;
-  FileStatSlim fileStat = {};
-  if (!loadFileStatSlim(filename, &fileStat)) return false;
-  *offset = fileStat.localHeaderOffset;
-  return true;
-}
-
 int ZipFile::fillUncompressedSizes(std::deque<SizeTarget>& targets, std::deque<uint32_t>& sizes) {
   if (targets.empty()) {
     return 0;
