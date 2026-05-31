@@ -625,6 +625,11 @@ bool Epub::extractSeriesFromOpf() {
 bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
   LOG_DBG("EBP", "Loading ePub: %s", filepath.c_str());
 
+  // One-shot: move any pre-existing legacy `foo.cmb` sibling into the
+  // per-book cache directory. After this, the rest of the load path
+  // only ever looks at the new location (getCmbPath()).
+  migrateLegacyCmbSidecar();
+
   // Initialize spine/TOC cache
   bookMetadataCache.reset(new BookMetadataCache(cachePath));
   // Always create CssParser - needed for inline style parsing even without CSS files
@@ -1221,13 +1226,20 @@ const std::string& Epub::getTextReferenceHref() const {
   return bookMetadataCache->coreMetadata.textReferenceHref;
 }
 
-std::string Epub::deriveCmbPath(const std::string& epubPath) {
-  // foo.epub -> foo.cmb. Mirrors the .pxc derivation pattern in
-  // ImageBlock (replace the extension); not "foo.epub.cmb" so user-
-  // visible names stay clean.
+std::string Epub::getCmbPath() const {
+  // Lives inside the per-book cache directory next to book.bin so the
+  // sidecar never appears next to user-visible .epub files on the SD
+  // card. Constant filename within the dir because the directory path
+  // already encodes the book identity (hash of the epub path).
+  if (cachePath.empty()) return {};
+  return cachePath + "/book.cmb";
+}
+
+std::string Epub::legacyCmbSiblingPath(const std::string& epubPath) {
+  // Legacy: `foo.epub` -> `foo.cmb` (sibling). Used by the original
+  // CrumBLE alpha builds before we moved the sidecar into the cache
+  // dir. Kept ONLY for migration.
   const size_t dot = epubPath.rfind('.');
-  // Also confirm the dot is past the last path separator so we don't
-  // mangle paths like "/foo.dir/book" (no extension).
   const size_t slash = epubPath.find_last_of("/\\");
   if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) {
     return {};
@@ -1235,8 +1247,41 @@ std::string Epub::deriveCmbPath(const std::string& epubPath) {
   return epubPath.substr(0, dot) + ".cmb";
 }
 
+void Epub::migrateLegacyCmbSidecar() {
+  const std::string legacyPath = legacyCmbSiblingPath(filepath);
+  if (legacyPath.empty() || !Storage.exists(legacyPath.c_str())) return;
+
+  const std::string newPath = getCmbPath();
+  if (newPath.empty()) return;
+
+  // If the new (cache-dir) copy already exists, the legacy sibling is
+  // an orphan from an earlier alpha install -- delete it. Otherwise
+  // move it into the cache dir so the user doesn't pay a re-conversion
+  // cost just for the path change.
+  if (Storage.exists(newPath.c_str())) {
+    if (Storage.remove(legacyPath.c_str())) {
+      LOG_INF("EBP", "Removed orphan .cmb sidecar: %s", legacyPath.c_str());
+    } else {
+      LOG_ERR("EBP", "Failed to remove orphan .cmb sidecar: %s", legacyPath.c_str());
+    }
+    return;
+  }
+
+  // Need the cache dir to exist before we can rename into it.
+  setupCacheDir();
+  if (Storage.rename(legacyPath.c_str(), newPath.c_str())) {
+    LOG_INF("EBP", "Migrated .cmb sidecar into cache: %s -> %s", legacyPath.c_str(), newPath.c_str());
+  } else {
+    LOG_ERR("EBP", "Failed to migrate .cmb sidecar (%s -> %s); removing legacy file", legacyPath.c_str(),
+            newPath.c_str());
+    // Best effort: delete the legacy file. Next book open will rebuild
+    // the .cmb at the new location from the EPUB.
+    Storage.remove(legacyPath.c_str());
+  }
+}
+
 bool Epub::tryLoadFromCmb(const bool skipLoadingCss) {
-  const std::string cmbPath = deriveCmbPath(filepath);
+  const std::string cmbPath = getCmbPath();
   if (cmbPath.empty() || !Storage.exists(cmbPath.c_str())) return false;
 
   cmb::CmbReader reader;
@@ -1333,9 +1378,11 @@ bool Epub::tryLoadFromCmb(const bool skipLoadingCss) {
 }
 
 bool Epub::ensureCmbExists() {
-  const std::string cmbPath = deriveCmbPath(filepath);
+  const std::string cmbPath = getCmbPath();
   if (cmbPath.empty()) return false;
   if (Storage.exists(cmbPath.c_str())) return true;
+  // Need the cache dir to exist before writing the sidecar into it.
+  setupCacheDir();
 
   // Conversion needs bookMetadataCache loaded (the converter reads
   // spine + metadata via Epub accessors which all go through the

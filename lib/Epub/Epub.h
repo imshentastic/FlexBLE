@@ -49,15 +49,27 @@ class Epub {
   // mirror the slow path's: bookMetadataCache is loaded, cssFiles
   // is set, sections cache is invalidated if !skipLoadingCss.
   bool tryLoadFromCmb(bool skipLoadingCss);
+  // Legacy sibling layout used in early CrumBLE builds: `foo.epub` ->
+  // `foo.cmb` next to the original. Visible to anyone mounting the SD
+  // card, which is confusing. Kept ONLY so migrateLegacyCmbSidecar()
+  // can find old files and move them into the per-book cache dir.
+  // Returns empty when the input has no detectable extension.
+  static std::string legacyCmbSiblingPath(const std::string& epubPath);
+  // If a legacy sibling `foo.cmb` exists, move it into the per-book
+  // cache directory (or delete it as an orphan if the cache copy
+  // already exists). One-time per book; subsequent loads see no
+  // sibling and the check is a single Storage.exists call. Called
+  // from the top of Epub::load before any cache work runs.
+  void migrateLegacyCmbSidecar();
 
  public:
   explicit Epub(std::string filepath, const std::string& cacheDir);
   ~Epub() = default;
-  // Sibling path: `foo.epub` -> `foo.cmb`. Returns empty when the
-  // input has no detectable extension. Public so other parts of the
-  // reader (e.g. Section::createSectionFile's CMB fast-path dispatch)
-  // can locate the sidecar without re-implementing the suffix swap.
-  static std::string deriveCmbPath(const std::string& epubPath);
+  // Path to the .cmb sidecar inside this book's cache directory. Lives
+  // alongside book.bin / cover.bmp / thumbs so users mounting their SD
+  // card never see a stray sidecar next to their epub files. Empty
+  // when cachePath is unset (should not happen post-construction).
+  std::string getCmbPath() const;
   static std::string cachePathForFilePath(const std::string& filepath, const std::string& cacheDir);
   std::string& getBasePath() { return contentBasePath; }
   bool load(bool buildIfMissing = true, bool skipLoadingCss = false);

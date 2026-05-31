@@ -259,7 +259,7 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
   // entirely. On any failure, fall through to the XHTML path so the chapter
   // still renders.
   {
-    const std::string cmbPath = Epub::deriveCmbPath(epub->getPath());
+    const std::string cmbPath = epub->getCmbPath();
     if (!cmbPath.empty() && Storage.exists(cmbPath.c_str())) {
       if (tryBuildSectionFromCmb(cmbPath, tmpSectionPath, fontId, lineCompression, extraParagraphSpacing,
                                  forceParagraphIndents, paragraphAlignment, viewportWidth, viewportHeight,
