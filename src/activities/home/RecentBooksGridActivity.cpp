@@ -148,6 +148,20 @@ int moveVerticalInGrid(const int currentIndex, const int totalItems, const int c
       if (nextRowCandidate < totalItems && (nextRowCandidate / safeItemsPerPage) == currentPage) {
         return nextRowCandidate;
       }
+      // Partial last row on this page (e.g. 3 books in a 2x2, or 5 books in
+      // a 3x3, or 6 books in a 4x4): the same-column slot doesn't exist
+      // in the next row, but some cells DO. Snap to the rightmost
+      // available cell of that partial row so pressing DOWN feels like a
+      // real move instead of a no-op or a jarring jump to the next page.
+      const int currentPageStart = currentPage * safeItemsPerPage;
+      const int currentPageEnd = std::min(currentPageStart + safeItemsPerPage, totalItems);
+      const int nextRowStartOnPage = currentPageStart + (currentRow + 1) * columns;
+      if (nextRowStartOnPage < currentPageEnd) {
+        // currentPageEnd-1 is the last cell of the partial row (since the
+        // row above DOES have currentColumn filled, partial truncation
+        // necessarily lands within this row).
+        return currentPageEnd - 1;
+      }
     }
 
     const int nextPage = (currentPage + 1) % totalPages;
@@ -234,12 +248,12 @@ std::string getReusableCoverPath(const RecentBook& book) {
   return book.coverBmpPath;
 }
 
-void ensureReusableCoverPath(RecentBook& book) {
+void ensureReusableCoverPath(RecentBook& book, int coverWidth, int coverHeight) {
   // Books whose thumb-gen has previously failed should stay on the
   // placeholder path. Without this gate, the re-derivation below would
   // refill coverBmpPath with the template, which trips needsCoverThumbGeneration
   // -> Loading popup -> repeat failure on every shelf revisit.
-  if (CoverThumbStatus::isMarkedFailed(book.path)) {
+  if (CoverThumbStatus::isMarkedFailed(book.path, coverWidth, coverHeight)) {
     if (!book.coverBmpPath.empty()) {
       book.coverBmpPath = "";
       updateRecentBookCoverPath(book, "");
@@ -289,7 +303,7 @@ void RecentBooksGridActivity::loadRecentBooks() {
       // previous generation has been marked permanently-failed so we don't
       // re-derive a path that will only trigger a doomed retry below
       // (loading popup + same failure every revisit).
-      if (!CoverThumbStatus::isMarkedFailed(path)) {
+      if (!CoverThumbStatus::isMarkedFailed(path, coverWidth_, coverHeight_)) {
         if (FsHelpers::hasEpubExtension(path)) {
           book.coverBmpPath = Epub(path, "/.crosspoint").getThumbBmpPath();
         } else if (FsHelpers::hasXtcExtension(path)) {
@@ -393,10 +407,10 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
   bool needsGeneration = false;
   for (int i = pageStart; i < pageEnd; ++i) {
     RecentBook& book = recentBooks[i].book;
-    ensureReusableCoverPath(book);
+    ensureReusableCoverPath(book, coverWidth_, coverHeight_);
     // Books with a "thumb generation failed" marker render the placeholder
     // (coverBmpPath stays empty) and never trigger the Loading popup.
-    if (CoverThumbStatus::isMarkedFailed(book.path)) continue;
+    if (CoverThumbStatus::isMarkedFailed(book.path, coverWidth_, coverHeight_)) continue;
     if (book.coverBmpPath.empty()) {
       needsGeneration = true;
       break;
@@ -420,7 +434,7 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
   for (int i = pageStart; i < pageEnd; ++i) {
     RecentBook& book = recentBooks[i].book;
     // Already-known-failed books: render placeholder, no Loading popup.
-    if (CoverThumbStatus::isMarkedFailed(book.path)) {
+    if (CoverThumbStatus::isMarkedFailed(book.path, coverWidth_, coverHeight_)) {
       processedCount++;
       continue;
     }
@@ -455,7 +469,7 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
           const std::string reusablePath = epub.getThumbBmpPath();
           book.coverBmpPath = reusablePath;
           updateRecentBookCoverPath(book, reusablePath);
-          CoverThumbStatus::clearFailed(book.path);
+          CoverThumbStatus::clearFailed(book.path, coverWidth_, coverHeight_);
         } else {
           // CrumBLE #133 follow-up: re-enabled markFailed after BOTH
           // gen paths fail (NoIndex AND heavy). Earlier this branch
@@ -469,7 +483,7 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
           // for the same books on every Bookshelf entry.
           book.coverBmpPath = "";
           updateRecentBookCoverPath(book, "");
-          CoverThumbStatus::markFailed(book.path);
+          CoverThumbStatus::markFailed(book.path, coverWidth_, coverHeight_);
         }
       } else if (FsHelpers::hasXtcExtension(book.path)) {
         Xtc xtc(book.path, "/.crosspoint");
@@ -486,11 +500,11 @@ void RecentBooksGridActivity::loadPageCovers(int pageStart) {
             const std::string reusablePath = xtc.getThumbBmpPath();
             book.coverBmpPath = reusablePath;
             updateRecentBookCoverPath(book, reusablePath);
-            CoverThumbStatus::clearFailed(book.path);
+            CoverThumbStatus::clearFailed(book.path, coverWidth_, coverHeight_);
           } else {
             book.coverBmpPath = "";
             updateRecentBookCoverPath(book, "");
-            CoverThumbStatus::markFailed(book.path);
+            CoverThumbStatus::markFailed(book.path, coverWidth_, coverHeight_);
           }
         }
       }
