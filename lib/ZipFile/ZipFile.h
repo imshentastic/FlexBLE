@@ -48,6 +48,13 @@ class ZipFile {
   bool lastCentralDirPosValid = false;
 
   bool loadFileStatSlim(const char* filename, FileStatSlim* fileStat);
+  // Populate a FileStatSlim from the bytes at a known local-file-header
+  // offset, without consulting the central directory. Used by the .cmb
+  // image path -- the converter captured the offset at write time so
+  // the reader can pull image bytes directly. Returns false on bad
+  // magic, unsupported flag combinations (data descriptor without
+  // sizes in LFH), or read errors.
+  bool loadFileStatSlimFromLocalHeader(uint32_t localHeaderOffset, FileStatSlim* fileStat);
   long getDataOffset(const FileStatSlim& fileStat);
   bool loadZipDetails();
 
@@ -80,4 +87,14 @@ class ZipFile {
   // These functions will open and close the zip as needed
   uint8_t* readFileToMemory(const char* filename, size_t* size = nullptr, bool trailingNullByte = false);
   bool readFileToStream(const char* filename, Print& out, size_t chunkSize);
+  // Offset-keyed read: extract + inflate the entry whose local-file-header
+  // lives at `localHeaderOffset` (typically read out of a .cmb image ref).
+  // Skips the central-dir lookup entirely. Returns false on bad LFH magic,
+  // unsupported flag combinations, or any underlying read/inflate failure.
+  bool readFileToStreamAtOffset(uint32_t localHeaderOffset, Print& out, size_t chunkSize);
+  // Read the entry's filename out of the local file header at the given
+  // offset. Used by the .cmb image path to recover the file extension
+  // (the decoder factory dispatches by extension). Returns false on bad
+  // magic or short read; *filename is left unspecified on failure.
+  bool getFilenameAtOffset(uint32_t localHeaderOffset, std::string* filename);
 };

@@ -584,3 +584,171 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
   LOG_ERR("ZIP", "Unsupported compression method");
   return false;
 }
+
+bool ZipFile::loadFileStatSlimFromLocalHeader(const uint32_t localHeaderOffset, FileStatSlim* fileStat) {
+  const ScopedOpenClose zip{*this};
+  if (!zip) return false;
+
+  constexpr auto kLocalHeaderSize = 30;
+  uint8_t lh[kLocalHeaderSize];
+  if (!file.seek(localHeaderOffset)) {
+    LOG_ERR("ZIP", "seek to local header at %u failed", localHeaderOffset);
+    return false;
+  }
+  if (file.read(lh, kLocalHeaderSize) != kLocalHeaderSize) {
+    LOG_ERR("ZIP", "short read of local header at %u", localHeaderOffset);
+    return false;
+  }
+  if (lh[0] != 0x50 || lh[1] != 0x4b || lh[2] != 0x03 || lh[3] != 0x04) {
+    LOG_ERR("ZIP", "bad local header magic at %u", localHeaderOffset);
+    return false;
+  }
+  const uint16_t generalFlag = lh[6] | (static_cast<uint16_t>(lh[7]) << 8);
+  // Bit 3 = sizes + CRC stored in a post-data descriptor; the LFH fields
+  // are zero. We can't extract the entry without consulting the central
+  // directory, which defeats the offset-keyed read. The converter
+  // shouldn't be emitting offsets for these entries; bail loudly.
+  if (generalFlag & 0x0008) {
+    LOG_ERR("ZIP", "LFH at %u has data-descriptor flag set; unsupported for offset reads", localHeaderOffset);
+    return false;
+  }
+  fileStat->method = lh[8] | (static_cast<uint16_t>(lh[9]) << 8);
+  fileStat->compressedSize =
+      lh[18] | (static_cast<uint32_t>(lh[19]) << 8) | (static_cast<uint32_t>(lh[20]) << 16) |
+      (static_cast<uint32_t>(lh[21]) << 24);
+  fileStat->uncompressedSize =
+      lh[22] | (static_cast<uint32_t>(lh[23]) << 8) | (static_cast<uint32_t>(lh[24]) << 16) |
+      (static_cast<uint32_t>(lh[25]) << 24);
+  fileStat->localHeaderOffset = localHeaderOffset;
+  return true;
+}
+
+bool ZipFile::readFileToStreamAtOffset(const uint32_t localHeaderOffset, Print& out, const size_t chunkSize) {
+  const ScopedOpenClose zip{*this};
+  if (!zip) return false;
+
+  FileStatSlim fileStat = {};
+  if (!loadFileStatSlimFromLocalHeader(localHeaderOffset, &fileStat)) return false;
+
+  const long fileOffset = getDataOffset(fileStat);
+  if (fileOffset < 0) return false;
+
+  file.seek(fileOffset);
+  const auto deflatedDataSize = fileStat.compressedSize;
+  const auto inflatedDataSize = fileStat.uncompressedSize;
+
+  // STORED: passthrough read, identical to readFileToStream's STORED branch.
+  if (fileStat.method == ZIP_METHOD_STORED) {
+    const auto buffer = static_cast<uint8_t*>(malloc(chunkSize));
+    if (!buffer) {
+      LOG_ERR("ZIP", "Failed to allocate read buffer at offset %u", localHeaderOffset);
+      return false;
+    }
+    size_t remaining = inflatedDataSize;
+    while (remaining > 0) {
+      const size_t want = remaining < chunkSize ? remaining : chunkSize;
+      const size_t got = file.read(buffer, want);
+      if (got == 0) {
+        LOG_ERR("ZIP", "short read while streaming offset %u", localHeaderOffset);
+        free(buffer);
+        return false;
+      }
+      if (out.write(buffer, got) != got) {
+        LOG_ERR("ZIP", "stream write failed during offset read at %u", localHeaderOffset);
+        free(buffer);
+        return false;
+      }
+      remaining -= got;
+    }
+    free(buffer);
+    return true;
+  }
+
+  if (fileStat.method == ZIP_METHOD_DEFLATED) {
+    ZipInflateCtx ctx;
+    ctx.file = &file;
+    ctx.fileRemaining = deflatedDataSize;
+    if (!ctx.reader.init(true, inflatedDataSize)) {
+      LOG_ERR("ZIP", "inflate init failed at offset %u (free=%u maxAlloc=%u dict=%u)", localHeaderOffset,
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap(), static_cast<unsigned>(inflatedDataSize));
+      return false;
+    }
+    auto* readBuf = static_cast<uint8_t*>(malloc(chunkSize));
+    if (!readBuf) {
+      LOG_ERR("ZIP", "alloc read buffer failed (offset=%u chunk=%zu)", localHeaderOffset, chunkSize);
+      return false;
+    }
+    auto* outBuf = static_cast<uint8_t*>(malloc(chunkSize));
+    if (!outBuf) {
+      LOG_ERR("ZIP", "alloc output buffer failed (offset=%u chunk=%zu)", localHeaderOffset, chunkSize);
+      free(readBuf);
+      return false;
+    }
+    ctx.readBuf = readBuf;
+    ctx.readBufSize = chunkSize;
+    ctx.reader.setReadCallback(zipReadCallback);
+
+    bool success = false;
+    size_t totalProduced = 0;
+    while (true) {
+      size_t produced;
+      const InflateStatus status = ctx.reader.readAtMost(outBuf, chunkSize, &produced);
+      totalProduced += produced;
+      if (totalProduced > static_cast<size_t>(inflatedDataSize)) {
+        LOG_ERR("ZIP", "inflate overshoot at offset %u (%zu > %u)", localHeaderOffset, totalProduced,
+                inflatedDataSize);
+        break;
+      }
+      if (produced > 0 && out.write(outBuf, produced) != produced) {
+        LOG_ERR("ZIP", "stream write failed during inflate at offset %u", localHeaderOffset);
+        break;
+      }
+      if (status == InflateStatus::Done) {
+        if (totalProduced != static_cast<size_t>(inflatedDataSize)) {
+          LOG_ERR("ZIP", "inflate size mismatch at offset %u (expected %u got %zu)", localHeaderOffset,
+                  inflatedDataSize, totalProduced);
+          break;
+        }
+        success = true;
+        break;
+      }
+      if (status == InflateStatus::Error) {
+        LOG_ERR("ZIP", "inflate error at offset %u", localHeaderOffset);
+        break;
+      }
+    }
+    free(outBuf);
+    free(readBuf);
+    return success;
+  }
+
+  LOG_ERR("ZIP", "unsupported method %u at offset %u", fileStat.method, localHeaderOffset);
+  return false;
+}
+
+bool ZipFile::getFilenameAtOffset(const uint32_t localHeaderOffset, std::string* filename) {
+  const ScopedOpenClose zip{*this};
+  if (!zip) return false;
+  if (!filename) return false;
+
+  constexpr auto kLocalHeaderSize = 30;
+  uint8_t lh[kLocalHeaderSize];
+  if (!file.seek(localHeaderOffset)) return false;
+  if (file.read(lh, kLocalHeaderSize) != kLocalHeaderSize) return false;
+  if (lh[0] != 0x50 || lh[1] != 0x4b || lh[2] != 0x03 || lh[3] != 0x04) {
+    LOG_ERR("ZIP", "bad local header magic at %u (filename read)", localHeaderOffset);
+    return false;
+  }
+  const uint16_t fnLen = lh[26] | (static_cast<uint16_t>(lh[27]) << 8);
+  if (fnLen == 0) {
+    filename->clear();
+    return true;
+  }
+  filename->resize(fnLen);
+  if (file.read(reinterpret_cast<uint8_t*>(filename->data()), fnLen) != fnLen) {
+    LOG_ERR("ZIP", "short read of filename at %u (len=%u)", localHeaderOffset, fnLen);
+    filename->clear();
+    return false;
+  }
+  return true;
+}
