@@ -101,8 +101,7 @@ bool BookMetadataCache::endWrite() {
   return true;
 }
 
-bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMetadata& metadata,
-                                     const std::deque<uint32_t>* precomputedCumulativeSizes) {
+bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMetadata& metadata) {
   // Open all three files, writing to meta, reading from spine and toc
   if (!Storage.openFileForWrite("BMC", cachePath + bookBinFile, bookFile)) {
     return false;
@@ -173,27 +172,15 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
     }
   }
 
-  // CrumBLE #134: when the caller already knows cumulative sizes
-  // (i.e. they were stored in a .cmb sidecar), skip opening the EPUB
-  // ZIP entirely. Saves the ~30 KB central-dir walk for big books.
-  const bool usePrecomputed = (precomputedCumulativeSizes != nullptr &&
-                               static_cast<int>(precomputedCumulativeSizes->size()) == spineCount);
-  if (precomputedCumulativeSizes != nullptr && !usePrecomputed) {
-    LOG_ERR("BMC", "precomputedCumulativeSizes wrong size (%zu vs %d spine items); falling back to ZIP path",
-            precomputedCumulativeSizes->size(), spineCount);
-  }
-
   ZipFile zip(epubPath);
-  if (!usePrecomputed) {
-    // Pre-open zip file to speed up size calculations
-    if (!zip.open()) {
-      LOG_ERR("BMC", "Could not open EPUB zip for size calculations");
-      // Explicit close() required: member variables persist beyond function scope
-      bookFile.close();
-      spineFile.close();
-      tocFile.close();
-      return false;
-    }
+  // Pre-open zip file to speed up size calculations
+  if (!zip.open()) {
+    LOG_ERR("BMC", "Could not open EPUB zip for size calculations");
+    // Explicit close() required: member variables persist beyond function scope
+    bookFile.close();
+    spineFile.close();
+    tocFile.close();
+    return false;
   }
   // NOTE: We intentionally skip calling loadAllFileStatSlims() here.
   // For large EPUBs (2000+ chapters), pre-loading all ZIP central directory entries
@@ -206,7 +193,7 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   std::deque<uint32_t> spineSizes;
   bool useBatchSizes = false;
 
-  if (!usePrecomputed && spineCount >= LARGE_SPINE_THRESHOLD) {
+  if (spineCount >= LARGE_SPINE_THRESHOLD) {
     LOG_DBG("BMC", "Using batch size lookup for %d spine items", spineCount);
 
     std::deque<ZipFile::SizeTarget> targets;
@@ -255,46 +242,40 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
     }
     lastSpineTocIndex = spineEntry.tocIndex;
 
-    if (usePrecomputed) {
-      // Use the cumulative size the caller already knows. No per-item
-      // additions; the .cmb stored values are already running totals.
-      cumSize = (*precomputedCumulativeSizes)[i];
-    } else {
-      size_t itemSize = 0;
-      if (useBatchSizes) {
-        itemSize = spineSizes[i];
-        if (itemSize == 0) {
-          const std::string path = FsHelpers::normalisePath(spineEntry.href);
-          if (!zip.getInflatedFileSize(path.c_str(), &itemSize)) {
-            LOG_ERR("BMC", "Warning: Could not get size for spine item: %s", path.c_str());
-          }
-        }
-      } else {
+    size_t itemSize = 0;
+    if (useBatchSizes) {
+      itemSize = spineSizes[i];
+      if (itemSize == 0) {
         const std::string path = FsHelpers::normalisePath(spineEntry.href);
         if (!zip.getInflatedFileSize(path.c_str(), &itemSize)) {
           LOG_ERR("BMC", "Warning: Could not get size for spine item: %s", path.c_str());
         }
       }
-
-      constexpr size_t maxStoredCumulativeSize = std::numeric_limits<uint32_t>::max();
-      if (itemSize > maxStoredCumulativeSize || cumSize > maxStoredCumulativeSize - itemSize) {
-        LOG_ERR("BMC", "Spine cumulative size overflow for item %d (cumSize=%u, itemSize=%zu)", i, cumSize, itemSize);
-        zip.close();
-        bookFile.close();
-        spineFile.close();
-        tocFile.close();
-        return false;
+    } else {
+      const std::string path = FsHelpers::normalisePath(spineEntry.href);
+      if (!zip.getInflatedFileSize(path.c_str(), &itemSize)) {
+        LOG_ERR("BMC", "Warning: Could not get size for spine item: %s", path.c_str());
       }
-
-      cumSize += itemSize;
     }
+
+    constexpr size_t maxStoredCumulativeSize = std::numeric_limits<uint32_t>::max();
+    if (itemSize > maxStoredCumulativeSize || cumSize > maxStoredCumulativeSize - itemSize) {
+      LOG_ERR("BMC", "Spine cumulative size overflow for item %d (cumSize=%u, itemSize=%zu)", i, cumSize, itemSize);
+      zip.close();
+      bookFile.close();
+      spineFile.close();
+      tocFile.close();
+      return false;
+    }
+
+    cumSize += itemSize;
     spineEntry.cumulativeSize = cumSize;
 
     // Write out spine data to book.bin
     writeSpineEntry(bookFile, spineEntry);
   }
-  // Close opened zip file (no-op when usePrecomputed since we never opened it)
-  if (!usePrecomputed) zip.close();
+  // Close opened zip file
+  zip.close();
 
   // Loop through toc entries from toc file writing to book.bin
   tocFile.seek(0);
