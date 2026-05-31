@@ -78,6 +78,18 @@ bool iLess(const std::string& a, const std::string& b) {
 
 LibraryIndex LibraryIndex::instance;
 
+std::vector<std::string> LibraryIndex::collectBookPaths(const std::string& dirPath) {
+  std::vector<std::string> paths;
+  std::vector<uint32_t> sizes;  // discarded; walkRecursive populates both in lockstep
+  paths.reserve(16);
+  sizes.reserve(16);
+  // walkRecursive is const and uses no mutable instance state, so it's safe to
+  // invoke on the singleton even when the library isn't loaded for the main
+  // index. Caller wants paths under a specific subtree, not the whole SD.
+  getInstance().walkRecursive(dirPath, 0, paths, sizes);
+  return paths;
+}
+
 bool LibraryIndex::isBookPath(const std::string& path) {
   if (!(FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) ||
         FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path))) {

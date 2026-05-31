@@ -1451,8 +1451,9 @@ void HomeActivity::showHomeBookActionMenu(const std::string& bookPath) {
           case FileBrowserAction::DeleteCollection:
           case FileBrowserAction::CreateNewCollectionFromHeader:
           case FileBrowserAction::AddBooksToActiveCollection:
+          case FileBrowserAction::MakeCollectionFromFolder:
             // Not exposed in the home book menu — sleep-image / shelf-
-            // header-only actions.
+            // header / file-browser-folder-only actions.
             return;
         }
       });

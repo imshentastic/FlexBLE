@@ -99,6 +99,15 @@ class LibraryIndex {
   // refresh callers can drop the entry directly.
   void forgetPath(const std::string& path);
 
+  // Static helper: collect every book-file path under `dirPath` using the
+  // same recursive walker and extension filter as the library scan
+  // (.epub / .xtc / .txt / .md / .markdown, max 8 levels deep, skips
+  // dot-prefixed entries and the XTcache folder). Does NOT modify the
+  // index — pure read. Used by the file browser's "Make collection from
+  // folder" action so callers can act on a subtree without rescanning
+  // the whole SD.
+  static std::vector<std::string> collectBookPaths(const std::string& dirPath);
+
  private:
   bool loadFromFile();
   bool saveToFile() const;
