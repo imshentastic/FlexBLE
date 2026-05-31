@@ -18,7 +18,14 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // with images dropped under low heap can be rebuilt with images once memory
 // recovers. The bump also invalidates any v37 cache that was silently cached
 // imageless (it will rebuild fresh on next open).
-constexpr uint8_t SECTION_FILE_VERSION = 38;
+// v39: invalidate every v38 cache so slice 2's CMB-first dispatch in
+// createSectionFile actually runs on the next book open. v38 caches were
+// built by the XHTML parser (with images, hr, footnotes, anchors); v39+
+// caches are produced either by ChapterCmbSlimBuilder (text-only first
+// cut) or by the XHTML fallback. Without this bump, existing v38 caches
+// silently mask the new path and we never see what slice 2 actually
+// renders.
+constexpr uint8_t SECTION_FILE_VERSION = 39;
 // How much the largest free block must have grown since a degraded build before
 // we bother rebuilding it for images (avoids rebuild churn on tiny variations).
 constexpr uint32_t SECTION_DEGRADED_REBUILD_MARGIN = 12 * 1024;
