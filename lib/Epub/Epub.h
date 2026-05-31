@@ -140,6 +140,17 @@ class Epub {
   // bytes from the EPUB without walking the central directory at
   // display time. Path normalised the same way as readItemContents*.
   bool getZipLocalHeaderOffset(const std::string& itemHref, uint32_t* offset) const;
+  // CrumBLE: companion to getZipLocalHeaderOffset for the reader side.
+  // Streams the entry's inflated bytes to `out`, seeking to
+  // `localHeaderOffset` directly instead of walking the central
+  // directory. Used by ChapterCmbSlimBuilder when rendering image
+  // blocks (the .cmb image-ref table carries the offset).
+  bool readItemContentsToStreamAtOffset(uint32_t localHeaderOffset, Print& out, size_t chunkSize) const;
+  // Recover the entry's filename from its local file header. Used to
+  // pick the right image decoder by extension once we've pulled bytes
+  // out at a known offset (the .cmb image-ref table doesn't store
+  // the filename to save space).
+  bool getZipEntryFilenameAtOffset(uint32_t localHeaderOffset, std::string* filename) const;
   // CrumBLE #134: accessors for metadata fields the .cmb converter
   // needs to capture into the .cmb v3 metadata blob. Cover href and
   // text-reference href live inside the BookMetadataCache; the CSS

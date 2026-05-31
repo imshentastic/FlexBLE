@@ -1212,6 +1212,15 @@ bool Epub::getZipLocalHeaderOffset(const std::string& itemHref, uint32_t* offset
   return ZipFile(filepath).getLocalHeaderOffset(path.c_str(), offset);
 }
 
+bool Epub::readItemContentsToStreamAtOffset(const uint32_t localHeaderOffset, Print& out, const size_t chunkSize) const {
+  return ZipFile(filepath).readFileToStreamAtOffset(localHeaderOffset, out, chunkSize);
+}
+
+bool Epub::getZipEntryFilenameAtOffset(const uint32_t localHeaderOffset, std::string* filename) const {
+  if (filename == nullptr) return false;
+  return ZipFile(filepath).getFilenameAtOffset(localHeaderOffset, filename);
+}
+
 namespace {
 const std::string kEmptyString;
 }  // namespace
