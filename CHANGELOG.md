@@ -1,5 +1,13 @@
 # Changelog
 
+## [crumble-v3.7.2] - 2026-05-30
+
+### Added
+- **Make collection from folder**: long-press a folder in the file browser to open a menu with "Make collection from folder" (next to the existing "Delete"). Walks the folder recursively for `.epub` / `.xtc` / `.txt` / `.md` / `.markdown` files (same rules as the library scan, 8 levels deep, skips `XTcache` and dot-prefixed entries), creates a user collection named after the folder, bulk-adds every book in one save, makes the collection active, and returns to Home. Fast path for turning curated SD subdirectories into shelves without long-pressing each book.
+
+### Changed
+- Collection names are now disambiguated on create / rename. Picking "Sci-Fi" when "Sci-Fi" already exists (whether as a user collection or a virtual one — Favorites / All Books / Recently Added / Finished / Unopened) auto-suffixes the new name with the smallest unused " (N)" instead of silently allowing two indistinguishable entries on the shelf header. Case-sensitive — "Sci-Fi" and "sci-fi" remain treated as distinct.
+
 ## [crumble-v3.7.1] - 2026-05-30
 
 ### Added
