@@ -33,20 +33,24 @@
 
 class Page;
 class GfxRenderer;
+class Epub;
 
 class ChapterCmbSlimBuilder {
  public:
   using PageCompleteFn = std::function<void(std::unique_ptr<Page>, uint16_t, uint16_t)>;
 
-  ChapterCmbSlimBuilder(const std::string& cmbPath, GfxRenderer& renderer, int fontId, float lineCompression,
+  ChapterCmbSlimBuilder(Epub* epub, const std::string& cmbPath, GfxRenderer& renderer, int fontId, float lineCompression,
                         bool extraParagraphSpacing, bool forceParagraphIndents, uint8_t paragraphAlignment,
                         uint16_t viewportWidth, uint16_t viewportHeight, bool hyphenationEnabled,
                         bool bionicReadingEnabled, bool guideReadingEnabled, int chapterIdx,
-                        PageCompleteFn completePageFn, const std::function<void()>& popupFn = nullptr)
-      : cmbPath(cmbPath),
+                        std::string imageBasePath, PageCompleteFn completePageFn,
+                        const std::function<void()>& popupFn = nullptr)
+      : epub(epub),
+        cmbPath(cmbPath),
         renderer(renderer),
         completePageFn(std::move(completePageFn)),
         popupFn(popupFn),
+        imageBasePath(std::move(imageBasePath)),
         fontId(fontId),
         lineCompression(lineCompression),
         extraParagraphSpacing(extraParagraphSpacing),
@@ -80,10 +84,15 @@ class ChapterCmbSlimBuilder {
   bool wasLowMemoryAbortTriggered() const { return lowMemoryAbort; }
 
  private:
+  Epub* epub;  // non-owning; lifetime guaranteed by caller (Section)
   const std::string& cmbPath;
   GfxRenderer& renderer;
   PageCompleteFn completePageFn;
   std::function<void()> popupFn;
+  // Prefix for per-chapter image cache files (same naming pattern the
+  // XHTML parser uses): <imageBasePath><counter><ext>
+  std::string imageBasePath;
+  uint16_t imageCounter = 0;
   int fontId;
   float lineCompression;
   bool extraParagraphSpacing;
@@ -124,6 +133,17 @@ class ChapterCmbSlimBuilder {
   // Hard page break: flush whatever's on currentPage and start a fresh one
   // even if the current one isn't full. Matches HTML's <mbp:pagebreak/>.
   void processPageBreak();
+
+  // Emit one CMB image block. localHeaderOffset comes from the .cmb
+  // image-ref table (resolved by the caller). Pulls inflated bytes via
+  // Epub::readItemContentsToStreamAtOffset, picks a decoder by extension
+  // (recovered from the LFH), and places a PageImage onto the current
+  // page. Sized to fit the viewport preserving aspect ratio -- no
+  // CSS-driven sizing since CMB doesn't carry per-image style info yet.
+  // Returns false on OOM during page/image allocation; lesser failures
+  // (decoder missing, image extract fails) just skip the image and
+  // continue with whatever paragraphs follow.
+  bool processImageBlock(uint32_t localHeaderOffset, uint16_t declaredWidth, uint16_t declaredHeight);
 
   // Record the anchor at the current page boundary. Called for every
   // CMB paragraph that has a non-empty anchor_id, so in-book fragment

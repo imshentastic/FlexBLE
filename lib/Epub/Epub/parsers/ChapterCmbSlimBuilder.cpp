@@ -4,11 +4,16 @@
 #include <CmbReader.h>
 #include <EpdFontFamily.h>
 #include <GfxRenderer.h>
+#include <HalStorage.h>
 #include <Logging.h>
 
 #include <new>
 
+#include "Epub.h"
 #include "Epub/Page.h"
+#include "Epub/blocks/ImageBlock.h"
+#include "Epub/converters/ImageDecoderFactory.h"
+#include "Epub/converters/ImageToFramebufferDecoder.h"
 #include "Epub/css/CssStyle.h"
 
 namespace {
@@ -119,13 +124,17 @@ bool ChapterCmbSlimBuilder::parseAndBuildPages() {
       case cmb::kCmbBlockPageBreak:
         processPageBreak();
         break;
-      case cmb::kCmbBlockImage:
-        // Image rendering not wired through CMB yet -- the converter
-        // captures image_key + ZIP local-header offset, but the on-
-        // device decode + framebuffer + PageImage pipeline is a
-        // larger change (matches ChapterHtmlSlimParser::on_start's
-        // <img> path). Skipped for now; the slot stays blank.
+      case cmb::kCmbBlockImage: {
+        cmb::CmbImageRef ref{};
+        if (epub != nullptr && reader.image_ref(paragraph.image_key, ref)) {
+          if (!processImageBlock(ref.local_header_offset, ref.width, ref.height)) {
+            return false;
+          }
+        }
+        // Unknown image_key or missing epub: skip silently. The slot
+        // collapses; surrounding paragraphs flow normally.
         break;
+      }
       default:
         // Unknown future block type. CMB format reserves unknown
         // tags as "skip via length prefix"; the reader already
@@ -339,6 +348,128 @@ void ChapterCmbSlimBuilder::processPageBreak() {
     currentPage.reset();
     currentPageNextY = 0;
   }
+}
+
+bool ChapterCmbSlimBuilder::processImageBlock(const uint32_t localHeaderOffset, const uint16_t declaredWidth,
+                                              const uint16_t declaredHeight) {
+  if (epub == nullptr) return true;  // silently skip when caller didn't pass an Epub
+
+  // Recover the entry's filename from its local file header so we know
+  // which decoder to dispatch to (the factory keys off extension).
+  std::string entryName;
+  if (!epub->getZipEntryFilenameAtOffset(localHeaderOffset, &entryName) || entryName.empty()) {
+    LOG_DBG("ECB", "image at offset %u: filename lookup failed, skipping", localHeaderOffset);
+    return true;
+  }
+  std::string ext;
+  const size_t dot = entryName.rfind('.');
+  if (dot != std::string::npos) ext = entryName.substr(dot);
+  if (!ImageDecoderFactory::isFormatSupported(ext)) {
+    LOG_DBG("ECB", "image '%s': format not supported, skipping", entryName.c_str());
+    return true;
+  }
+
+  // Extract the inflated image bytes to a per-chapter cache file. ImageBlock
+  // reads from this path at render time (decoder reopens it).
+  const std::string cachedImagePath = imageBasePath + std::to_string(imageCounter++) + ext;
+  {
+    FsFile cachedImageFile;
+    if (!Storage.openFileForWrite("ECB", cachedImagePath, cachedImageFile)) {
+      LOG_ERR("ECB", "could not open image cache file %s", cachedImagePath.c_str());
+      return true;
+    }
+    constexpr size_t kExtractChunkSize = 1024;
+    const bool extractedOk = epub->readItemContentsToStreamAtOffset(localHeaderOffset, cachedImageFile, kExtractChunkSize);
+    cachedImageFile.flush();
+    cachedImageFile.close();
+    if (!extractedOk) {
+      LOG_ERR("ECB", "image extract from offset %u failed", localHeaderOffset);
+      Storage.remove(cachedImagePath.c_str());
+      return true;
+    }
+    delay(50);  // SD card sync, same defensive pause as the XHTML path
+  }
+
+  // Pull source dimensions from the just-extracted file. EPUBs often
+  // declare width/height in markup (carried through to CmbImageRef);
+  // fall back to those when the decoder can't probe.
+  ImageDimensions dims = {0, 0};
+  ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(cachedImagePath);
+  if (decoder == nullptr || !decoder->getDimensions(cachedImagePath, dims)) {
+    if (declaredWidth > 0 && declaredHeight > 0) {
+      dims.width = declaredWidth;
+      dims.height = declaredHeight;
+    } else {
+      LOG_DBG("ECB", "image '%s': dims unknown, skipping", cachedImagePath.c_str());
+      Storage.remove(cachedImagePath.c_str());
+      return true;
+    }
+  }
+
+  // Fit to viewport preserving aspect ratio (no CSS path -- CMB doesn't
+  // carry per-image style).
+  const int maxW = viewportWidth;
+  const int maxH = viewportHeight;
+  int displayW = dims.width;
+  int displayH = dims.height;
+  if (displayW <= 0 || displayH <= 0) {
+    Storage.remove(cachedImagePath.c_str());
+    return true;
+  }
+  if (displayW > maxW || displayH > maxH) {
+    const float scaleX = displayW > maxW ? static_cast<float>(maxW) / displayW : 1.0f;
+    const float scaleY = displayH > maxH ? static_cast<float>(maxH) / displayH : 1.0f;
+    const float scale = std::min(scaleX, scaleY);
+    displayW = std::max(1, static_cast<int>(displayW * scale + 0.5f));
+    displayH = std::max(1, static_cast<int>(displayH * scale + 0.5f));
+  }
+
+  // Make sure we have a page; flush if the image won't fit in remaining
+  // vertical space and the page isn't empty (avoid leading-blank pages).
+  if (!currentPage) {
+    currentPage.reset(new (std::nothrow) Page());
+    if (!currentPage) {
+      lowMemoryAbort = true;
+      Storage.remove(cachedImagePath.c_str());
+      return false;
+    }
+    currentPageNextY = 0;
+  }
+  if (!currentPage->elements.empty() && currentPageNextY + displayH > viewportHeight) {
+    completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex);
+    completedPageCount++;
+    currentPage.reset(new (std::nothrow) Page());
+    if (!currentPage) {
+      lowMemoryAbort = true;
+      Storage.remove(cachedImagePath.c_str());
+      return false;
+    }
+    currentPageNextY = 0;
+  }
+
+  // Center horizontally; if the image is taller than the page, just cap
+  // it at the viewport height (matches the XHTML parser's fallback).
+  const int16_t xPos = static_cast<int16_t>((viewportWidth - displayW) / 2);
+  const int16_t finalH = static_cast<int16_t>(std::min(displayH, viewportHeight - currentPageNextY));
+  if (finalH <= 0) {
+    Storage.remove(cachedImagePath.c_str());
+    return true;
+  }
+
+  auto imageBlock = std::shared_ptr<ImageBlock>(new (std::nothrow) ImageBlock(cachedImagePath, displayW, finalH));
+  if (!imageBlock) {
+    lowMemoryAbort = true;
+    Storage.remove(cachedImagePath.c_str());
+    return false;
+  }
+  auto pageImage = std::shared_ptr<PageImage>(new (std::nothrow) PageImage(imageBlock, xPos, currentPageNextY));
+  if (!pageImage) {
+    lowMemoryAbort = true;
+    return false;
+  }
+  currentPage->elements.push_back(pageImage);
+  currentPageNextY = static_cast<int16_t>(currentPageNextY + finalH);
+  return true;
 }
 
 void ChapterCmbSlimBuilder::recordAnchor(const std::string& anchorId) {

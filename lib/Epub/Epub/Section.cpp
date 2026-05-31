@@ -752,9 +752,15 @@ bool Section::tryBuildSectionFromCmb(const std::string& cmbPath, const std::stri
   LOG_DBG("SCT", "CMB build start: spine=%d free=%u maxAlloc=%u", spineIndex, ESP.getFreeHeap(),
           ESP.getMaxAllocHeap());
 
+  // Image cache prefix mirrors the XHTML path: <bookCache>/img_<spine>_<n><ext>.
+  // Files are written per chapter and survive until the next section
+  // rebuild (which removes the sections/ dir; the imgs persist as small
+  // siblings -- acceptable churn for the BLE-friendly cold-load path).
+  const std::string cmbImageBasePath = epub->getCachePath() + "/img_" + std::to_string(spineIndex) + "_";
   ChapterCmbSlimBuilder builder(
-      cmbPath, renderer, fontId, lineCompression, extraParagraphSpacing, forceParagraphIndents, paragraphAlignment,
-      viewportWidth, viewportHeight, hyphenationEnabled, bionicReadingEnabled, guideReadingEnabled, spineIndex,
+      epub.get(), cmbPath, renderer, fontId, lineCompression, extraParagraphSpacing, forceParagraphIndents,
+      paragraphAlignment, viewportWidth, viewportHeight, hyphenationEnabled, bionicReadingEnabled,
+      guideReadingEnabled, spineIndex, cmbImageBasePath,
       [this, &lut](std::unique_ptr<Page> page, const uint16_t paragraphIndex, const uint16_t listItemIndex) {
         lut.push_back({this->onPageComplete(std::move(page)), paragraphIndex, listItemIndex});
       },
