@@ -25,7 +25,13 @@ constexpr uint32_t SECTION_CACHE_MAGIC = 0x535843FF;  // bytes: 0xFF, "CXS"
 // cut) or by the XHTML fallback. Without this bump, existing v38 caches
 // silently mask the new path and we never see what slice 2 actually
 // renders.
-constexpr uint8_t SECTION_FILE_VERSION = 39;
+// v40: invalidate every v39 cache because ChapterCmbSlimBuilder now
+// handles kCmbBlockImage / kCmbBlockHr / kCmbBlockPageBreak / anchor
+// ids. v39 caches built by the text-only-only builder are missing
+// images, hrs, page breaks, and the anchor table even though the .cmb
+// has all of it -- the on-disk section bytes look identical, so the
+// only signal we have to force a rebuild is the version constant.
+constexpr uint8_t SECTION_FILE_VERSION = 40;
 // How much the largest free block must have grown since a degraded build before
 // we bother rebuilding it for images (avoids rebuild churn on tiny variations).
 constexpr uint32_t SECTION_DEGRADED_REBUILD_MARGIN = 12 * 1024;
