@@ -87,6 +87,11 @@ bool ChapterCmbSlimBuilder::parseAndBuildPages() {
   LOG_DBG("ECB", "Building chapter %d: paragraphs=%u free=%u maxAlloc=%u", chapterIdx, paragraphCount,
           ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
+  // Show the "Indexing..." popup up front, then tick it every 250 ms so
+  // it animates while the build runs. Mirrors ChapterHtmlSlimParser
+  // -- without the initial call the popup never appears, even when the
+  // chapter build takes long enough to be visible to the user.
+  if (popupFn) popupFn();
   uint32_t lastPopupTick = millis();
   constexpr uint32_t kPopupTickMs = 250;
 

@@ -13,6 +13,7 @@
 #include <Logging.h>
 
 #include "CmbWriter.h"
+#include "Epub/htmlEntities.h"
 
 namespace cmb {
 
@@ -70,6 +71,14 @@ class XhtmlParagraphWalker {
       XML_SetUserData(parser_, this);
       XML_SetElementHandler(parser_, &XhtmlParagraphWalker::start_thunk, &XhtmlParagraphWalker::end_thunk);
       XML_SetCharacterDataHandler(parser_, &XhtmlParagraphWalker::chars_thunk);
+      // EPUBs routinely use HTML entities (&nbsp; etc.) that expat
+      // doesn't know about. Without a default handler, the parser
+      // rejects them as undeclared entities -- which is why books
+      // like Light Bringer (which sprinkles &nbsp; throughout)
+      // failed to convert. Mirror ChapterHtmlSlimParser: pass any
+      // entity-shaped data through lookupHtmlEntity and re-emit
+      // the UTF-8 expansion as character data.
+      XML_SetDefaultHandlerExpand(parser_, &XhtmlParagraphWalker::default_thunk);
     }
     if (XML_Parse(parser_, data, static_cast<int>(size), is_final ? 1 : 0) == XML_STATUS_ERROR) {
       return false;
@@ -98,6 +107,25 @@ class XhtmlParagraphWalker {
   }
   static void XMLCALL chars_thunk(void* ud, const XML_Char* text, int len) {
     static_cast<XhtmlParagraphWalker*>(ud)->on_chars(text, len);
+  }
+  // Default-handler thunk for &...; entity references that expat
+  // doesn't have a DTD declaration for. Pass through lookupHtmlEntity
+  // (the same table ChapterHtmlSlimParser uses) and re-emit the
+  // UTF-8 substitution as character data.
+  static void XMLCALL default_thunk(void* ud, const XML_Char* s, int len) {
+    if (len >= 3 && s[0] == '&' && s[len - 1] == ';') {
+      const char* utf8 = lookupHtmlEntity(s, static_cast<size_t>(len));
+      auto* self = static_cast<XhtmlParagraphWalker*>(ud);
+      if (utf8 != nullptr) {
+        // Known entity: emit its UTF-8 value through the character handler.
+        self->on_chars(utf8, static_cast<int>(std::strlen(utf8)));
+      } else {
+        // Unknown entity: preserve the raw &...; so it round-trips visibly.
+        self->on_chars(s, len);
+      }
+    }
+    // Anything else (whitespace between tags, etc.) is silently dropped --
+    // expat already gave us the meaningful tokens via element/chars handlers.
   }
 
   // ---- tag classification ----
