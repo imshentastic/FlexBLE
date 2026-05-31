@@ -282,6 +282,15 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
         Storage.remove(tmpSectionPath.c_str());
       }
       pageCount = 0;
+      // Self-heal: if a .cmb is structurally OK enough to open but the
+      // builder consistently can't use it (stale format, partial write,
+      // future incompatibility), delete it so the next book open
+      // triggers a fresh conversion via ensureCmbExists. Without this
+      // the device gets stuck in a "broken .cmb forever falls back to
+      // XHTML" state with no way out short of clearing cache.
+      if (Storage.remove(cmbPath.c_str())) {
+        LOG_INF("SCT", "Removed unusable .cmb so next open rebuilds it: %s", cmbPath.c_str());
+      }
     }
   }
 

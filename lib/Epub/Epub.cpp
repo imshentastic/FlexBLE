@@ -1389,12 +1389,20 @@ bool Epub::ensureCmbExists() {
   // std::terminate -> abort. The .cmb sidecar is purely opportunistic
   // -- if we can't fit the conversion now, skip and try again on a
   // future open when memory has recovered.
-  constexpr uint32_t kMinFreeHeap = 70 * 1024;
-  constexpr uint32_t kMinMaxAlloc = 40 * 1024;
+  //
+  // Thresholds tuned from device observation: at book-open time after
+  // a few navigations + CSS load, maxAlloc commonly sits ~32-40 KB and
+  // free ~80 KB. A 40 KB maxAlloc gate was blocking every conversion
+  // in practice. Lower to 28 KB maxAlloc / 60 KB free -- this lets the
+  // conversion actually fire in typical sessions; the worst case is
+  // still a clean skip with a logged line. Bumped to INF so it's
+  // visible without LOG_LEVEL=2.
+  constexpr uint32_t kMinFreeHeap = 60 * 1024;
+  constexpr uint32_t kMinMaxAlloc = 28 * 1024;
   const uint32_t freeHeap = ESP.getFreeHeap();
   const uint32_t maxAlloc = ESP.getMaxAllocHeap();
   if (freeHeap < kMinFreeHeap || maxAlloc < kMinMaxAlloc) {
-    LOG_DBG("EBP", "ensureCmbExists: heap too tight (free=%u maxAlloc=%u min=%u/%u); skipping", freeHeap, maxAlloc,
+    LOG_INF("EBP", "ensureCmbExists: heap too tight (free=%u maxAlloc=%u min=%u/%u); skipping", freeHeap, maxAlloc,
             kMinFreeHeap, kMinMaxAlloc);
     return false;
   }

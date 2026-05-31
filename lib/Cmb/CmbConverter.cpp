@@ -81,6 +81,10 @@ class XhtmlParagraphWalker {
       XML_SetDefaultHandlerExpand(parser_, &XhtmlParagraphWalker::default_thunk);
     }
     if (XML_Parse(parser_, data, static_cast<int>(size), is_final ? 1 : 0) == XML_STATUS_ERROR) {
+      const XML_Error code = XML_GetErrorCode(parser_);
+      LOG_ERR("CMB", "walker.feed: expat error %d (%s) at line %lu col %lu", static_cast<int>(code),
+              XML_ErrorString(code), static_cast<unsigned long>(XML_GetCurrentLineNumber(parser_)),
+              static_cast<unsigned long>(XML_GetCurrentColumnNumber(parser_)));
       return false;
     }
     return !sink_failed_;
