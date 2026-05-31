@@ -10,6 +10,7 @@
 
 #include <FsHelpers.h>
 #include <HalStorage.h>  // pulled transitively by Epub.h; declared explicitly so PIO chain LDF tracks the dep
+#include <Logging.h>
 
 #include "CmbWriter.h"
 
@@ -440,7 +441,10 @@ bool writer_sink(void* ctx_v, const CmbParagraph& p) {
 
 bool convert_epub_to_cmb(Epub& book, const char* output_path) {
   CmbWriter w;
-  if (!w.open(output_path)) return false;
+  if (!w.open(output_path)) {
+    LOG_ERR("CMB", "convert: writer.open(%s) failed", output_path);
+    return false;
+  }
 
   WriterSinkCtx ctx{&w, false};
 
@@ -496,6 +500,10 @@ bool convert_epub_to_cmb(Epub& book, const char* output_path) {
       if (!parsed_ok || !flushed_ok || ctx.any_failure) {
         // Parse error / writer error -- finalize the chapter so the
         // descriptor table is consistent, then bail.
+        LOG_ERR("CMB",
+                "convert: chapter %d failed (href=%s rawSize=%u parsed=%u flushed=%u sink_failure=%u)", ci,
+                entry.href.c_str(), static_cast<unsigned>(raw_size), parsed_ok ? 1u : 0u, flushed_ok ? 1u : 0u,
+                ctx.any_failure ? 1u : 0u);
         std::free(raw);
         w.end_chapter();
         w.close();
@@ -523,6 +531,7 @@ bool convert_epub_to_cmb(Epub& book, const char* output_path) {
   }
 
   if (!w.finish(metadata)) {
+    LOG_ERR("CMB", "convert: writer.finish failed (chapters=%d toc=%d)", chapter_count, toc_count);
     w.close();
     return false;
   }

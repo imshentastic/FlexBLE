@@ -1,7 +1,6 @@
 #include "CmbWriter.h"
 
 #include <algorithm>
-#include <cstdio>
 #include <cstring>
 
 namespace cmb {
@@ -9,44 +8,81 @@ namespace cmb {
 // ===========================================================================
 // BufferedFileWriter
 // ===========================================================================
+//
+// File backend split: on device the file handle is a HalFile (SdFat-
+// backed; the SD card is only reachable this way -- stdio fopen does
+// not see it because SdFat doesn't register a VFS for libc). On host
+// we keep stdio FILE* so the round-trip test + any future desktop
+// converter compile without dragging Arduino headers in.
+
+namespace {
+
+#ifdef ARDUINO
+// HalFile-backed primitives. Match the FILE* helpers' signatures so
+// the rest of the class can use them through a thin if/then.
+inline bool backend_is_open(const FsFile& f) { return static_cast<bool>(f); }
+inline bool backend_write_raw(FsFile& f, const void* data, size_t size) {
+  return f.write(static_cast<const uint8_t*>(data), size) == size;
+}
+inline bool backend_seek_abs(FsFile& f, uint32_t offset) { return f.seek(offset); }
+inline void backend_close(FsFile& f) { f.close(); }
+#else
+inline bool backend_is_open(FILE* f) { return f != nullptr; }
+inline bool backend_write_raw(FILE* f, const void* data, size_t size) {
+  return std::fwrite(data, 1, size, f) == size;
+}
+inline bool backend_seek_abs(FILE* f, uint32_t offset) {
+  return std::fseek(f, static_cast<long>(offset), SEEK_SET) == 0;
+}
+inline void backend_close(FILE* f) { std::fclose(f); }
+#endif
+
+}  // namespace
+
+bool BufferedFileWriter::is_open() const { return backend_is_open(f_); }
 
 bool BufferedFileWriter::open(const char* path) {
-  if (f_ != nullptr) close();
+  if (is_open()) close();
+#ifdef ARDUINO
+  if (!HalStorage::getInstance().openFileForWrite("CMB", path, f_)) return false;
+#else
   f_ = std::fopen(path, "wb+");
   if (f_ == nullptr) return false;
+#endif
   pos_ = 0;
   used_ = 0;
   return true;
 }
 
 void BufferedFileWriter::close() {
-  if (f_ == nullptr) return;
+  if (!is_open()) return;
   // Best-effort flush; if it fails we still want to close the handle.
   (void)flush();
-  std::fclose(f_);
+  backend_close(f_);
+#ifndef ARDUINO
   f_ = nullptr;
+#endif
   pos_ = 0;
   used_ = 0;
 }
 
 bool BufferedFileWriter::flush() {
-  if (f_ == nullptr) return false;
+  if (!is_open()) return false;
   if (used_ == 0) return true;
-  const size_t written = std::fwrite(buf_, 1, used_, f_);
+  const bool ok = backend_write_raw(f_, buf_, used_);
   used_ = 0;
-  return written != 0;
+  return ok;
 }
 
 bool BufferedFileWriter::write(const void* data, size_t size) {
-  if (f_ == nullptr) return false;
+  if (!is_open()) return false;
   const uint8_t* src = static_cast<const uint8_t*>(data);
 
   while (size > 0) {
     // Fast path: whole big writes that don't fit in the buffer can bypass
     // the buffer entirely once it's been flushed -- saves a copy.
     if (used_ == 0 && size >= kBufSize) {
-      const size_t written = std::fwrite(src, 1, size, f_);
-      if (written != size) return false;
+      if (!backend_write_raw(f_, src, size)) return false;
       pos_ += static_cast<uint32_t>(size);
       return true;
     }
@@ -67,9 +103,9 @@ bool BufferedFileWriter::write(const void* data, size_t size) {
 }
 
 bool BufferedFileWriter::seek(uint32_t offset) {
-  if (f_ == nullptr) return false;
+  if (!is_open()) return false;
   if (!flush()) return false;
-  if (std::fseek(f_, static_cast<long>(offset), SEEK_SET) != 0) return false;
+  if (!backend_seek_abs(f_, offset)) return false;
   pos_ = offset;
   return true;
 }

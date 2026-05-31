@@ -31,9 +31,17 @@
 // ~8 KB peak; per-paragraph descriptors are seeked on demand.
 
 #include <cstdint>
-#include <cstdio>
 #include <string>
 #include <vector>
+
+#ifdef ARDUINO
+// On-device: file I/O goes through the SdFat-backed HalStorage layer.
+// stdio fopen/fread don't see the SD card (no VFS registration), so
+// the reader has to use HalFile here -- mirroring CmbWriter.
+#include <HalStorage.h>
+#else
+#include <cstdio>
+#endif
 
 #include "CmbFormat.h"
 
@@ -48,7 +56,7 @@ class CmbReader {
 
   bool open(const char* path);
   void close();
-  bool is_open() const { return f_ != nullptr; }
+  bool is_open() const;
 
   // Header fields. Valid after a successful open().
   uint32_t paragraph_count() const { return header_.paragraph_count; }
@@ -94,7 +102,11 @@ class CmbReader {
   }
 
  private:
+#ifdef ARDUINO
+  FsFile f_;
+#else
   FILE* f_ = nullptr;
+#endif
   CmbHeader header_{};
 
   // In-RAM tables. Sized at open() and never resized after.

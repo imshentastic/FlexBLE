@@ -1,30 +1,49 @@
 #include "CmbReader.h"
 
-#include <cstdio>
 #include <cstring>
 
 namespace cmb {
 
 namespace {
 
-// Small wrapper around fread that treats partial reads as failures --
-// every read in the .cmb format is fixed-size and known, so a short
-// read indicates either EOF or a corrupted file. Either way the
-// caller should bail.
+// File backend split mirrors CmbWriter: HalFile on device (the SD card
+// isn't reachable through libc stdio), plain FILE* on host (round-trip
+// tests + any future desktop converter).
+
+#ifdef ARDUINO
+inline bool read_exact(FsFile& f, void* buf, size_t size) {
+  // FsFile::read returns int (-1 on error, less than size on partial).
+  const int n = f.read(buf, size);
+  return n >= 0 && static_cast<size_t>(n) == size;
+}
+inline bool seek_to(FsFile& f, uint32_t offset) { return f.seek(offset); }
+#else
 inline bool read_exact(FILE* f, void* buf, size_t size) {
   return std::fread(buf, 1, size, f) == size;
 }
-
 inline bool seek_to(FILE* f, uint32_t offset) {
   return std::fseek(f, static_cast<long>(offset), SEEK_SET) == 0;
 }
+#endif
 
 }  // namespace
 
+bool CmbReader::is_open() const {
+#ifdef ARDUINO
+  return static_cast<bool>(f_);
+#else
+  return f_ != nullptr;
+#endif
+}
+
 bool CmbReader::open(const char* path) {
-  if (f_ != nullptr) close();
+  if (is_open()) close();
+#ifdef ARDUINO
+  if (!HalStorage::getInstance().openFileForRead("CMB", path, f_)) return false;
+#else
   f_ = std::fopen(path, "rb");
   if (f_ == nullptr) return false;
+#endif
 
   // ---- header ----
   uint8_t header_bytes[32];
@@ -184,9 +203,13 @@ bool CmbReader::open(const char* path) {
 }
 
 void CmbReader::close() {
-  if (f_ != nullptr) {
+  if (is_open()) {
+#ifdef ARDUINO
+    f_.close();
+#else
     std::fclose(f_);
     f_ = nullptr;
+#endif
   }
   header_ = CmbHeader{};
   chapters_.clear();
@@ -211,7 +234,7 @@ bool CmbReader::image_ref(uint16_t image_idx, CmbImageRef& out) const {
 }
 
 bool CmbReader::load_paragraph(uint16_t chapter_idx, uint16_t para_idx, CmbParagraph& out) {
-  if (f_ == nullptr) return false;
+  if (!is_open()) return false;
   if (chapter_idx >= chapters_.size()) return false;
   const CmbChapterEntry& c = chapters_[chapter_idx];
   if (para_idx >= c.paragraph_count) return false;

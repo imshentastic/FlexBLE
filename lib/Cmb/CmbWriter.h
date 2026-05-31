@@ -30,17 +30,28 @@
 // under the worst-case on-device budget.
 
 #include <cstdint>
-#include <cstdio>
 #include <string>
 #include <vector>
+
+#ifdef ARDUINO
+// On-device: route file I/O through the SdFat-backed HalStorage layer.
+// stdio fopen/fwrite don't work because SdFat doesn't register itself
+// as a VFS for libc -- the SD card is only reachable through HalFile.
+#include <HalStorage.h>
+#else
+// Host-side (unit tests, prospective desktop converter): plain stdio.
+#include <cstdio>
+#endif
 
 #include "CmbFormat.h"
 
 namespace cmb {
 
-// 4 KB write-buffered FILE* wrapper. Only used internally by CmbWriter
-// (lifecycle is bound to it) but exposed in this header so unit tests
-// can directly exercise the buffering / seek behavior if needed.
+// 4 KB write-buffered file wrapper. On device the backing file is a
+// HalFile (SdFat); on host it's a stdio FILE*. The split is hidden
+// behind a single member type so the rest of CmbWriter doesn't care.
+// Exposed in this header so unit tests can directly exercise the
+// buffering / seek behavior if needed.
 class BufferedFileWriter {
  public:
   BufferedFileWriter() = default;
@@ -50,12 +61,12 @@ class BufferedFileWriter {
 
   bool open(const char* path);
   void close();
-  bool is_open() const { return f_ != nullptr; }
+  bool is_open() const;
 
   // Buffered byte write. Returns false on I/O failure.
   bool write(const void* data, size_t size);
 
-  // Flush the buffer to the underlying FILE*. Called automatically on
+  // Flush the buffer to the underlying file. Called automatically on
   // close(); callers usually don't need this except before a seek().
   bool flush();
 
@@ -69,7 +80,11 @@ class BufferedFileWriter {
 
  private:
   static constexpr size_t kBufSize = 4096;
+#ifdef ARDUINO
+  FsFile f_;
+#else
   FILE* f_ = nullptr;
+#endif
   uint32_t pos_ = 0;
   size_t used_ = 0;
   uint8_t buf_[kBufSize] = {};
