@@ -1381,6 +1381,24 @@ bool Epub::ensureCmbExists() {
   const std::string cmbPath = getCmbPath();
   if (cmbPath.empty()) return false;
   if (Storage.exists(cmbPath.c_str())) return true;
+
+  // CrumBLE: heap precheck. The converter peaks at ~30 KB of working
+  // memory (one chapter's raw XHTML + expat state + write buffer +
+  // metadata accumulators), and an uncaught std::bad_alloc inside
+  // std::vector reserve / operator new takes the process down via
+  // std::terminate -> abort. The .cmb sidecar is purely opportunistic
+  // -- if we can't fit the conversion now, skip and try again on a
+  // future open when memory has recovered.
+  constexpr uint32_t kMinFreeHeap = 70 * 1024;
+  constexpr uint32_t kMinMaxAlloc = 40 * 1024;
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const uint32_t maxAlloc = ESP.getMaxAllocHeap();
+  if (freeHeap < kMinFreeHeap || maxAlloc < kMinMaxAlloc) {
+    LOG_DBG("EBP", "ensureCmbExists: heap too tight (free=%u maxAlloc=%u min=%u/%u); skipping", freeHeap, maxAlloc,
+            kMinFreeHeap, kMinMaxAlloc);
+    return false;
+  }
+
   // Need the cache dir to exist before writing the sidecar into it.
   setupCacheDir();
 
