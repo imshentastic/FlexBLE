@@ -67,11 +67,15 @@ class ChapterCmbSlimBuilder {
   // the XHTML parser path.
   bool parseAndBuildPages();
 
-  // Empty placeholders for Section.cpp parity. Anchors/footnotes aren't
-  // yet wired through .cmb -- the returned vectors stay empty so
-  // Section.cpp writes the same zero-entry tables it would for an
-  // anchor-less HTML chapter.
+  // (anchor_id, page_index) pairs collected as paragraphs were emitted.
+  // Populated when a CMB paragraph carries a non-empty anchor_id (set by
+  // the converter from the source XHTML's `id` attribute). Used by
+  // Section's anchor-table writer to support in-book fragment
+  // navigation (footnote -> target, TOC anchor -> chapter mid-point).
   const std::vector<std::pair<std::string, uint16_t>>& getAnchors() const { return anchorData; }
+  // Always false: the CMB path has no equivalent of the XHTML parser's
+  // "images suppressed under BLE" fallback yet (image blocks are
+  // skipped outright, not degraded). Kept for Section.cpp API parity.
   bool wasLowMemoryFallbackTriggered() const { return false; }
   bool wasLowMemoryAbortTriggered() const { return lowMemoryAbort; }
 
@@ -112,6 +116,19 @@ class ChapterCmbSlimBuilder {
   // Emit one CMB text paragraph. Returns false on OOM.
   bool processTextParagraph(const std::string& text, const std::vector<cmb::CmbStyleRun>& runs, uint8_t alignment,
                             uint8_t headingLevel);
+
+  // Emit a horizontal rule onto the current page, breaking the page if
+  // the rule + its spacing would overflow viewportHeight.
+  void processHorizontalRule();
+
+  // Hard page break: flush whatever's on currentPage and start a fresh one
+  // even if the current one isn't full. Matches HTML's <mbp:pagebreak/>.
+  void processPageBreak();
+
+  // Record the anchor at the current page boundary. Called for every
+  // CMB paragraph that has a non-empty anchor_id, so in-book fragment
+  // navigation (footnote -> target) lands on the right page.
+  void recordAnchor(const std::string& anchorId);
 
   // Run layout on the supplied ParsedText and append the resulting
   // lines to currentPage; flushes pages when they overflow.

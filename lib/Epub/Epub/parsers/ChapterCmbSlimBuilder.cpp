@@ -107,15 +107,39 @@ bool ChapterCmbSlimBuilder::parseAndBuildPages() {
       return false;
     }
 
-    if (paragraph.type == cmb::kCmbBlockText) {
-      if (!processTextParagraph(paragraph.text, paragraph.runs, paragraph.alignment, paragraph.heading_level)) {
-        return false;
-      }
-    } else {
-      // kCmbBlockImage / kCmbBlockHr / kCmbBlockPageBreak: not handled
-      // in slice 2 attempt A. Silently skipped -- pages get smaller but
-      // textual content is intact. If the result looks wrong the caller
-      // falls back to the XHTML parser.
+    switch (paragraph.type) {
+      case cmb::kCmbBlockText:
+        if (!processTextParagraph(paragraph.text, paragraph.runs, paragraph.alignment, paragraph.heading_level)) {
+          return false;
+        }
+        break;
+      case cmb::kCmbBlockHr:
+        processHorizontalRule();
+        break;
+      case cmb::kCmbBlockPageBreak:
+        processPageBreak();
+        break;
+      case cmb::kCmbBlockImage:
+        // Image rendering not wired through CMB yet -- the converter
+        // captures image_key + ZIP local-header offset, but the on-
+        // device decode + framebuffer + PageImage pipeline is a
+        // larger change (matches ChapterHtmlSlimParser::on_start's
+        // <img> path). Skipped for now; the slot stays blank.
+        break;
+      default:
+        // Unknown future block type. CMB format reserves unknown
+        // tags as "skip via length prefix"; the reader already
+        // returns out.type set to the unknown value so we can just
+        // ignore here.
+        break;
+    }
+
+    // Record the anchor at whichever page the previous block landed
+    // on. Anchors fire regardless of block type so footnote targets
+    // (typically the first text paragraph of the chapter) and hr-
+    // separated sections both resolve correctly.
+    if (!paragraph.anchor_id.empty()) {
+      recordAnchor(paragraph.anchor_id);
     }
 
     if (lowMemoryAbort) {
@@ -257,4 +281,71 @@ void ChapterCmbSlimBuilder::addLineToPage(std::shared_ptr<TextBlock> line) {
   const int16_t xOffset = line->getBlockStyle().leftInset();
   currentPage->elements.push_back(std::make_shared<PageLine>(line, xOffset, currentPageNextY));
   currentPageNextY = static_cast<int16_t>(currentPageNextY + lineHeight);
+}
+
+void ChapterCmbSlimBuilder::processHorizontalRule() {
+  // Sizing mirrors ChapterHtmlSlimParser::emitHorizontalRule: 1/4 of the
+  // available content width, centered, 2 px thick, with a half-line of
+  // breathing room above and below.
+  if (!currentPage) {
+    currentPage.reset(new (std::nothrow) Page());
+    if (!currentPage) {
+      lowMemoryAbort = true;
+      return;
+    }
+    currentPageNextY = 0;
+  }
+
+  const auto lineHeight = static_cast<int16_t>(renderer.getLineHeight(fontId) * lineCompression + 0.5f);
+  const int16_t verticalSpacing = static_cast<int16_t>(lineHeight / 2);
+  constexpr uint8_t kRuleThickness = 2;
+  const int16_t availableWidth = std::max<int16_t>(1, static_cast<int16_t>(viewportWidth));
+  const int16_t width = std::max<int16_t>(1, static_cast<int16_t>(availableWidth / 4));
+  const int16_t xPos = static_cast<int16_t>((availableWidth - width) / 2);
+  const int16_t totalHeight = static_cast<int16_t>(verticalSpacing + kRuleThickness + verticalSpacing);
+
+  // Flush the page if the rule + its spacing won't fit; same rule the
+  // XHTML emitter uses.
+  if (!currentPage->elements.empty() && currentPageNextY + totalHeight > viewportHeight) {
+    completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex);
+    completedPageCount++;
+    currentPage.reset(new (std::nothrow) Page());
+    if (!currentPage) {
+      lowMemoryAbort = true;
+      return;
+    }
+    currentPageNextY = 0;
+  }
+
+  currentPageNextY = static_cast<int16_t>(currentPageNextY + verticalSpacing);
+  auto pageRule = std::shared_ptr<PageHorizontalRule>(
+      new (std::nothrow) PageHorizontalRule(width, kRuleThickness, xPos, currentPageNextY));
+  if (!pageRule) {
+    lowMemoryAbort = true;
+    return;
+  }
+  currentPage->elements.push_back(pageRule);
+  currentPageNextY = static_cast<int16_t>(currentPageNextY + kRuleThickness + verticalSpacing);
+}
+
+void ChapterCmbSlimBuilder::processPageBreak() {
+  // Force a page boundary even if the current page isn't full. Skips
+  // entirely when the current page is empty (a leading <mbp:pagebreak/>
+  // would otherwise emit an empty page that the reader would then
+  // skip-display).
+  if (currentPage && !currentPage->elements.empty()) {
+    completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex);
+    completedPageCount++;
+    currentPage.reset();
+    currentPageNextY = 0;
+  }
+}
+
+void ChapterCmbSlimBuilder::recordAnchor(const std::string& anchorId) {
+  // Anchor lands on whichever page the previously-emitted block ended
+  // up on. completedPageCount == the next page index since pages are
+  // counted post-flush, so we use it as the target page for any anchor
+  // that immediately precedes the next block (matches the XHTML
+  // parser's pendingAnchorId -> next-block-page contract).
+  anchorData.push_back({anchorId, static_cast<uint16_t>(completedPageCount)});
 }
