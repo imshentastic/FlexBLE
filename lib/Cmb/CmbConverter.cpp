@@ -525,7 +525,21 @@ bool convert_epub_to_cmb(Epub& book, const char* output_path) {
       const std::string chapter_full_path =
           FsHelpers::normalisePath(book.getBasePath() + entry.href);
       XhtmlParagraphWalker walker(writer_sink, &ctx, &w, &book, chapter_full_path);
-      const bool parsed_ok = walker.feed(reinterpret_cast<const char*>(raw), raw_size, /*is_final=*/true);
+      // Feed the raw chapter bytes through expat in small chunks rather
+      // than one big XML_Parse(data, 26000, true). One-shot parsing
+      // makes expat double-buffer the entire input (~50 KB peak just
+      // for the parser) which routinely OOMs on device with a real-
+      // world heap: walker.feed used to fail at line 1 col 0 with
+      // XML_ERROR_NO_MEMORY before this. ChapterHtmlSlimParser uses the
+      // same chunking pattern via XML_GetBuffer.
+      constexpr size_t kFeedChunk = 2048;
+      bool parsed_ok = true;
+      for (size_t pos = 0; pos < raw_size && parsed_ok; pos += kFeedChunk) {
+        const size_t remaining = raw_size - pos;
+        const size_t chunk = remaining < kFeedChunk ? remaining : kFeedChunk;
+        const bool is_final = (pos + chunk) == raw_size;
+        parsed_ok = walker.feed(reinterpret_cast<const char*>(raw) + pos, chunk, is_final);
+      }
       // Flush whatever the walker buffered past its last paragraph
       // close (handles XHTML that ends without a closing </p>).
       const bool flushed_ok = walker.flush();
