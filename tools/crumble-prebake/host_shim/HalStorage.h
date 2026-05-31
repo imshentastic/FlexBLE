@@ -84,7 +84,10 @@ class HalFile : public Print {
   int read();  // single byte; -1 on EOF
   size_t write(const void* buf, size_t count);
   size_t write(uint8_t b) override;
-  using Print::write;  // pull in the (const uint8_t*, size_t) overload
+  // Explicitly override the bulk virtual. Print's version is pure since
+  // making it pure-virtual surfaced an earlier subclass-override bug;
+  // HalFile gets a direct implementation here so it can be instantiated.
+  size_t write(const uint8_t* buf, size_t count) override;
   bool sync();
   bool isOpen() const;
   bool close();

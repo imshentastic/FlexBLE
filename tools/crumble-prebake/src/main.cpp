@@ -6,12 +6,21 @@
 #include <Arduino.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <ZipFile.h>
+
+#include <Epub/BookMetadataCache.h>
+#include <Epub/parsers/ContainerParser.h>
+#include <Epub/parsers/ContentOpfParser.h>
+#include <Epub/parsers/TocNavParser.h>
+#include <Epub/parsers/TocNcxParser.h>
 
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
+
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -64,6 +73,159 @@ bool parseArgs(int argc, char** argv, Options& out) {
   return true;
 }
 
+// Compute the per-book cache directory the device would use for this
+// EPUB. Mirrors Epub::cachePathForFilePath: cacheRoot + "/epub_" +
+// fnvHash64(filepath). The hash is over the path string AS THE DEVICE
+// SEES IT -- so the caller has to pass the SD-card-relative path here,
+// not the local filesystem path.
+std::string deviceCacheDir(const std::string& cacheRoot, const std::string& devicePath) {
+  return cacheRoot + "/epub_" + std::to_string(ZipFile::fnvHash64(devicePath.c_str(), devicePath.size()));
+}
+
+// Drive the same parser chain Epub::load uses, but populate a
+// BookMetadataCache directly and call buildBookBin to emit the output.
+// Returns true on success. `epubPath` is the path TO THE INPUT FILE on
+// the host filesystem; `cacheDir` is where the per-book artifacts land.
+bool prebakeBookBin(const std::string& epubPath, const std::string& cacheDir) {
+  if (!fs::exists(epubPath)) {
+    LOG_ERR("PRE", "input EPUB does not exist: %s", epubPath.c_str());
+    return false;
+  }
+  std::error_code ec;
+  fs::create_directories(cacheDir, ec);
+  if (ec) {
+    LOG_ERR("PRE", "could not create cache dir %s: %s", cacheDir.c_str(), ec.message().c_str());
+    return false;
+  }
+
+  // Mirror Epub::load's slow-path orchestration. BookMetadataCache lives
+  // inside cacheDir; the parsers stream their input from the EPUB ZIP
+  // and write their progressive output via the cache's writer API.
+  BookMetadataCache cache(cacheDir);
+  if (!cache.beginWrite()) {
+    LOG_ERR("PRE", "BookMetadataCache::beginWrite failed for %s", epubPath.c_str());
+    return false;
+  }
+
+  // ---- Stage 1: container.xml -> content.opf path ----
+  std::string contentOpfFilePath;
+  {
+    const char* containerPath = "META-INF/container.xml";
+    size_t containerSize = 0;
+    ZipFile zip(epubPath);
+    if (!zip.getInflatedFileSize(containerPath, &containerSize)) {
+      LOG_ERR("PRE", "could not size META-INF/container.xml in %s", epubPath.c_str());
+      return false;
+    }
+    ContainerParser containerParser(containerSize);
+    if (!containerParser.setup()) {
+      LOG_ERR("PRE", "ContainerParser setup failed");
+      return false;
+    }
+    if (!zip.readFileToStream(containerPath, containerParser, 512)) {
+      LOG_ERR("PRE", "could not read container.xml");
+      return false;
+    }
+    if (containerParser.fullPath.empty()) {
+      LOG_ERR("PRE", "container.xml had no rootfile");
+      return false;
+    }
+    contentOpfFilePath = std::move(containerParser.fullPath);
+  }
+
+  const std::string contentBasePath =
+      contentOpfFilePath.substr(0, contentOpfFilePath.find_last_of('/') + 1);
+
+  // ---- Stage 2: content.opf -> spine + cover + metadata + (NCX path | NAV path) ----
+  BookMetadataCache::BookMetadata bookMetadata;
+  std::string tocNcxItem, tocNavItem;
+  {
+    if (!cache.beginContentOpfPass()) {
+      LOG_ERR("PRE", "beginContentOpfPass failed");
+      return false;
+    }
+    LOG_INF("PRE", "opf trace: opening zip");
+    ZipFile zip(epubPath);
+    LOG_INF("PRE", "opf trace: sizing content.opf at %s", contentOpfFilePath.c_str());
+    size_t contentOpfSize = 0;
+    if (!zip.getInflatedFileSize(contentOpfFilePath.c_str(), &contentOpfSize)) {
+      LOG_ERR("PRE", "could not size content.opf");
+      return false;
+    }
+    LOG_INF("PRE", "opf trace: size=%zu base=%s cache=%s", contentOpfSize, contentBasePath.c_str(), cacheDir.c_str());
+    ContentOpfParser opfParser(cacheDir, contentBasePath, contentOpfSize, &cache);
+    LOG_INF("PRE", "opf trace: parser constructed");
+    if (!opfParser.setup()) {
+      LOG_ERR("PRE", "ContentOpfParser setup failed");
+      return false;
+    }
+    LOG_INF("PRE", "opf trace: setup ok; streaming");
+    if (!zip.readFileToStream(contentOpfFilePath.c_str(), opfParser, 1024)) {
+      LOG_ERR("PRE", "could not read content.opf");
+      return false;
+    }
+    LOG_INF("PRE", "opf trace: streaming done");
+    bookMetadata.title = opfParser.title;
+    bookMetadata.author = opfParser.author;
+    bookMetadata.language = opfParser.language;
+    bookMetadata.coverItemHref = opfParser.coverItemHref;
+    // tocNcxPath / tocNavPath are absolute (ZIP-root-relative); the OPF
+    // parser has already resolved them against contentBasePath.
+    if (!opfParser.tocNcxPath.empty()) tocNcxItem = opfParser.tocNcxPath;
+    if (!opfParser.tocNavPath.empty()) tocNavItem = opfParser.tocNavPath;
+    if (!cache.endContentOpfPass()) {
+      LOG_ERR("PRE", "endContentOpfPass failed");
+      return false;
+    }
+  }
+
+  // ---- Stage 3: NCX (preferred) or NAV (fallback) -> TOC entries ----
+  {
+    if (!cache.beginTocPass()) {
+      LOG_ERR("PRE", "beginTocPass failed");
+      return false;
+    }
+    if (!tocNcxItem.empty()) {
+      ZipFile zip(epubPath);
+      size_t ncxSize = 0;
+      if (zip.getInflatedFileSize(tocNcxItem.c_str(), &ncxSize)) {
+        TocNcxParser ncxParser(contentBasePath, ncxSize, &cache);
+        if (ncxParser.setup() && zip.readFileToStream(tocNcxItem.c_str(), ncxParser, 1024)) {
+          LOG_DBG("PRE", "parsed NCX TOC from %s", tocNcxItem.c_str());
+        } else {
+          LOG_ERR("PRE", "NCX parse failed for %s", tocNcxItem.c_str());
+        }
+      }
+    } else if (!tocNavItem.empty()) {
+      ZipFile zip(epubPath);
+      size_t navSize = 0;
+      if (zip.getInflatedFileSize(tocNavItem.c_str(), &navSize)) {
+        TocNavParser navParser(contentBasePath, navSize, &cache);
+        if (navParser.setup() && zip.readFileToStream(tocNavItem.c_str(), navParser, 1024)) {
+          LOG_DBG("PRE", "parsed NAV TOC from %s", tocNavItem.c_str());
+        } else {
+          LOG_ERR("PRE", "NAV parse failed for %s", tocNavItem.c_str());
+        }
+      }
+    }
+    if (!cache.endTocPass()) {
+      LOG_ERR("PRE", "endTocPass failed");
+      return false;
+    }
+  }
+
+  if (!cache.endWrite()) {
+    LOG_ERR("PRE", "endWrite failed");
+    return false;
+  }
+  if (!cache.buildBookBin(epubPath, bookMetadata)) {
+    LOG_ERR("PRE", "buildBookBin failed");
+    return false;
+  }
+  cache.cleanupTmpFiles();
+  return true;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -73,14 +235,35 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  // Sanity: confirm the shim layer is wired up. This is the phase-1
-  // smoke test before we start dragging in the firmware parser code.
-  LOG_INF("CLI", "crumble-prebake starting (millis=%u)", millis());
-  LOG_INF("CLI", "output dir: %s", opts.outputDir.empty() ? "<inputs' siblings>" : opts.outputDir.c_str());
-  for (const auto& path : opts.epubs) {
-    const bool present = Storage.exists(path.c_str());
-    LOG_INF("CLI", "input: %s (exists=%d)", path.c_str(), present ? 1 : 0);
+  int failures = 0;
+  for (const auto& epubPath : opts.epubs) {
+    // For phase 1, the cache dir lives next to the input EPUB unless
+    // --output-dir is set. The output-dir variant matches the device's
+    // /.crosspoint/epub_<hash>/ layout.
+    std::string cacheDir;
+    if (!opts.outputDir.empty()) {
+      // The hash assumes the device sees this EPUB at the same path it
+      // has on the host. Reasonable default for "user prepares SD card on
+      // desktop, drops the EPUBs in / and the prebake'd cache in /.crosspoint/".
+      const std::string devicePath = "/" + fs::path(epubPath).filename().string();
+      cacheDir = opts.outputDir + "/.crosspoint/" +
+                 fs::path(deviceCacheDir("", devicePath)).filename().string();
+    } else {
+      cacheDir = fs::path(epubPath).parent_path().string() + "/.crosspoint/" +
+                 fs::path(deviceCacheDir("", fs::path(epubPath).filename().string())).filename().string();
+    }
+
+    LOG_INF("CLI", "prebake %s -> %s", epubPath.c_str(), cacheDir.c_str());
+    const uint32_t t0 = millis();
+    const bool ok = prebakeBookBin(epubPath, cacheDir);
+    const uint32_t dt = millis() - t0;
+    if (ok) {
+      LOG_INF("CLI", "  OK (%u ms) -- book.bin at %s/book.bin", dt, cacheDir.c_str());
+    } else {
+      LOG_ERR("CLI", "  FAILED (%u ms)", dt);
+      ++failures;
+    }
   }
-  LOG_INF("CLI", "(phase 1 prebake of book.bin -- implementation pending)");
-  return 0;
+
+  return failures == 0 ? 0 : 1;
 }

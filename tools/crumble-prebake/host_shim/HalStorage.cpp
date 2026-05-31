@@ -130,6 +130,7 @@ size_t HalFile::write(const void* buf, size_t count) {
   impl_->stream.write(static_cast<const char*>(buf), static_cast<std::streamsize>(count));
   return impl_->stream.good() ? count : 0;
 }
+size_t HalFile::write(const uint8_t* buf, size_t count) { return write(static_cast<const void*>(buf), count); }
 size_t HalFile::write(uint8_t b) { return write(&b, 1); }
 bool HalFile::sync() {
   if (!impl_ || !impl_->open) return false;

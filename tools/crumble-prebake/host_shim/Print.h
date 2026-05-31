@@ -18,23 +18,22 @@ class Print {
   // Required for any concrete subclass.
   virtual size_t write(uint8_t b) = 0;
 
-  // Optional bulk-write -- default impl loops over write(uint8_t). Subclasses
-  // override for batched IO. Matches the Arduino Print API shape.
-  virtual size_t write(const uint8_t* buf, size_t size) {
-    size_t written = 0;
-    for (size_t i = 0; i < size; ++i) {
-      if (write(buf[i]) == 0) break;
-      ++written;
-    }
-    return written;
-  }
+  // Bulk-write -- subclasses MUST override. The original shim had a
+  // default loop over write(uint8_t) here, but it was being picked over
+  // ContentOpfParser's override at runtime, leading to a stack overflow
+  // via repeated single-byte virtual-dispatch loops. Making it pure
+  // forces the override to actually take effect (or fails at link).
+  virtual size_t write(const uint8_t* buf, size_t size) = 0;
   size_t write(const char* str) {
     if (!str) return 0;
     return write(reinterpret_cast<const uint8_t*>(str), std::strlen(str));
   }
-  size_t write(const void* buf, size_t size) {
-    return write(static_cast<const uint8_t*>(buf), size);
-  }
+  // INTENTIONALLY no write(const void*, size_t) overload here -- it shadows
+  // overload resolution for write(uint8_t*, size_t) calls in firmware code
+  // (specifically ZipFile's stream-emit loop), routing them through the
+  // default Print::write(uint8_t*, size_t) impl and back through write(uint8_t)
+  // until the stack runs out. Keep the void surface in HalFile.cpp where it
+  // can't leak into virtual dispatch.
 
   // Convenience helpers some firmware code calls. printf is the
   // commonly-touched one for diagnostic logging.

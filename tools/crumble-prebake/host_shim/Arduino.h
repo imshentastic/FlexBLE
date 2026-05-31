@@ -30,19 +30,16 @@ inline uint32_t millis() {
 inline void delay(uint32_t) {}
 inline void yield() {}
 
-// Arduino min/max -- prefer std::min / std::max, but a few firmware sites
-// use these unqualified.
-#ifndef min
-#define min(a, b) ((a) < (b) ? (a) : (b))
-#endif
-#ifndef max
-#define max(a, b) ((a) > (b) ? (a) : (b))
-#endif
-
 // Arduino "F()" PROGMEM macro -- identity passthrough on host.
 #ifndef F
 #define F(x) (x)
 #endif
+
+// Intentionally NOT shimming Arduino's min(a,b) / max(a,b) macros. They
+// collide with std::numeric_limits<T>::max() in the firmware-side sources
+// we compile-share (BookMetadataCache.cpp hits this directly). The
+// firmware sources reach for std::min / std::max everywhere relevant,
+// so removing the Arduino-style macros is harmless on host.
 
 // ESP-IDF heap-stat shim. The on-device code logs free/maxAlloc to help
 // diagnose OOM; on host we report a huge fake value so nothing-cares-about-
