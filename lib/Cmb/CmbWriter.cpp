@@ -43,6 +43,13 @@ bool BufferedFileWriter::is_open() const { return backend_is_open(f_); }
 
 bool BufferedFileWriter::open(const char* path) {
   if (is_open()) close();
+  // Heap-allocate the 4 KB scratch buffer. Keeping it inline in the
+  // class blew the Arduino loopTask stack (8 KB) when CmbWriter was
+  // a local in convert_epub_to_cmb, on top of Activity / Epub::load.
+  if (!buf_) {
+    buf_.reset(new (std::nothrow) uint8_t[kBufSize]);
+    if (!buf_) return false;
+  }
 #ifdef ARDUINO
   if (!HalStorage::getInstance().openFileForWrite("CMB", path, f_)) return false;
 #else
@@ -64,12 +71,14 @@ void BufferedFileWriter::close() {
 #endif
   pos_ = 0;
   used_ = 0;
+  // Release the 4 KB scratch buffer; next open() reallocates.
+  buf_.reset();
 }
 
 bool BufferedFileWriter::flush() {
   if (!is_open()) return false;
   if (used_ == 0) return true;
-  const bool ok = backend_write_raw(f_, buf_, used_);
+  const bool ok = backend_write_raw(f_, buf_.get(), used_);
   used_ = 0;
   return ok;
 }
@@ -89,7 +98,7 @@ bool BufferedFileWriter::write(const void* data, size_t size) {
 
     const size_t room = kBufSize - used_;
     const size_t copy = (size < room) ? size : room;
-    std::memcpy(buf_ + used_, src, copy);
+    std::memcpy(buf_.get() + used_, src, copy);
     used_ += copy;
     src += copy;
     size -= copy;

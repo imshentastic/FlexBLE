@@ -30,6 +30,7 @@
 // under the worst-case on-device budget.
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -87,7 +88,11 @@ class BufferedFileWriter {
 #endif
   uint32_t pos_ = 0;
   size_t used_ = 0;
-  uint8_t buf_[kBufSize] = {};
+  // Heap-backed; allocated on open(), released on close(). Inline 4 KB
+  // would blow the Arduino loopTask stack (~8 KB) when CmbWriter is
+  // instantiated as a local in convert_epub_to_cmb on top of an
+  // Activity / Epub::load call chain.
+  std::unique_ptr<uint8_t[]> buf_;
 };
 
 class CmbWriter {
